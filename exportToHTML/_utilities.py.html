@@ -1,0 +1,86 @@
+<html>
+<head>
+<title>_utilities.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_utilities.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">collections</span><span class="s2">.</span><span class="s1">abc </span><span class="s0">as </span><span class="s1">c</span>
+<span class="s0">import </span><span class="s1">inspect</span>
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+<span class="s0">from </span><span class="s1">weakref </span><span class="s0">import </span><span class="s1">ref</span>
+<span class="s0">from </span><span class="s1">weakref </span><span class="s0">import </span><span class="s1">WeakMethod</span>
+
+<span class="s1">T </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s3">&quot;T&quot;</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">Symbol</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;A constant symbol, nicer than ``object()``. Repeated calls return the 
+    same instance. 
+ 
+    &gt;&gt;&gt; Symbol('foo') is Symbol('foo') 
+    True 
+    &gt;&gt;&gt; Symbol('foo') 
+    foo 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">symbols</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Symbol</span><span class="s2">]] = {}</span>
+
+    <span class="s0">def </span><span class="s1">__new__</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; Symbol</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">name </span><span class="s0">in </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">symbols</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">symbols</span><span class="s2">[</span><span class="s1">name</span><span class="s2">]</span>
+
+        <span class="s1">obj </span><span class="s2">= </span><span class="s1">super</span><span class="s2">().</span><span class="s1">__new__</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">)</span>
+        <span class="s1">cls</span><span class="s2">.</span><span class="s1">symbols</span><span class="s2">[</span><span class="s1">name</span><span class="s2">] = </span><span class="s1">obj</span>
+        <span class="s0">return </span><span class="s1">obj</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">name </span><span class="s2">= </span><span class="s1">name</span>
+
+    <span class="s0">def </span><span class="s1">__repr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">name</span>
+
+    <span class="s0">def </span><span class="s1">__getnewargs__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; tuple</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, ...]:</span>
+        <span class="s0">return </span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">name</span><span class="s2">,)</span>
+
+
+<span class="s0">def </span><span class="s1">make_id</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">: </span><span class="s1">object</span><span class="s2">) </span><span class="s1">-&gt; c</span><span class="s2">.</span><span class="s1">Hashable</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Get a stable identifier for a receiver or sender, to be used as a dict 
+    key or in a set. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">inspect</span><span class="s2">.</span><span class="s1">ismethod</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">):</span>
+        <span class="s5"># The id of a bound method is not stable, but the id of the unbound</span>
+        <span class="s5"># function and instance are.</span>
+        <span class="s0">return </span><span class="s1">id</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">.</span><span class="s1">__func__</span><span class="s2">), </span><span class="s1">id</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">.</span><span class="s1">__self__</span><span class="s2">)</span>
+
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, (</span><span class="s1">str</span><span class="s2">, </span><span class="s1">int</span><span class="s2">)):</span>
+        <span class="s5"># Instances with the same value always compare equal and have the same</span>
+        <span class="s5"># hash, even if the id may change.</span>
+        <span class="s0">return </span><span class="s1">obj</span>
+
+    <span class="s5"># Assume other types are not hashable but will always be the same instance.</span>
+    <span class="s0">return </span><span class="s1">id</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">make_ref</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">: </span><span class="s1">T</span><span class="s2">, </span><span class="s1">callback</span><span class="s2">: </span><span class="s1">c</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">ref</span><span class="s2">[</span><span class="s1">T</span><span class="s2">]], </span><span class="s0">None</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; ref</span><span class="s2">[</span><span class="s1">T</span><span class="s2">]:</span>
+    <span class="s0">if </span><span class="s1">inspect</span><span class="s2">.</span><span class="s1">ismethod</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">WeakMethod</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s1">callback</span><span class="s2">)  </span><span class="s5"># type: ignore[arg-type, return-value]</span>
+
+    <span class="s0">return </span><span class="s1">ref</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s1">callback</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

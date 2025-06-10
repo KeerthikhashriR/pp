@@ -1,0 +1,654 @@
+<html>
+<head>
+<title>blueprints.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #7a7e85;}
+.s4 { color: #6aab73;}
+.s5 { color: #5f826b; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+blueprints.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">os</span>
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+<span class="s0">from </span><span class="s1">collections </span><span class="s0">import </span><span class="s1">defaultdict</span>
+<span class="s0">from </span><span class="s1">functools </span><span class="s0">import </span><span class="s1">update_wrapper</span>
+
+<span class="s0">from </span><span class="s2">.. </span><span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">ft</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">scaffold </span><span class="s0">import </span><span class="s1">_endpoint_from_view_func</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">scaffold </span><span class="s0">import </span><span class="s1">_sentinel</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">scaffold </span><span class="s0">import </span><span class="s1">Scaffold</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">scaffold </span><span class="s0">import </span><span class="s1">setupmethod</span>
+
+<span class="s0">if </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TYPE_CHECKING</span><span class="s2">:  </span><span class="s3"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s2">.</span><span class="s1">app </span><span class="s0">import </span><span class="s1">App</span>
+
+<span class="s1">DeferredSetupFunction </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s4">&quot;BlueprintSetupState&quot;</span><span class="s2">], </span><span class="s0">None</span><span class="s2">]</span>
+<span class="s1">T_after_request </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s4">&quot;T_after_request&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">AfterRequestCallable</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">])</span>
+<span class="s1">T_before_request </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s4">&quot;T_before_request&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">BeforeRequestCallable</span><span class="s2">)</span>
+<span class="s1">T_error_handler </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s4">&quot;T_error_handler&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">ErrorHandlerCallable</span><span class="s2">)</span>
+<span class="s1">T_teardown </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s4">&quot;T_teardown&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">TeardownCallable</span><span class="s2">)</span>
+<span class="s1">T_template_context_processor </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span>
+    <span class="s4">&quot;T_template_context_processor&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">TemplateContextProcessorCallable</span>
+<span class="s2">)</span>
+<span class="s1">T_template_filter </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s4">&quot;T_template_filter&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">TemplateFilterCallable</span><span class="s2">)</span>
+<span class="s1">T_template_global </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s4">&quot;T_template_global&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">TemplateGlobalCallable</span><span class="s2">)</span>
+<span class="s1">T_template_test </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s4">&quot;T_template_test&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">TemplateTestCallable</span><span class="s2">)</span>
+<span class="s1">T_url_defaults </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s4">&quot;T_url_defaults&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">URLDefaultCallable</span><span class="s2">)</span>
+<span class="s1">T_url_value_preprocessor </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span>
+    <span class="s4">&quot;T_url_value_preprocessor&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">URLValuePreprocessorCallable</span>
+<span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">BlueprintSetupState</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot;Temporary holder object for registering a blueprint with the 
+    application.  An instance of this class is created by the 
+    :meth:`~flask.Blueprint.make_setup_state` method and later passed 
+    to all register callback functions. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">blueprint</span><span class="s2">: </span><span class="s1">Blueprint</span><span class="s2">,</span>
+        <span class="s1">app</span><span class="s2">: </span><span class="s1">App</span><span class="s2">,</span>
+        <span class="s1">options</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">,</span>
+        <span class="s1">first_registration</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">#: a reference to the current application</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app </span><span class="s2">= </span><span class="s1">app</span>
+
+        <span class="s3">#: a reference to the blueprint that created this setup state.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">blueprint </span><span class="s2">= </span><span class="s1">blueprint</span>
+
+        <span class="s3">#: a dictionary with all options that were passed to the</span>
+        <span class="s3">#: :meth:`~flask.Flask.register_blueprint` method.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">options </span><span class="s2">= </span><span class="s1">options</span>
+
+        <span class="s3">#: as blueprints can be registered multiple times with the</span>
+        <span class="s3">#: application and not everything wants to be registered</span>
+        <span class="s3">#: multiple times on it, this attribute can be used to figure</span>
+        <span class="s3">#: out if the blueprint was registered in the past already.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">first_registration </span><span class="s2">= </span><span class="s1">first_registration</span>
+
+        <span class="s1">subdomain </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">options</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;subdomain&quot;</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">subdomain </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">subdomain </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">blueprint</span><span class="s2">.</span><span class="s1">subdomain</span>
+
+        <span class="s3">#: The subdomain that the blueprint should be active for, ``None``</span>
+        <span class="s3">#: otherwise.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain </span><span class="s2">= </span><span class="s1">subdomain</span>
+
+        <span class="s1">url_prefix </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">options</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;url_prefix&quot;</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">url_prefix </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">url_prefix </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">blueprint</span><span class="s2">.</span><span class="s1">url_prefix</span>
+        <span class="s3">#: The prefix that should be used for all URLs defined on the</span>
+        <span class="s3">#: blueprint.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">url_prefix </span><span class="s2">= </span><span class="s1">url_prefix</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">name </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">options</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;name&quot;</span><span class="s2">, </span><span class="s1">blueprint</span><span class="s2">.</span><span class="s1">name</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">name_prefix </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">options</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;name_prefix&quot;</span><span class="s2">, </span><span class="s4">&quot;&quot;</span><span class="s2">)</span>
+
+        <span class="s3">#: A dictionary with URL defaults that is added to each and every</span>
+        <span class="s3">#: URL that was defined with the blueprint.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">url_defaults </span><span class="s2">= </span><span class="s1">dict</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">blueprint</span><span class="s2">.</span><span class="s1">url_values_defaults</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">url_defaults</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">options</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;url_defaults&quot;</span><span class="s2">, ()))</span>
+
+    <span class="s0">def </span><span class="s1">add_url_rule</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">rule</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">endpoint</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">view_func</span><span class="s2">: </span><span class="s1">ft</span><span class="s2">.</span><span class="s1">RouteCallable </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s2">**</span><span class="s1">options</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;A helper method to register a rule (and optionally a view function) 
+        to the application.  The endpoint is automatically prefixed with the 
+        blueprint's name. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">url_prefix </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">rule</span><span class="s2">:</span>
+                <span class="s1">rule </span><span class="s2">= </span><span class="s4">&quot;/&quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">((</span><span class="s1">self</span><span class="s2">.</span><span class="s1">url_prefix</span><span class="s2">.</span><span class="s1">rstrip</span><span class="s2">(</span><span class="s4">&quot;/&quot;</span><span class="s2">), </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">lstrip</span><span class="s2">(</span><span class="s4">&quot;/&quot;</span><span class="s2">)))</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">rule </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">url_prefix</span>
+        <span class="s1">options</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s4">&quot;subdomain&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">endpoint </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">endpoint </span><span class="s2">= </span><span class="s1">_endpoint_from_view_func</span><span class="s2">(</span><span class="s1">view_func</span><span class="s2">)  </span><span class="s3"># type: ignore</span>
+        <span class="s1">defaults </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">url_defaults</span>
+        <span class="s0">if </span><span class="s4">&quot;defaults&quot; </span><span class="s0">in </span><span class="s1">options</span><span class="s2">:</span>
+            <span class="s1">defaults </span><span class="s2">= </span><span class="s1">dict</span><span class="s2">(</span><span class="s1">defaults</span><span class="s2">, **</span><span class="s1">options</span><span class="s2">.</span><span class="s1">pop</span><span class="s2">(</span><span class="s4">&quot;defaults&quot;</span><span class="s2">))</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">.</span><span class="s1">add_url_rule</span><span class="s2">(</span>
+            <span class="s1">rule</span><span class="s2">,</span>
+            <span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">name_prefix</span><span class="s0">}</span><span class="s4">.</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">name</span><span class="s0">}</span><span class="s4">.</span><span class="s0">{</span><span class="s1">endpoint</span><span class="s0">}</span><span class="s4">&quot;</span><span class="s2">.</span><span class="s1">lstrip</span><span class="s2">(</span><span class="s4">&quot;.&quot;</span><span class="s2">),</span>
+            <span class="s1">view_func</span><span class="s2">,</span>
+            <span class="s1">defaults</span><span class="s2">=</span><span class="s1">defaults</span><span class="s2">,</span>
+            <span class="s2">**</span><span class="s1">options</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">Blueprint</span><span class="s2">(</span><span class="s1">Scaffold</span><span class="s2">):</span>
+    <span class="s5">&quot;&quot;&quot;Represents a blueprint, a collection of routes and other 
+    app-related functions that can be registered on a real application 
+    later. 
+ 
+    A blueprint is an object that allows defining application functions 
+    without requiring an application object ahead of time. It uses the 
+    same decorators as :class:`~flask.Flask`, but defers the need for an 
+    application by recording them for later registration. 
+ 
+    Decorating a function with a blueprint creates a deferred function 
+    that is called with :class:`~flask.blueprints.BlueprintSetupState` 
+    when the blueprint is registered on an application. 
+ 
+    See :doc:`/blueprints` for more information. 
+ 
+    :param name: The name of the blueprint. Will be prepended to each 
+        endpoint name. 
+    :param import_name: The name of the blueprint package, usually 
+        ``__name__``. This helps locate the ``root_path`` for the 
+        blueprint. 
+    :param static_folder: A folder with static files that should be 
+        served by the blueprint's static route. The path is relative to 
+        the blueprint's root path. Blueprint static files are disabled 
+        by default. 
+    :param static_url_path: The url to serve static files from. 
+        Defaults to ``static_folder``. If the blueprint does not have 
+        a ``url_prefix``, the app's static route will take precedence, 
+        and the blueprint's static files won't be accessible. 
+    :param template_folder: A folder with templates that should be added 
+        to the app's template search path. The path is relative to the 
+        blueprint's root path. Blueprint templates are disabled by 
+        default. Blueprint templates have a lower precedence than those 
+        in the app's templates folder. 
+    :param url_prefix: A path to prepend to all of the blueprint's URLs, 
+        to make them distinct from the rest of the app's routes. 
+    :param subdomain: A subdomain that blueprint routes will match on by 
+        default. 
+    :param url_defaults: A dict of default values that blueprint routes 
+        will receive by default. 
+    :param root_path: By default, the blueprint will automatically set 
+        this based on ``import_name``. In certain situations this 
+        automatic detection can fail, so the path can be specified 
+        manually instead. 
+ 
+    .. versionchanged:: 1.1.0 
+        Blueprints have a ``cli`` group to register nested CLI commands. 
+        The ``cli_group`` parameter controls the name of the group under 
+        the ``flask`` command. 
+ 
+    .. versionadded:: 0.7 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">_got_registered_once </span><span class="s2">= </span><span class="s0">False</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">import_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">static_folder</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s1">os</span><span class="s2">.</span><span class="s1">PathLike</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">static_url_path</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">template_folder</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s1">os</span><span class="s2">.</span><span class="s1">PathLike</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">url_prefix</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">subdomain</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">url_defaults</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">root_path</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">cli_group</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s1">_sentinel</span><span class="s2">,  </span><span class="s3"># type: ignore[assignment]</span>
+    <span class="s2">):</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(</span>
+            <span class="s1">import_name</span><span class="s2">=</span><span class="s1">import_name</span><span class="s2">,</span>
+            <span class="s1">static_folder</span><span class="s2">=</span><span class="s1">static_folder</span><span class="s2">,</span>
+            <span class="s1">static_url_path</span><span class="s2">=</span><span class="s1">static_url_path</span><span class="s2">,</span>
+            <span class="s1">template_folder</span><span class="s2">=</span><span class="s1">template_folder</span><span class="s2">,</span>
+            <span class="s1">root_path</span><span class="s2">=</span><span class="s1">root_path</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+        <span class="s0">if not </span><span class="s1">name</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s4">&quot;'name' may not be empty.&quot;</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s4">&quot;.&quot; </span><span class="s0">in </span><span class="s1">name</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s4">&quot;'name' may not contain a dot '.' character.&quot;</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">name </span><span class="s2">= </span><span class="s1">name</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">url_prefix </span><span class="s2">= </span><span class="s1">url_prefix</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain </span><span class="s2">= </span><span class="s1">subdomain</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">deferred_functions</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">DeferredSetupFunction</span><span class="s2">] = []</span>
+
+        <span class="s0">if </span><span class="s1">url_defaults </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">url_defaults </span><span class="s2">= {}</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">url_values_defaults </span><span class="s2">= </span><span class="s1">url_defaults</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">cli_group </span><span class="s2">= </span><span class="s1">cli_group</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_blueprints</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">Blueprint</span><span class="s2">, </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]]] = []</span>
+
+    <span class="s0">def </span><span class="s1">_check_setup_finished</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">f_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_got_registered_once</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">AssertionError</span><span class="s2">(</span>
+                <span class="s4">f&quot;The setup method '</span><span class="s0">{</span><span class="s1">f_name</span><span class="s0">}</span><span class="s4">' can no longer be called on the blueprint&quot;</span>
+                <span class="s4">f&quot; '</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">name</span><span class="s0">}</span><span class="s4">'. It has already been registered at least once, any&quot;</span>
+                <span class="s4">&quot; changes will not be applied consistently.</span><span class="s0">\n</span><span class="s4">&quot;</span>
+                <span class="s4">&quot;Make sure all imports, decorators, functions, etc. needed to set up&quot;</span>
+                <span class="s4">&quot; the blueprint are done before registering it.&quot;</span>
+            <span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">record</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">func</span><span class="s2">: </span><span class="s1">DeferredSetupFunction</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Registers a function that is called when the blueprint is 
+        registered on the application.  This function is called with the 
+        state as argument as returned by the :meth:`make_setup_state` 
+        method. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">deferred_functions</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">func</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">record_once</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">func</span><span class="s2">: </span><span class="s1">DeferredSetupFunction</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Works like :meth:`record` but wraps the function in another 
+        function that will ensure the function is only called once.  If the 
+        blueprint is registered a second time on the application, the 
+        function passed is not called. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0">def </span><span class="s1">wrapper</span><span class="s2">(</span><span class="s1">state</span><span class="s2">: </span><span class="s1">BlueprintSetupState</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">state</span><span class="s2">.</span><span class="s1">first_registration</span><span class="s2">:</span>
+                <span class="s1">func</span><span class="s2">(</span><span class="s1">state</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">record</span><span class="s2">(</span><span class="s1">update_wrapper</span><span class="s2">(</span><span class="s1">wrapper</span><span class="s2">, </span><span class="s1">func</span><span class="s2">))</span>
+
+    <span class="s0">def </span><span class="s1">make_setup_state</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">app</span><span class="s2">: </span><span class="s1">App</span><span class="s2">, </span><span class="s1">options</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">first_registration</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span>
+    <span class="s2">) </span><span class="s1">-&gt; BlueprintSetupState</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Creates an instance of :meth:`~flask.blueprints.BlueprintSetupState` 
+        object that is later passed to the register callback functions. 
+        Subclasses can override this to return a subclass of the setup state. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">BlueprintSetupState</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">app</span><span class="s2">, </span><span class="s1">options</span><span class="s2">, </span><span class="s1">first_registration</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">register_blueprint</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">blueprint</span><span class="s2">: </span><span class="s1">Blueprint</span><span class="s2">, **</span><span class="s1">options</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Register a :class:`~flask.Blueprint` on this blueprint. Keyword 
+        arguments passed to this method will override the defaults set 
+        on the blueprint. 
+ 
+        .. versionchanged:: 2.0.1 
+            The ``name`` option can be used to change the (pre-dotted) 
+            name the blueprint is registered with. This allows the same 
+            blueprint to be registered multiple times with unique names 
+            for ``url_for``. 
+ 
+        .. versionadded:: 2.0 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">blueprint </span><span class="s0">is </span><span class="s1">self</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s4">&quot;Cannot register a blueprint on itself&quot;</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_blueprints</span><span class="s2">.</span><span class="s1">append</span><span class="s2">((</span><span class="s1">blueprint</span><span class="s2">, </span><span class="s1">options</span><span class="s2">))</span>
+
+    <span class="s0">def </span><span class="s1">register</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">app</span><span class="s2">: </span><span class="s1">App</span><span class="s2">, </span><span class="s1">options</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Called by :meth:`Flask.register_blueprint` to register all 
+        views and callbacks registered on the blueprint with the 
+        application. Creates a :class:`.BlueprintSetupState` and calls 
+        each :meth:`record` callback with it. 
+ 
+        :param app: The application this blueprint is being registered 
+            with. 
+        :param options: Keyword arguments forwarded from 
+            :meth:`~Flask.register_blueprint`. 
+ 
+        .. versionchanged:: 2.3 
+            Nested blueprints now correctly apply subdomains. 
+ 
+        .. versionchanged:: 2.1 
+            Registering the same blueprint with the same name multiple 
+            times is an error. 
+ 
+        .. versionchanged:: 2.0.1 
+            Nested blueprints are registered with their dotted name. 
+            This allows different blueprints with the same name to be 
+            nested at different locations. 
+ 
+        .. versionchanged:: 2.0.1 
+            The ``name`` option can be used to change the (pre-dotted) 
+            name the blueprint is registered with. This allows the same 
+            blueprint to be registered multiple times with unique names 
+            for ``url_for``. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">name_prefix </span><span class="s2">= </span><span class="s1">options</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;name_prefix&quot;</span><span class="s2">, </span><span class="s4">&quot;&quot;</span><span class="s2">)</span>
+        <span class="s1">self_name </span><span class="s2">= </span><span class="s1">options</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;name&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">name</span><span class="s2">)</span>
+        <span class="s1">name </span><span class="s2">= </span><span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">name_prefix</span><span class="s0">}</span><span class="s4">.</span><span class="s0">{</span><span class="s1">self_name</span><span class="s0">}</span><span class="s4">&quot;</span><span class="s2">.</span><span class="s1">lstrip</span><span class="s2">(</span><span class="s4">&quot;.&quot;</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">name </span><span class="s0">in </span><span class="s1">app</span><span class="s2">.</span><span class="s1">blueprints</span><span class="s2">:</span>
+            <span class="s1">bp_desc </span><span class="s2">= </span><span class="s4">&quot;this&quot; </span><span class="s0">if </span><span class="s1">app</span><span class="s2">.</span><span class="s1">blueprints</span><span class="s2">[</span><span class="s1">name</span><span class="s2">] </span><span class="s0">is </span><span class="s1">self </span><span class="s0">else </span><span class="s4">&quot;a different&quot;</span>
+            <span class="s1">existing_at </span><span class="s2">= </span><span class="s4">f&quot; '</span><span class="s0">{</span><span class="s1">name</span><span class="s0">}</span><span class="s4">'&quot; </span><span class="s0">if </span><span class="s1">self_name </span><span class="s2">!= </span><span class="s1">name </span><span class="s0">else </span><span class="s4">&quot;&quot;</span>
+
+            <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span>
+                <span class="s4">f&quot;The name '</span><span class="s0">{</span><span class="s1">self_name</span><span class="s0">}</span><span class="s4">' is already registered for&quot;</span>
+                <span class="s4">f&quot; </span><span class="s0">{</span><span class="s1">bp_desc</span><span class="s0">} </span><span class="s4">blueprint</span><span class="s0">{</span><span class="s1">existing_at</span><span class="s0">}</span><span class="s4">. Use 'name=' to&quot;</span>
+                <span class="s4">f&quot; provide a unique name.&quot;</span>
+            <span class="s2">)</span>
+
+        <span class="s1">first_bp_registration </span><span class="s2">= </span><span class="s0">not </span><span class="s1">any</span><span class="s2">(</span><span class="s1">bp </span><span class="s0">is </span><span class="s1">self </span><span class="s0">for </span><span class="s1">bp </span><span class="s0">in </span><span class="s1">app</span><span class="s2">.</span><span class="s1">blueprints</span><span class="s2">.</span><span class="s1">values</span><span class="s2">())</span>
+        <span class="s1">first_name_registration </span><span class="s2">= </span><span class="s1">name </span><span class="s0">not in </span><span class="s1">app</span><span class="s2">.</span><span class="s1">blueprints</span>
+
+        <span class="s1">app</span><span class="s2">.</span><span class="s1">blueprints</span><span class="s2">[</span><span class="s1">name</span><span class="s2">] = </span><span class="s1">self</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_got_registered_once </span><span class="s2">= </span><span class="s0">True</span>
+        <span class="s1">state </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">make_setup_state</span><span class="s2">(</span><span class="s1">app</span><span class="s2">, </span><span class="s1">options</span><span class="s2">, </span><span class="s1">first_bp_registration</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">has_static_folder</span><span class="s2">:</span>
+            <span class="s1">state</span><span class="s2">.</span><span class="s1">add_url_rule</span><span class="s2">(</span>
+                <span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">static_url_path</span><span class="s0">}</span><span class="s4">/&lt;path:filename&gt;&quot;</span><span class="s2">,</span>
+                <span class="s1">view_func</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">send_static_file</span><span class="s2">,  </span><span class="s3"># type: ignore[attr-defined]</span>
+                <span class="s1">endpoint</span><span class="s2">=</span><span class="s4">&quot;static&quot;</span><span class="s2">,</span>
+            <span class="s2">)</span>
+
+        <span class="s3"># Merge blueprint data into parent.</span>
+        <span class="s0">if </span><span class="s1">first_bp_registration </span><span class="s0">or </span><span class="s1">first_name_registration</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_merge_blueprint_funcs</span><span class="s2">(</span><span class="s1">app</span><span class="s2">, </span><span class="s1">name</span><span class="s2">)</span>
+
+        <span class="s0">for </span><span class="s1">deferred </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">deferred_functions</span><span class="s2">:</span>
+            <span class="s1">deferred</span><span class="s2">(</span><span class="s1">state</span><span class="s2">)</span>
+
+        <span class="s1">cli_resolved_group </span><span class="s2">= </span><span class="s1">options</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;cli_group&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cli_group</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cli</span><span class="s2">.</span><span class="s1">commands</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">cli_resolved_group </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s1">app</span><span class="s2">.</span><span class="s1">cli</span><span class="s2">.</span><span class="s1">commands</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">cli</span><span class="s2">.</span><span class="s1">commands</span><span class="s2">)</span>
+            <span class="s0">elif </span><span class="s1">cli_resolved_group </span><span class="s0">is </span><span class="s1">_sentinel</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">cli</span><span class="s2">.</span><span class="s1">name </span><span class="s2">= </span><span class="s1">name</span>
+                <span class="s1">app</span><span class="s2">.</span><span class="s1">cli</span><span class="s2">.</span><span class="s1">add_command</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">cli</span><span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">cli</span><span class="s2">.</span><span class="s1">name </span><span class="s2">= </span><span class="s1">cli_resolved_group</span>
+                <span class="s1">app</span><span class="s2">.</span><span class="s1">cli</span><span class="s2">.</span><span class="s1">add_command</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">cli</span><span class="s2">)</span>
+
+        <span class="s0">for </span><span class="s1">blueprint</span><span class="s2">, </span><span class="s1">bp_options </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_blueprints</span><span class="s2">:</span>
+            <span class="s1">bp_options </span><span class="s2">= </span><span class="s1">bp_options</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">()</span>
+            <span class="s1">bp_url_prefix </span><span class="s2">= </span><span class="s1">bp_options</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;url_prefix&quot;</span><span class="s2">)</span>
+            <span class="s1">bp_subdomain </span><span class="s2">= </span><span class="s1">bp_options</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;subdomain&quot;</span><span class="s2">)</span>
+
+            <span class="s0">if </span><span class="s1">bp_subdomain </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s1">bp_subdomain </span><span class="s2">= </span><span class="s1">blueprint</span><span class="s2">.</span><span class="s1">subdomain</span>
+
+            <span class="s0">if </span><span class="s1">state</span><span class="s2">.</span><span class="s1">subdomain </span><span class="s0">is not None and </span><span class="s1">bp_subdomain </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s1">bp_options</span><span class="s2">[</span><span class="s4">&quot;subdomain&quot;</span><span class="s2">] = </span><span class="s1">bp_subdomain </span><span class="s2">+ </span><span class="s4">&quot;.&quot; </span><span class="s2">+ </span><span class="s1">state</span><span class="s2">.</span><span class="s1">subdomain</span>
+            <span class="s0">elif </span><span class="s1">bp_subdomain </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s1">bp_options</span><span class="s2">[</span><span class="s4">&quot;subdomain&quot;</span><span class="s2">] = </span><span class="s1">bp_subdomain</span>
+            <span class="s0">elif </span><span class="s1">state</span><span class="s2">.</span><span class="s1">subdomain </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s1">bp_options</span><span class="s2">[</span><span class="s4">&quot;subdomain&quot;</span><span class="s2">] = </span><span class="s1">state</span><span class="s2">.</span><span class="s1">subdomain</span>
+
+            <span class="s0">if </span><span class="s1">bp_url_prefix </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s1">bp_url_prefix </span><span class="s2">= </span><span class="s1">blueprint</span><span class="s2">.</span><span class="s1">url_prefix</span>
+
+            <span class="s0">if </span><span class="s1">state</span><span class="s2">.</span><span class="s1">url_prefix </span><span class="s0">is not None and </span><span class="s1">bp_url_prefix </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s1">bp_options</span><span class="s2">[</span><span class="s4">&quot;url_prefix&quot;</span><span class="s2">] = (</span>
+                    <span class="s1">state</span><span class="s2">.</span><span class="s1">url_prefix</span><span class="s2">.</span><span class="s1">rstrip</span><span class="s2">(</span><span class="s4">&quot;/&quot;</span><span class="s2">) + </span><span class="s4">&quot;/&quot; </span><span class="s2">+ </span><span class="s1">bp_url_prefix</span><span class="s2">.</span><span class="s1">lstrip</span><span class="s2">(</span><span class="s4">&quot;/&quot;</span><span class="s2">)</span>
+                <span class="s2">)</span>
+            <span class="s0">elif </span><span class="s1">bp_url_prefix </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s1">bp_options</span><span class="s2">[</span><span class="s4">&quot;url_prefix&quot;</span><span class="s2">] = </span><span class="s1">bp_url_prefix</span>
+            <span class="s0">elif </span><span class="s1">state</span><span class="s2">.</span><span class="s1">url_prefix </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s1">bp_options</span><span class="s2">[</span><span class="s4">&quot;url_prefix&quot;</span><span class="s2">] = </span><span class="s1">state</span><span class="s2">.</span><span class="s1">url_prefix</span>
+
+            <span class="s1">bp_options</span><span class="s2">[</span><span class="s4">&quot;name_prefix&quot;</span><span class="s2">] = </span><span class="s1">name</span>
+            <span class="s1">blueprint</span><span class="s2">.</span><span class="s1">register</span><span class="s2">(</span><span class="s1">app</span><span class="s2">, </span><span class="s1">bp_options</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_merge_blueprint_funcs</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">app</span><span class="s2">: </span><span class="s1">App</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">def </span><span class="s1">extend</span><span class="s2">(</span>
+            <span class="s1">bp_dict</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">AppOrBlueprintKey</span><span class="s2">, </span><span class="s1">list</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]],</span>
+            <span class="s1">parent_dict</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">AppOrBlueprintKey</span><span class="s2">, </span><span class="s1">list</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]],</span>
+        <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s0">for </span><span class="s1">key</span><span class="s2">, </span><span class="s1">values </span><span class="s0">in </span><span class="s1">bp_dict</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+                <span class="s1">key </span><span class="s2">= </span><span class="s1">name </span><span class="s0">if </span><span class="s1">key </span><span class="s0">is None else </span><span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">name</span><span class="s0">}</span><span class="s4">.</span><span class="s0">{</span><span class="s1">key</span><span class="s0">}</span><span class="s4">&quot;</span>
+                <span class="s1">parent_dict</span><span class="s2">[</span><span class="s1">key</span><span class="s2">].</span><span class="s1">extend</span><span class="s2">(</span><span class="s1">values</span><span class="s2">)</span>
+
+        <span class="s0">for </span><span class="s1">key</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">error_handler_spec</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+            <span class="s1">key </span><span class="s2">= </span><span class="s1">name </span><span class="s0">if </span><span class="s1">key </span><span class="s0">is None else </span><span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">name</span><span class="s0">}</span><span class="s4">.</span><span class="s0">{</span><span class="s1">key</span><span class="s0">}</span><span class="s4">&quot;</span>
+            <span class="s1">value </span><span class="s2">= </span><span class="s1">defaultdict</span><span class="s2">(</span>
+                <span class="s1">dict</span><span class="s2">,</span>
+                <span class="s2">{</span>
+                    <span class="s1">code</span><span class="s2">: {</span><span class="s1">exc_class</span><span class="s2">: </span><span class="s1">func </span><span class="s0">for </span><span class="s1">exc_class</span><span class="s2">, </span><span class="s1">func </span><span class="s0">in </span><span class="s1">code_values</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()}</span>
+                    <span class="s0">for </span><span class="s1">code</span><span class="s2">, </span><span class="s1">code_values </span><span class="s0">in </span><span class="s1">value</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()</span>
+                <span class="s2">},</span>
+            <span class="s2">)</span>
+            <span class="s1">app</span><span class="s2">.</span><span class="s1">error_handler_spec</span><span class="s2">[</span><span class="s1">key</span><span class="s2">] = </span><span class="s1">value</span>
+
+        <span class="s0">for </span><span class="s1">endpoint</span><span class="s2">, </span><span class="s1">func </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">view_functions</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+            <span class="s1">app</span><span class="s2">.</span><span class="s1">view_functions</span><span class="s2">[</span><span class="s1">endpoint</span><span class="s2">] = </span><span class="s1">func</span>
+
+        <span class="s1">extend</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">before_request_funcs</span><span class="s2">, </span><span class="s1">app</span><span class="s2">.</span><span class="s1">before_request_funcs</span><span class="s2">)</span>
+        <span class="s1">extend</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">after_request_funcs</span><span class="s2">, </span><span class="s1">app</span><span class="s2">.</span><span class="s1">after_request_funcs</span><span class="s2">)</span>
+        <span class="s1">extend</span><span class="s2">(</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">teardown_request_funcs</span><span class="s2">,</span>
+            <span class="s1">app</span><span class="s2">.</span><span class="s1">teardown_request_funcs</span><span class="s2">,</span>
+        <span class="s2">)</span>
+        <span class="s1">extend</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">url_default_functions</span><span class="s2">, </span><span class="s1">app</span><span class="s2">.</span><span class="s1">url_default_functions</span><span class="s2">)</span>
+        <span class="s1">extend</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">url_value_preprocessors</span><span class="s2">, </span><span class="s1">app</span><span class="s2">.</span><span class="s1">url_value_preprocessors</span><span class="s2">)</span>
+        <span class="s1">extend</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">template_context_processors</span><span class="s2">, </span><span class="s1">app</span><span class="s2">.</span><span class="s1">template_context_processors</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">add_url_rule</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">rule</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">endpoint</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">view_func</span><span class="s2">: </span><span class="s1">ft</span><span class="s2">.</span><span class="s1">RouteCallable </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">provide_automatic_options</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s2">**</span><span class="s1">options</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Register a URL rule with the blueprint. See :meth:`.Flask.add_url_rule` for 
+        full documentation. 
+ 
+        The URL rule is prefixed with the blueprint's URL prefix. The endpoint name, 
+        used with :func:`url_for`, is prefixed with the blueprint's name. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">endpoint </span><span class="s0">and </span><span class="s4">&quot;.&quot; </span><span class="s0">in </span><span class="s1">endpoint</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s4">&quot;'endpoint' may not contain a dot '.' character.&quot;</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">view_func </span><span class="s0">and </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">view_func</span><span class="s2">, </span><span class="s4">&quot;__name__&quot;</span><span class="s2">) </span><span class="s0">and </span><span class="s4">&quot;.&quot; </span><span class="s0">in </span><span class="s1">view_func</span><span class="s2">.</span><span class="s1">__name__</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s4">&quot;'view_func' name may not contain a dot '.' character.&quot;</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">record</span><span class="s2">(</span>
+            <span class="s0">lambda </span><span class="s1">s</span><span class="s2">: </span><span class="s1">s</span><span class="s2">.</span><span class="s1">add_url_rule</span><span class="s2">(</span>
+                <span class="s1">rule</span><span class="s2">,</span>
+                <span class="s1">endpoint</span><span class="s2">,</span>
+                <span class="s1">view_func</span><span class="s2">,</span>
+                <span class="s1">provide_automatic_options</span><span class="s2">=</span><span class="s1">provide_automatic_options</span><span class="s2">,</span>
+                <span class="s2">**</span><span class="s1">options</span><span class="s2">,</span>
+            <span class="s2">)</span>
+        <span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">app_template_filter</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">T_template_filter</span><span class="s2">], </span><span class="s1">T_template_filter</span><span class="s2">]:</span>
+        <span class="s5">&quot;&quot;&quot;Register a template filter, available in any template rendered by the 
+        application. Equivalent to :meth:`.Flask.template_filter`. 
+ 
+        :param name: the optional name of the filter, otherwise the 
+                     function name will be used. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0">def </span><span class="s1">decorator</span><span class="s2">(</span><span class="s1">f</span><span class="s2">: </span><span class="s1">T_template_filter</span><span class="s2">) </span><span class="s1">-&gt; T_template_filter</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">add_app_template_filter</span><span class="s2">(</span><span class="s1">f</span><span class="s2">, </span><span class="s1">name</span><span class="s2">=</span><span class="s1">name</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">f</span>
+
+        <span class="s0">return </span><span class="s1">decorator</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">add_app_template_filter</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">f</span><span class="s2">: </span><span class="s1">ft</span><span class="s2">.</span><span class="s1">TemplateFilterCallable</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Register a template filter, available in any template rendered by the 
+        application. Works like the :meth:`app_template_filter` decorator. Equivalent to 
+        :meth:`.Flask.add_template_filter`. 
+ 
+        :param name: the optional name of the filter, otherwise the 
+                     function name will be used. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0">def </span><span class="s1">register_template</span><span class="s2">(</span><span class="s1">state</span><span class="s2">: </span><span class="s1">BlueprintSetupState</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s1">state</span><span class="s2">.</span><span class="s1">app</span><span class="s2">.</span><span class="s1">jinja_env</span><span class="s2">.</span><span class="s1">filters</span><span class="s2">[</span><span class="s1">name </span><span class="s0">or </span><span class="s1">f</span><span class="s2">.</span><span class="s1">__name__</span><span class="s2">] = </span><span class="s1">f</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">record_once</span><span class="s2">(</span><span class="s1">register_template</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">app_template_test</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">T_template_test</span><span class="s2">], </span><span class="s1">T_template_test</span><span class="s2">]:</span>
+        <span class="s5">&quot;&quot;&quot;Register a template test, available in any template rendered by the 
+        application. Equivalent to :meth:`.Flask.template_test`. 
+ 
+        .. versionadded:: 0.10 
+ 
+        :param name: the optional name of the test, otherwise the 
+                     function name will be used. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0">def </span><span class="s1">decorator</span><span class="s2">(</span><span class="s1">f</span><span class="s2">: </span><span class="s1">T_template_test</span><span class="s2">) </span><span class="s1">-&gt; T_template_test</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">add_app_template_test</span><span class="s2">(</span><span class="s1">f</span><span class="s2">, </span><span class="s1">name</span><span class="s2">=</span><span class="s1">name</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">f</span>
+
+        <span class="s0">return </span><span class="s1">decorator</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">add_app_template_test</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">f</span><span class="s2">: </span><span class="s1">ft</span><span class="s2">.</span><span class="s1">TemplateTestCallable</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Register a template test, available in any template rendered by the 
+        application. Works like the :meth:`app_template_test` decorator. Equivalent to 
+        :meth:`.Flask.add_template_test`. 
+ 
+        .. versionadded:: 0.10 
+ 
+        :param name: the optional name of the test, otherwise the 
+                     function name will be used. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0">def </span><span class="s1">register_template</span><span class="s2">(</span><span class="s1">state</span><span class="s2">: </span><span class="s1">BlueprintSetupState</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s1">state</span><span class="s2">.</span><span class="s1">app</span><span class="s2">.</span><span class="s1">jinja_env</span><span class="s2">.</span><span class="s1">tests</span><span class="s2">[</span><span class="s1">name </span><span class="s0">or </span><span class="s1">f</span><span class="s2">.</span><span class="s1">__name__</span><span class="s2">] = </span><span class="s1">f</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">record_once</span><span class="s2">(</span><span class="s1">register_template</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">app_template_global</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">T_template_global</span><span class="s2">], </span><span class="s1">T_template_global</span><span class="s2">]:</span>
+        <span class="s5">&quot;&quot;&quot;Register a template global, available in any template rendered by the 
+        application. Equivalent to :meth:`.Flask.template_global`. 
+ 
+        .. versionadded:: 0.10 
+ 
+        :param name: the optional name of the global, otherwise the 
+                     function name will be used. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0">def </span><span class="s1">decorator</span><span class="s2">(</span><span class="s1">f</span><span class="s2">: </span><span class="s1">T_template_global</span><span class="s2">) </span><span class="s1">-&gt; T_template_global</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">add_app_template_global</span><span class="s2">(</span><span class="s1">f</span><span class="s2">, </span><span class="s1">name</span><span class="s2">=</span><span class="s1">name</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">f</span>
+
+        <span class="s0">return </span><span class="s1">decorator</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">add_app_template_global</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">f</span><span class="s2">: </span><span class="s1">ft</span><span class="s2">.</span><span class="s1">TemplateGlobalCallable</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Register a template global, available in any template rendered by the 
+        application. Works like the :meth:`app_template_global` decorator. Equivalent to 
+        :meth:`.Flask.add_template_global`. 
+ 
+        .. versionadded:: 0.10 
+ 
+        :param name: the optional name of the global, otherwise the 
+                     function name will be used. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0">def </span><span class="s1">register_template</span><span class="s2">(</span><span class="s1">state</span><span class="s2">: </span><span class="s1">BlueprintSetupState</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s1">state</span><span class="s2">.</span><span class="s1">app</span><span class="s2">.</span><span class="s1">jinja_env</span><span class="s2">.</span><span class="s1">globals</span><span class="s2">[</span><span class="s1">name </span><span class="s0">or </span><span class="s1">f</span><span class="s2">.</span><span class="s1">__name__</span><span class="s2">] = </span><span class="s1">f</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">record_once</span><span class="s2">(</span><span class="s1">register_template</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">before_app_request</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">f</span><span class="s2">: </span><span class="s1">T_before_request</span><span class="s2">) </span><span class="s1">-&gt; T_before_request</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Like :meth:`before_request`, but before every request, not only those handled 
+        by the blueprint. Equivalent to :meth:`.Flask.before_request`. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">record_once</span><span class="s2">(</span>
+            <span class="s0">lambda </span><span class="s1">s</span><span class="s2">: </span><span class="s1">s</span><span class="s2">.</span><span class="s1">app</span><span class="s2">.</span><span class="s1">before_request_funcs</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s0">None</span><span class="s2">, []).</span><span class="s1">append</span><span class="s2">(</span><span class="s1">f</span><span class="s2">)</span>
+        <span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">f</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">after_app_request</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">f</span><span class="s2">: </span><span class="s1">T_after_request</span><span class="s2">) </span><span class="s1">-&gt; T_after_request</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Like :meth:`after_request`, but after every request, not only those handled 
+        by the blueprint. Equivalent to :meth:`.Flask.after_request`. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">record_once</span><span class="s2">(</span>
+            <span class="s0">lambda </span><span class="s1">s</span><span class="s2">: </span><span class="s1">s</span><span class="s2">.</span><span class="s1">app</span><span class="s2">.</span><span class="s1">after_request_funcs</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s0">None</span><span class="s2">, []).</span><span class="s1">append</span><span class="s2">(</span><span class="s1">f</span><span class="s2">)</span>
+        <span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">f</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">teardown_app_request</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">f</span><span class="s2">: </span><span class="s1">T_teardown</span><span class="s2">) </span><span class="s1">-&gt; T_teardown</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Like :meth:`teardown_request`, but after every request, not only those 
+        handled by the blueprint. Equivalent to :meth:`.Flask.teardown_request`. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">record_once</span><span class="s2">(</span>
+            <span class="s0">lambda </span><span class="s1">s</span><span class="s2">: </span><span class="s1">s</span><span class="s2">.</span><span class="s1">app</span><span class="s2">.</span><span class="s1">teardown_request_funcs</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s0">None</span><span class="s2">, []).</span><span class="s1">append</span><span class="s2">(</span><span class="s1">f</span><span class="s2">)</span>
+        <span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">f</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">app_context_processor</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">f</span><span class="s2">: </span><span class="s1">T_template_context_processor</span>
+    <span class="s2">) </span><span class="s1">-&gt; T_template_context_processor</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Like :meth:`context_processor`, but for templates rendered by every view, not 
+        only by the blueprint. Equivalent to :meth:`.Flask.context_processor`. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">record_once</span><span class="s2">(</span>
+            <span class="s0">lambda </span><span class="s1">s</span><span class="s2">: </span><span class="s1">s</span><span class="s2">.</span><span class="s1">app</span><span class="s2">.</span><span class="s1">template_context_processors</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s0">None</span><span class="s2">, []).</span><span class="s1">append</span><span class="s2">(</span><span class="s1">f</span><span class="s2">)</span>
+        <span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">f</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">app_errorhandler</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">code</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">Exception</span><span class="s2">] | </span><span class="s1">int</span>
+    <span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">T_error_handler</span><span class="s2">], </span><span class="s1">T_error_handler</span><span class="s2">]:</span>
+        <span class="s5">&quot;&quot;&quot;Like :meth:`errorhandler`, but for every request, not only those handled by 
+        the blueprint. Equivalent to :meth:`.Flask.errorhandler`. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0">def </span><span class="s1">decorator</span><span class="s2">(</span><span class="s1">f</span><span class="s2">: </span><span class="s1">T_error_handler</span><span class="s2">) </span><span class="s1">-&gt; T_error_handler</span><span class="s2">:</span>
+            <span class="s0">def </span><span class="s1">from_blueprint</span><span class="s2">(</span><span class="s1">state</span><span class="s2">: </span><span class="s1">BlueprintSetupState</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+                <span class="s1">state</span><span class="s2">.</span><span class="s1">app</span><span class="s2">.</span><span class="s1">errorhandler</span><span class="s2">(</span><span class="s1">code</span><span class="s2">)(</span><span class="s1">f</span><span class="s2">)</span>
+
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">record_once</span><span class="s2">(</span><span class="s1">from_blueprint</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">f</span>
+
+        <span class="s0">return </span><span class="s1">decorator</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">app_url_value_preprocessor</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">f</span><span class="s2">: </span><span class="s1">T_url_value_preprocessor</span>
+    <span class="s2">) </span><span class="s1">-&gt; T_url_value_preprocessor</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Like :meth:`url_value_preprocessor`, but for every request, not only those 
+        handled by the blueprint. Equivalent to :meth:`.Flask.url_value_preprocessor`. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">record_once</span><span class="s2">(</span>
+            <span class="s0">lambda </span><span class="s1">s</span><span class="s2">: </span><span class="s1">s</span><span class="s2">.</span><span class="s1">app</span><span class="s2">.</span><span class="s1">url_value_preprocessors</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s0">None</span><span class="s2">, []).</span><span class="s1">append</span><span class="s2">(</span><span class="s1">f</span><span class="s2">)</span>
+        <span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">f</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">app_url_defaults</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">f</span><span class="s2">: </span><span class="s1">T_url_defaults</span><span class="s2">) </span><span class="s1">-&gt; T_url_defaults</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Like :meth:`url_defaults`, but for every request, not only those handled by 
+        the blueprint. Equivalent to :meth:`.Flask.url_defaults`. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">record_once</span><span class="s2">(</span>
+            <span class="s0">lambda </span><span class="s1">s</span><span class="s2">: </span><span class="s1">s</span><span class="s2">.</span><span class="s1">app</span><span class="s2">.</span><span class="s1">url_default_functions</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s0">None</span><span class="s2">, []).</span><span class="s1">append</span><span class="s2">(</span><span class="s1">f</span><span class="s2">)</span>
+        <span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">f</span>
+</pre>
+</body>
+</html>

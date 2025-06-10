@@ -1,0 +1,164 @@
+<html>
+<head>
+<title>json.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #7a7e85;}
+.s4 { color: #6aab73;}
+.s5 { color: #5f826b; font-style: italic;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+json.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">datetime</span>
+<span class="s0">import </span><span class="s1">warnings</span>
+<span class="s0">from </span><span class="s1">collections </span><span class="s0">import </span><span class="s1">deque</span>
+<span class="s0">from </span><span class="s1">decimal </span><span class="s0">import </span><span class="s1">Decimal</span>
+<span class="s0">from </span><span class="s1">enum </span><span class="s0">import </span><span class="s1">Enum</span>
+<span class="s0">from </span><span class="s1">ipaddress </span><span class="s0">import </span><span class="s1">IPv4Address</span><span class="s2">, </span><span class="s1">IPv4Interface</span><span class="s2">, </span><span class="s1">IPv4Network</span><span class="s2">, </span><span class="s1">IPv6Address</span><span class="s2">, </span><span class="s1">IPv6Interface</span><span class="s2">, </span><span class="s1">IPv6Network</span>
+<span class="s0">from </span><span class="s1">pathlib </span><span class="s0">import </span><span class="s1">Path</span>
+<span class="s0">from </span><span class="s1">re </span><span class="s0">import </span><span class="s1">Pattern</span>
+<span class="s0">from </span><span class="s1">types </span><span class="s0">import </span><span class="s1">GeneratorType</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">TYPE_CHECKING</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Callable</span><span class="s2">, </span><span class="s1">Union</span>
+<span class="s0">from </span><span class="s1">uuid </span><span class="s0">import </span><span class="s1">UUID</span>
+
+<span class="s0">from </span><span class="s1">typing_extensions </span><span class="s0">import </span><span class="s1">deprecated</span>
+
+<span class="s0">from </span><span class="s2">..</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">_import_utils </span><span class="s0">import </span><span class="s1">import_cached_base_model</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">color </span><span class="s0">import </span><span class="s1">Color</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">networks </span><span class="s0">import </span><span class="s1">NameEmail</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">types </span><span class="s0">import </span><span class="s1">SecretBytes</span><span class="s2">, </span><span class="s1">SecretStr</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">warnings </span><span class="s0">import </span><span class="s1">PydanticDeprecatedSince20</span>
+
+<span class="s0">if not </span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+    <span class="s3"># See PyCharm issues https://youtrack.jetbrains.com/issue/PY-21915</span>
+    <span class="s3"># and https://youtrack.jetbrains.com/issue/PY-51428</span>
+    <span class="s1">DeprecationWarning </span><span class="s2">= </span><span class="s1">PydanticDeprecatedSince20</span>
+
+<span class="s1">__all__ </span><span class="s2">= </span><span class="s4">'pydantic_encoder'</span><span class="s2">, </span><span class="s4">'custom_pydantic_encoder'</span><span class="s2">, </span><span class="s4">'timedelta_isoformat'</span>
+
+
+<span class="s0">def </span><span class="s1">isoformat</span><span class="s2">(</span><span class="s1">o</span><span class="s2">: </span><span class="s1">Union</span><span class="s2">[</span><span class="s1">datetime</span><span class="s2">.</span><span class="s1">date</span><span class="s2">, </span><span class="s1">datetime</span><span class="s2">.</span><span class="s1">time</span><span class="s2">]) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+    <span class="s0">return </span><span class="s1">o</span><span class="s2">.</span><span class="s1">isoformat</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">decimal_encoder</span><span class="s2">(</span><span class="s1">dec_value</span><span class="s2">: </span><span class="s1">Decimal</span><span class="s2">) </span><span class="s1">-&gt; Union</span><span class="s2">[</span><span class="s1">int</span><span class="s2">, </span><span class="s1">float</span><span class="s2">]:</span>
+    <span class="s5">&quot;&quot;&quot;Encodes a Decimal as int of there's no exponent, otherwise float. 
+ 
+    This is useful when we use ConstrainedDecimal to represent Numeric(x,0) 
+    where a integer (but not int typed) is used. Encoding this as a float 
+    results in failed round-tripping between encode and parse. 
+    Our Id type is a prime example of this. 
+ 
+    &gt;&gt;&gt; decimal_encoder(Decimal(&quot;1.0&quot;)) 
+    1.0 
+ 
+    &gt;&gt;&gt; decimal_encoder(Decimal(&quot;1&quot;)) 
+    1 
+    &quot;&quot;&quot;</span>
+    <span class="s1">exponent </span><span class="s2">= </span><span class="s1">dec_value</span><span class="s2">.</span><span class="s1">as_tuple</span><span class="s2">().</span><span class="s1">exponent</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">exponent</span><span class="s2">, </span><span class="s1">int</span><span class="s2">) </span><span class="s0">and </span><span class="s1">exponent </span><span class="s2">&gt;= </span><span class="s6">0</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">int</span><span class="s2">(</span><span class="s1">dec_value</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">float</span><span class="s2">(</span><span class="s1">dec_value</span><span class="s2">)</span>
+
+
+<span class="s1">ENCODERS_BY_TYPE</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">type</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">Any</span><span class="s2">]] = {</span>
+    <span class="s1">bytes</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">o</span><span class="s2">: </span><span class="s1">o</span><span class="s2">.</span><span class="s1">decode</span><span class="s2">(),</span>
+    <span class="s1">Color</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">datetime</span><span class="s2">.</span><span class="s1">date</span><span class="s2">: </span><span class="s1">isoformat</span><span class="s2">,</span>
+    <span class="s1">datetime</span><span class="s2">.</span><span class="s1">datetime</span><span class="s2">: </span><span class="s1">isoformat</span><span class="s2">,</span>
+    <span class="s1">datetime</span><span class="s2">.</span><span class="s1">time</span><span class="s2">: </span><span class="s1">isoformat</span><span class="s2">,</span>
+    <span class="s1">datetime</span><span class="s2">.</span><span class="s1">timedelta</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">td</span><span class="s2">: </span><span class="s1">td</span><span class="s2">.</span><span class="s1">total_seconds</span><span class="s2">(),</span>
+    <span class="s1">Decimal</span><span class="s2">: </span><span class="s1">decimal_encoder</span><span class="s2">,</span>
+    <span class="s1">Enum</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">o</span><span class="s2">: </span><span class="s1">o</span><span class="s2">.</span><span class="s1">value</span><span class="s2">,</span>
+    <span class="s1">frozenset</span><span class="s2">: </span><span class="s1">list</span><span class="s2">,</span>
+    <span class="s1">deque</span><span class="s2">: </span><span class="s1">list</span><span class="s2">,</span>
+    <span class="s1">GeneratorType</span><span class="s2">: </span><span class="s1">list</span><span class="s2">,</span>
+    <span class="s1">IPv4Address</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">IPv4Interface</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">IPv4Network</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">IPv6Address</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">IPv6Interface</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">IPv6Network</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">NameEmail</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">Path</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">Pattern</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">o</span><span class="s2">: </span><span class="s1">o</span><span class="s2">.</span><span class="s1">pattern</span><span class="s2">,</span>
+    <span class="s1">SecretBytes</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">SecretStr</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">set</span><span class="s2">: </span><span class="s1">list</span><span class="s2">,</span>
+    <span class="s1">UUID</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+<span class="s2">}</span>
+
+
+<span class="s2">@</span><span class="s1">deprecated</span><span class="s2">(</span>
+    <span class="s4">'`pydantic_encoder` is deprecated, use `pydantic_core.to_jsonable_python` instead.'</span><span class="s2">,</span>
+    <span class="s1">category</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+<span class="s2">)</span>
+<span class="s0">def </span><span class="s1">pydantic_encoder</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+    <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+        <span class="s4">'`pydantic_encoder` is deprecated, use `pydantic_core.to_jsonable_python` instead.'</span><span class="s2">,</span>
+        <span class="s1">category</span><span class="s2">=</span><span class="s1">PydanticDeprecatedSince20</span><span class="s2">,</span>
+        <span class="s1">stacklevel</span><span class="s2">=</span><span class="s6">2</span><span class="s2">,</span>
+    <span class="s2">)</span>
+    <span class="s0">from </span><span class="s1">dataclasses </span><span class="s0">import </span><span class="s1">asdict</span><span class="s2">, </span><span class="s1">is_dataclass</span>
+
+    <span class="s1">BaseModel </span><span class="s2">= </span><span class="s1">import_cached_base_model</span><span class="s2">()</span>
+
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s1">BaseModel</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">obj</span><span class="s2">.</span><span class="s1">model_dump</span><span class="s2">()</span>
+    <span class="s0">elif </span><span class="s1">is_dataclass</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">asdict</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)  </span><span class="s3"># type: ignore</span>
+
+    <span class="s3"># Check the class type and its superclasses for a matching encoder</span>
+    <span class="s0">for </span><span class="s1">base </span><span class="s0">in </span><span class="s1">obj</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">.</span><span class="s1">__mro__</span><span class="s2">[:-</span><span class="s6">1</span><span class="s2">]:</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">encoder </span><span class="s2">= </span><span class="s1">ENCODERS_BY_TYPE</span><span class="s2">[</span><span class="s1">base</span><span class="s2">]</span>
+        <span class="s0">except </span><span class="s1">KeyError</span><span class="s2">:</span>
+            <span class="s0">continue</span>
+        <span class="s0">return </span><span class="s1">encoder</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:  </span><span class="s3"># We have exited the for loop without finding a suitable encoder</span>
+        <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span><span class="s4">f&quot;Object of type '</span><span class="s0">{</span><span class="s1">obj</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">}</span><span class="s4">' is not JSON serializable&quot;</span><span class="s2">)</span>
+
+
+<span class="s3"># TODO: Add a suggested migration path once there is a way to use custom encoders</span>
+<span class="s2">@</span><span class="s1">deprecated</span><span class="s2">(</span>
+    <span class="s4">'`custom_pydantic_encoder` is deprecated, use `BaseModel.model_dump` instead.'</span><span class="s2">,</span>
+    <span class="s1">category</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+<span class="s2">)</span>
+<span class="s0">def </span><span class="s1">custom_pydantic_encoder</span><span class="s2">(</span><span class="s1">type_encoders</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">type</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">]], </span><span class="s1">Any</span><span class="s2">]], </span><span class="s1">obj</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+    <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+        <span class="s4">'`custom_pydantic_encoder` is deprecated, use `BaseModel.model_dump` instead.'</span><span class="s2">,</span>
+        <span class="s1">category</span><span class="s2">=</span><span class="s1">PydanticDeprecatedSince20</span><span class="s2">,</span>
+        <span class="s1">stacklevel</span><span class="s2">=</span><span class="s6">2</span><span class="s2">,</span>
+    <span class="s2">)</span>
+    <span class="s3"># Check the class type and its superclasses for a matching encoder</span>
+    <span class="s0">for </span><span class="s1">base </span><span class="s0">in </span><span class="s1">obj</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">.</span><span class="s1">__mro__</span><span class="s2">[:-</span><span class="s6">1</span><span class="s2">]:</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">encoder </span><span class="s2">= </span><span class="s1">type_encoders</span><span class="s2">[</span><span class="s1">base</span><span class="s2">]</span>
+        <span class="s0">except </span><span class="s1">KeyError</span><span class="s2">:</span>
+            <span class="s0">continue</span>
+
+        <span class="s0">return </span><span class="s1">encoder</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:  </span><span class="s3"># We have exited the for loop without finding a suitable encoder</span>
+        <span class="s0">return </span><span class="s1">pydantic_encoder</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)</span>
+
+
+<span class="s2">@</span><span class="s1">deprecated</span><span class="s2">(</span><span class="s4">'`timedelta_isoformat` is deprecated.'</span><span class="s2">, </span><span class="s1">category</span><span class="s2">=</span><span class="s0">None</span><span class="s2">)</span>
+<span class="s0">def </span><span class="s1">timedelta_isoformat</span><span class="s2">(</span><span class="s1">td</span><span class="s2">: </span><span class="s1">datetime</span><span class="s2">.</span><span class="s1">timedelta</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot;ISO 8601 encoding for Python timedelta object.&quot;&quot;&quot;</span>
+    <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span><span class="s4">'`timedelta_isoformat` is deprecated.'</span><span class="s2">, </span><span class="s1">category</span><span class="s2">=</span><span class="s1">PydanticDeprecatedSince20</span><span class="s2">, </span><span class="s1">stacklevel</span><span class="s2">=</span><span class="s6">2</span><span class="s2">)</span>
+    <span class="s1">minutes</span><span class="s2">, </span><span class="s1">seconds </span><span class="s2">= </span><span class="s1">divmod</span><span class="s2">(</span><span class="s1">td</span><span class="s2">.</span><span class="s1">seconds</span><span class="s2">, </span><span class="s6">60</span><span class="s2">)</span>
+    <span class="s1">hours</span><span class="s2">, </span><span class="s1">minutes </span><span class="s2">= </span><span class="s1">divmod</span><span class="s2">(</span><span class="s1">minutes</span><span class="s2">, </span><span class="s6">60</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s4">f'</span><span class="s0">{</span><span class="s4">&quot;-&quot; </span><span class="s0">if </span><span class="s1">td</span><span class="s2">.</span><span class="s1">days </span><span class="s2">&lt; </span><span class="s6">0 </span><span class="s0">else </span><span class="s4">&quot;&quot;</span><span class="s0">}</span><span class="s4">P</span><span class="s0">{</span><span class="s1">abs</span><span class="s2">(</span><span class="s1">td</span><span class="s2">.</span><span class="s1">days</span><span class="s2">)</span><span class="s0">}</span><span class="s4">DT</span><span class="s0">{</span><span class="s1">hours</span><span class="s0">:</span><span class="s4">d</span><span class="s0">}</span><span class="s4">H</span><span class="s0">{</span><span class="s1">minutes</span><span class="s0">:</span><span class="s4">d</span><span class="s0">}</span><span class="s4">M</span><span class="s0">{</span><span class="s1">seconds</span><span class="s0">:</span><span class="s4">d</span><span class="s0">}</span><span class="s4">.</span><span class="s0">{</span><span class="s1">td</span><span class="s2">.</span><span class="s1">microseconds</span><span class="s0">:</span><span class="s4">06d</span><span class="s0">}</span><span class="s4">S'</span>
+</pre>
+</body>
+</html>

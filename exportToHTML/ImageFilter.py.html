@@ -1,0 +1,628 @@
+<html>
+<head>
+<title>ImageFilter.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #5f826b; font-style: italic;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageFilter.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># standard filters</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1995-11-27 fl   Created</span>
+<span class="s0"># 2002-06-08 fl   Added rank and mode filters</span>
+<span class="s0"># 2003-09-15 fl   Fixed rank calculation in rank filter; added expand call</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2003 by Secret Labs AB.</span>
+<span class="s0"># Copyright (c) 1995-2002 by Fredrik Lundh.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">abc</span>
+<span class="s2">import </span><span class="s1">functools</span>
+<span class="s2">from </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">abc </span><span class="s2">import </span><span class="s1">Sequence</span>
+<span class="s2">from </span><span class="s1">types </span><span class="s2">import </span><span class="s1">ModuleType</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Callable</span><span class="s3">, </span><span class="s1">cast</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">_imaging</span>
+    <span class="s2">from </span><span class="s3">.</span><span class="s1">_typing </span><span class="s2">import </span><span class="s1">NumpyArray</span>
+
+
+<span class="s2">class </span><span class="s1">Filter</span><span class="s3">:</span>
+    <span class="s3">@</span><span class="s1">abc</span><span class="s3">.</span><span class="s1">abstractmethod</span>
+    <span class="s2">def </span><span class="s1">filter</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">_imaging</span><span class="s3">.</span><span class="s1">ImagingCore</span><span class="s3">) </span><span class="s1">-&gt; _imaging</span><span class="s3">.</span><span class="s1">ImagingCore</span><span class="s3">:</span>
+        <span class="s2">pass</span>
+
+
+<span class="s2">class </span><span class="s1">MultibandFilter</span><span class="s3">(</span><span class="s1">Filter</span><span class="s3">):</span>
+    <span class="s2">pass</span>
+
+
+<span class="s2">class </span><span class="s1">BuiltinFilter</span><span class="s3">(</span><span class="s1">MultibandFilter</span><span class="s3">):</span>
+    <span class="s1">filterargs</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, ...]</span>
+
+    <span class="s2">def </span><span class="s1">filter</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">_imaging</span><span class="s3">.</span><span class="s1">ImagingCore</span><span class="s3">) </span><span class="s1">-&gt; _imaging</span><span class="s3">.</span><span class="s1">ImagingCore</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s4">&quot;P&quot;</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;cannot filter palette images&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">filter</span><span class="s3">(*</span><span class="s1">self</span><span class="s3">.</span><span class="s1">filterargs</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">Kernel</span><span class="s3">(</span><span class="s1">BuiltinFilter</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Create a convolution kernel. This only supports 3x3 and 5x5 integer and floating 
+    point kernels. 
+ 
+    Kernels can only be applied to &quot;L&quot; and &quot;RGB&quot; images. 
+ 
+    :param size: Kernel size, given as (width, height). This must be (3,3) or (5,5). 
+    :param kernel: A sequence containing kernel weights. The kernel will be flipped 
+                   vertically before being applied to the image. 
+    :param scale: Scale factor. If given, the result for each pixel is divided by this 
+                  value. The default is the sum of the kernel weights. 
+    :param offset: Offset. If given, this value is added to the result, after it has 
+                   been divided by the scale factor. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;Kernel&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">size</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">],</span>
+        <span class="s1">kernel</span><span class="s3">: </span><span class="s1">Sequence</span><span class="s3">[</span><span class="s1">float</span><span class="s3">],</span>
+        <span class="s1">scale</span><span class="s3">: </span><span class="s1">float </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">offset</span><span class="s3">: </span><span class="s1">float </span><span class="s3">= </span><span class="s6">0</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">scale </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s0"># default scale is sum of kernel</span>
+            <span class="s1">scale </span><span class="s3">= </span><span class="s1">functools</span><span class="s3">.</span><span class="s1">reduce</span><span class="s3">(</span><span class="s2">lambda </span><span class="s1">a</span><span class="s3">, </span><span class="s1">b</span><span class="s3">: </span><span class="s1">a </span><span class="s3">+ </span><span class="s1">b</span><span class="s3">, </span><span class="s1">kernel</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">size</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] * </span><span class="s1">size</span><span class="s3">[</span><span class="s6">1</span><span class="s3">] != </span><span class="s1">len</span><span class="s3">(</span><span class="s1">kernel</span><span class="s3">):</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;not enough coefficients in kernel&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">filterargs </span><span class="s3">= </span><span class="s1">size</span><span class="s3">, </span><span class="s1">scale</span><span class="s3">, </span><span class="s1">offset</span><span class="s3">, </span><span class="s1">kernel</span>
+
+
+<span class="s2">class </span><span class="s1">RankFilter</span><span class="s3">(</span><span class="s1">Filter</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Create a rank filter.  The rank filter sorts all pixels in 
+    a window of the given size, and returns the ``rank``'th value. 
+ 
+    :param size: The kernel size, in pixels. 
+    :param rank: What pixel value to pick.  Use 0 for a min filter, 
+                 ``size * size / 2`` for a median filter, ``size * size - 1`` 
+                 for a max filter, etc. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;Rank&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">size</span><span class="s3">: </span><span class="s1">int</span><span class="s3">, </span><span class="s1">rank</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">size </span><span class="s3">= </span><span class="s1">size</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">rank </span><span class="s3">= </span><span class="s1">rank</span>
+
+    <span class="s2">def </span><span class="s1">filter</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">_imaging</span><span class="s3">.</span><span class="s1">ImagingCore</span><span class="s3">) </span><span class="s1">-&gt; _imaging</span><span class="s3">.</span><span class="s1">ImagingCore</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s4">&quot;P&quot;</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;cannot filter palette images&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">image </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">expand</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">size </span><span class="s3">// </span><span class="s6">2</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size </span><span class="s3">// </span><span class="s6">2</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">rankfilter</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">rank</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">MedianFilter</span><span class="s3">(</span><span class="s1">RankFilter</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Create a median filter. Picks the median pixel value in a window with the 
+    given size. 
+ 
+    :param size: The kernel size, in pixels. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;Median&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">size</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s6">3</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">size </span><span class="s3">= </span><span class="s1">size</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">rank </span><span class="s3">= </span><span class="s1">size </span><span class="s3">* </span><span class="s1">size </span><span class="s3">// </span><span class="s6">2</span>
+
+
+<span class="s2">class </span><span class="s1">MinFilter</span><span class="s3">(</span><span class="s1">RankFilter</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Create a min filter.  Picks the lowest pixel value in a window with the 
+    given size. 
+ 
+    :param size: The kernel size, in pixels. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;Min&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">size</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s6">3</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">size </span><span class="s3">= </span><span class="s1">size</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">rank </span><span class="s3">= </span><span class="s6">0</span>
+
+
+<span class="s2">class </span><span class="s1">MaxFilter</span><span class="s3">(</span><span class="s1">RankFilter</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Create a max filter.  Picks the largest pixel value in a window with the 
+    given size. 
+ 
+    :param size: The kernel size, in pixels. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;Max&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">size</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s6">3</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">size </span><span class="s3">= </span><span class="s1">size</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">rank </span><span class="s3">= </span><span class="s1">size </span><span class="s3">* </span><span class="s1">size </span><span class="s3">- </span><span class="s6">1</span>
+
+
+<span class="s2">class </span><span class="s1">ModeFilter</span><span class="s3">(</span><span class="s1">Filter</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Create a mode filter. Picks the most frequent pixel value in a box with the 
+    given size.  Pixel values that occur only once or twice are ignored; if no 
+    pixel value occurs more than twice, the original pixel value is preserved. 
+ 
+    :param size: The kernel size, in pixels. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;Mode&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">size</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s6">3</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">size </span><span class="s3">= </span><span class="s1">size</span>
+
+    <span class="s2">def </span><span class="s1">filter</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">_imaging</span><span class="s3">.</span><span class="s1">ImagingCore</span><span class="s3">) </span><span class="s1">-&gt; _imaging</span><span class="s3">.</span><span class="s1">ImagingCore</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">modefilter</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">GaussianBlur</span><span class="s3">(</span><span class="s1">MultibandFilter</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot;Blurs the image with a sequence of extended box filters, which 
+    approximates a Gaussian kernel. For details on accuracy see 
+    &lt;https://www.mia.uni-saarland.de/Publications/gwosdek-ssvm11.pdf&gt; 
+ 
+    :param radius: Standard deviation of the Gaussian kernel. Either a sequence of two 
+                   numbers for x and y, or a single number for both. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;GaussianBlur&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">radius</span><span class="s3">: </span><span class="s1">float </span><span class="s3">| </span><span class="s1">Sequence</span><span class="s3">[</span><span class="s1">float</span><span class="s3">] = </span><span class="s6">2</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">radius </span><span class="s3">= </span><span class="s1">radius</span>
+
+    <span class="s2">def </span><span class="s1">filter</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">_imaging</span><span class="s3">.</span><span class="s1">ImagingCore</span><span class="s3">) </span><span class="s1">-&gt; _imaging</span><span class="s3">.</span><span class="s1">ImagingCore</span><span class="s3">:</span>
+        <span class="s1">xy </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">radius</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">xy</span><span class="s3">, (</span><span class="s1">int</span><span class="s3">, </span><span class="s1">float</span><span class="s3">)):</span>
+            <span class="s1">xy </span><span class="s3">= (</span><span class="s1">xy</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">xy </span><span class="s3">== (</span><span class="s6">0</span><span class="s3">, </span><span class="s6">0</span><span class="s3">):</span>
+            <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+        <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">gaussian_blur</span><span class="s3">(</span><span class="s1">xy</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">BoxBlur</span><span class="s3">(</span><span class="s1">MultibandFilter</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot;Blurs the image by setting each pixel to the average value of the pixels 
+    in a square box extending radius pixels in each direction. 
+    Supports float radius of arbitrary size. Uses an optimized implementation 
+    which runs in linear time relative to the size of the image 
+    for any radius value. 
+ 
+    :param radius: Size of the box in a direction. Either a sequence of two numbers for 
+                   x and y, or a single number for both. 
+ 
+                   Radius 0 does not blur, returns an identical image. 
+                   Radius 1 takes 1 pixel in each direction, i.e. 9 pixels in total. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;BoxBlur&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">radius</span><span class="s3">: </span><span class="s1">float </span><span class="s3">| </span><span class="s1">Sequence</span><span class="s3">[</span><span class="s1">float</span><span class="s3">]) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">xy </span><span class="s3">= </span><span class="s1">radius </span><span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">radius</span><span class="s3">, (</span><span class="s1">tuple</span><span class="s3">, </span><span class="s1">list</span><span class="s3">)) </span><span class="s2">else </span><span class="s3">(</span><span class="s1">radius</span><span class="s3">, </span><span class="s1">radius</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">xy</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] &lt; </span><span class="s6">0 </span><span class="s2">or </span><span class="s1">xy</span><span class="s3">[</span><span class="s6">1</span><span class="s3">] &lt; </span><span class="s6">0</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;radius must be &gt;= 0&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">radius </span><span class="s3">= </span><span class="s1">radius</span>
+
+    <span class="s2">def </span><span class="s1">filter</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">_imaging</span><span class="s3">.</span><span class="s1">ImagingCore</span><span class="s3">) </span><span class="s1">-&gt; _imaging</span><span class="s3">.</span><span class="s1">ImagingCore</span><span class="s3">:</span>
+        <span class="s1">xy </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">radius</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">xy</span><span class="s3">, (</span><span class="s1">int</span><span class="s3">, </span><span class="s1">float</span><span class="s3">)):</span>
+            <span class="s1">xy </span><span class="s3">= (</span><span class="s1">xy</span><span class="s3">, </span><span class="s1">xy</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">xy </span><span class="s3">== (</span><span class="s6">0</span><span class="s3">, </span><span class="s6">0</span><span class="s3">):</span>
+            <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+        <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">box_blur</span><span class="s3">(</span><span class="s1">xy</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">UnsharpMask</span><span class="s3">(</span><span class="s1">MultibandFilter</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot;Unsharp mask filter. 
+ 
+    See Wikipedia's entry on `digital unsharp masking`_ for an explanation of 
+    the parameters. 
+ 
+    :param radius: Blur Radius 
+    :param percent: Unsharp strength, in percent 
+    :param threshold: Threshold controls the minimum brightness change that 
+      will be sharpened 
+ 
+    .. _digital unsharp masking: https://en.wikipedia.org/wiki/Unsharp_masking#Digital_unsharp_masking 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;UnsharpMask&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">, </span><span class="s1">radius</span><span class="s3">: </span><span class="s1">float </span><span class="s3">= </span><span class="s6">2</span><span class="s3">, </span><span class="s1">percent</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s6">150</span><span class="s3">, </span><span class="s1">threshold</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s6">3</span>
+    <span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">radius </span><span class="s3">= </span><span class="s1">radius</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">percent </span><span class="s3">= </span><span class="s1">percent</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">threshold </span><span class="s3">= </span><span class="s1">threshold</span>
+
+    <span class="s2">def </span><span class="s1">filter</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">_imaging</span><span class="s3">.</span><span class="s1">ImagingCore</span><span class="s3">) </span><span class="s1">-&gt; _imaging</span><span class="s3">.</span><span class="s1">ImagingCore</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">unsharp_mask</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">radius</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">percent</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">threshold</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">BLUR</span><span class="s3">(</span><span class="s1">BuiltinFilter</span><span class="s3">):</span>
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;Blur&quot;</span>
+    <span class="s0"># fmt: off</span>
+    <span class="s1">filterargs </span><span class="s3">= (</span><span class="s6">5</span><span class="s3">, </span><span class="s6">5</span><span class="s3">), </span><span class="s6">16</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, (</span>
+        <span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s6">1</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, </span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s6">1</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, </span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s6">1</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, </span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">,</span>
+    <span class="s3">)</span>
+    <span class="s0"># fmt: on</span>
+
+
+<span class="s2">class </span><span class="s1">CONTOUR</span><span class="s3">(</span><span class="s1">BuiltinFilter</span><span class="s3">):</span>
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;Contour&quot;</span>
+    <span class="s0"># fmt: off</span>
+    <span class="s1">filterargs </span><span class="s3">= (</span><span class="s6">3</span><span class="s3">, </span><span class="s6">3</span><span class="s3">), </span><span class="s6">1</span><span class="s3">, </span><span class="s6">255</span><span class="s3">, (</span>
+        <span class="s3">-</span><span class="s6">1</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s3">-</span><span class="s6">1</span><span class="s3">,  </span><span class="s6">8</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s3">-</span><span class="s6">1</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">,</span>
+    <span class="s3">)</span>
+    <span class="s0"># fmt: on</span>
+
+
+<span class="s2">class </span><span class="s1">DETAIL</span><span class="s3">(</span><span class="s1">BuiltinFilter</span><span class="s3">):</span>
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;Detail&quot;</span>
+    <span class="s0"># fmt: off</span>
+    <span class="s1">filterargs </span><span class="s3">= (</span><span class="s6">3</span><span class="s3">, </span><span class="s6">3</span><span class="s3">), </span><span class="s6">6</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, (</span>
+        <span class="s6">0</span><span class="s3">,  -</span><span class="s6">1</span><span class="s3">,  </span><span class="s6">0</span><span class="s3">,</span>
+        <span class="s3">-</span><span class="s6">1</span><span class="s3">, </span><span class="s6">10</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s6">0</span><span class="s3">,  -</span><span class="s6">1</span><span class="s3">,  </span><span class="s6">0</span><span class="s3">,</span>
+    <span class="s3">)</span>
+    <span class="s0"># fmt: on</span>
+
+
+<span class="s2">class </span><span class="s1">EDGE_ENHANCE</span><span class="s3">(</span><span class="s1">BuiltinFilter</span><span class="s3">):</span>
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;Edge-enhance&quot;</span>
+    <span class="s0"># fmt: off</span>
+    <span class="s1">filterargs </span><span class="s3">= (</span><span class="s6">3</span><span class="s3">, </span><span class="s6">3</span><span class="s3">), </span><span class="s6">2</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, (</span>
+        <span class="s3">-</span><span class="s6">1</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s3">-</span><span class="s6">1</span><span class="s3">, </span><span class="s6">10</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s3">-</span><span class="s6">1</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">,</span>
+    <span class="s3">)</span>
+    <span class="s0"># fmt: on</span>
+
+
+<span class="s2">class </span><span class="s1">EDGE_ENHANCE_MORE</span><span class="s3">(</span><span class="s1">BuiltinFilter</span><span class="s3">):</span>
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;Edge-enhance More&quot;</span>
+    <span class="s0"># fmt: off</span>
+    <span class="s1">filterargs </span><span class="s3">= (</span><span class="s6">3</span><span class="s3">, </span><span class="s6">3</span><span class="s3">), </span><span class="s6">1</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, (</span>
+        <span class="s3">-</span><span class="s6">1</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s3">-</span><span class="s6">1</span><span class="s3">,  </span><span class="s6">9</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s3">-</span><span class="s6">1</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">,</span>
+    <span class="s3">)</span>
+    <span class="s0"># fmt: on</span>
+
+
+<span class="s2">class </span><span class="s1">EMBOSS</span><span class="s3">(</span><span class="s1">BuiltinFilter</span><span class="s3">):</span>
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;Emboss&quot;</span>
+    <span class="s0"># fmt: off</span>
+    <span class="s1">filterargs </span><span class="s3">= (</span><span class="s6">3</span><span class="s3">, </span><span class="s6">3</span><span class="s3">), </span><span class="s6">1</span><span class="s3">, </span><span class="s6">128</span><span class="s3">, (</span>
+        <span class="s3">-</span><span class="s6">1</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, </span><span class="s6">0</span><span class="s3">,</span>
+        <span class="s6">0</span><span class="s3">,  </span><span class="s6">1</span><span class="s3">, </span><span class="s6">0</span><span class="s3">,</span>
+        <span class="s6">0</span><span class="s3">,  </span><span class="s6">0</span><span class="s3">, </span><span class="s6">0</span><span class="s3">,</span>
+    <span class="s3">)</span>
+    <span class="s0"># fmt: on</span>
+
+
+<span class="s2">class </span><span class="s1">FIND_EDGES</span><span class="s3">(</span><span class="s1">BuiltinFilter</span><span class="s3">):</span>
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;Find Edges&quot;</span>
+    <span class="s0"># fmt: off</span>
+    <span class="s1">filterargs </span><span class="s3">= (</span><span class="s6">3</span><span class="s3">, </span><span class="s6">3</span><span class="s3">), </span><span class="s6">1</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, (</span>
+        <span class="s3">-</span><span class="s6">1</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s3">-</span><span class="s6">1</span><span class="s3">,  </span><span class="s6">8</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s3">-</span><span class="s6">1</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">,</span>
+    <span class="s3">)</span>
+    <span class="s0"># fmt: on</span>
+
+
+<span class="s2">class </span><span class="s1">SHARPEN</span><span class="s3">(</span><span class="s1">BuiltinFilter</span><span class="s3">):</span>
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;Sharpen&quot;</span>
+    <span class="s0"># fmt: off</span>
+    <span class="s1">filterargs </span><span class="s3">= (</span><span class="s6">3</span><span class="s3">, </span><span class="s6">3</span><span class="s3">), </span><span class="s6">16</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, (</span>
+        <span class="s3">-</span><span class="s6">2</span><span class="s3">, -</span><span class="s6">2</span><span class="s3">, -</span><span class="s6">2</span><span class="s3">,</span>
+        <span class="s3">-</span><span class="s6">2</span><span class="s3">, </span><span class="s6">32</span><span class="s3">, -</span><span class="s6">2</span><span class="s3">,</span>
+        <span class="s3">-</span><span class="s6">2</span><span class="s3">, -</span><span class="s6">2</span><span class="s3">, -</span><span class="s6">2</span><span class="s3">,</span>
+    <span class="s3">)</span>
+    <span class="s0"># fmt: on</span>
+
+
+<span class="s2">class </span><span class="s1">SMOOTH</span><span class="s3">(</span><span class="s1">BuiltinFilter</span><span class="s3">):</span>
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;Smooth&quot;</span>
+    <span class="s0"># fmt: off</span>
+    <span class="s1">filterargs </span><span class="s3">= (</span><span class="s6">3</span><span class="s3">, </span><span class="s6">3</span><span class="s3">), </span><span class="s6">13</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, (</span>
+        <span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s6">1</span><span class="s3">, </span><span class="s6">5</span><span class="s3">, </span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">,</span>
+    <span class="s3">)</span>
+    <span class="s0"># fmt: on</span>
+
+
+<span class="s2">class </span><span class="s1">SMOOTH_MORE</span><span class="s3">(</span><span class="s1">BuiltinFilter</span><span class="s3">):</span>
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;Smooth More&quot;</span>
+    <span class="s0"># fmt: off</span>
+    <span class="s1">filterargs </span><span class="s3">= (</span><span class="s6">5</span><span class="s3">, </span><span class="s6">5</span><span class="s3">), </span><span class="s6">100</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, (</span>
+        <span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">,  </span><span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s6">1</span><span class="s3">, </span><span class="s6">5</span><span class="s3">,  </span><span class="s6">5</span><span class="s3">, </span><span class="s6">5</span><span class="s3">, </span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s6">1</span><span class="s3">, </span><span class="s6">5</span><span class="s3">, </span><span class="s6">44</span><span class="s3">, </span><span class="s6">5</span><span class="s3">, </span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s6">1</span><span class="s3">, </span><span class="s6">5</span><span class="s3">,  </span><span class="s6">5</span><span class="s3">, </span><span class="s6">5</span><span class="s3">, </span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">,  </span><span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">,</span>
+    <span class="s3">)</span>
+    <span class="s0"># fmt: on</span>
+
+
+<span class="s2">class </span><span class="s1">Color3DLUT</span><span class="s3">(</span><span class="s1">MultibandFilter</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot;Three-dimensional color lookup table. 
+ 
+    Transforms 3-channel pixels using the values of the channels as coordinates 
+    in the 3D lookup table and interpolating the nearest elements. 
+ 
+    This method allows you to apply almost any color transformation 
+    in constant time by using pre-calculated decimated tables. 
+ 
+    .. versionadded:: 5.2.0 
+ 
+    :param size: Size of the table. One int or tuple of (int, int, int). 
+                 Minimal size in any dimension is 2, maximum is 65. 
+    :param table: Flat lookup table. A list of ``channels * size**3`` 
+                  float elements or a list of ``size**3`` channels-sized 
+                  tuples with floats. Channels are changed first, 
+                  then first dimension, then second, then third. 
+                  Value 0.0 corresponds lowest value of output, 1.0 highest. 
+    :param channels: Number of channels in the table. Could be 3 or 4. 
+                     Default is 3. 
+    :param target_mode: A mode for the result image. Should have not less 
+                        than ``channels`` channels. Default is ``None``, 
+                        which means that mode wouldn't be changed. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;Color 3D LUT&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">size</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">],</span>
+        <span class="s1">table</span><span class="s3">: </span><span class="s1">Sequence</span><span class="s3">[</span><span class="s1">float</span><span class="s3">] | </span><span class="s1">Sequence</span><span class="s3">[</span><span class="s1">Sequence</span><span class="s3">[</span><span class="s1">int</span><span class="s3">]] | </span><span class="s1">NumpyArray</span><span class="s3">,</span>
+        <span class="s1">channels</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s6">3</span><span class="s3">,</span>
+        <span class="s1">target_mode</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s3">**</span><span class="s1">kwargs</span><span class="s3">: </span><span class="s1">bool</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">channels </span><span class="s2">not in </span><span class="s3">(</span><span class="s6">3</span><span class="s3">, </span><span class="s6">4</span><span class="s3">):</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;Only 3 or 4 output channels are supported&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">size </span><span class="s3">= </span><span class="s1">size </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_check_size</span><span class="s3">(</span><span class="s1">size</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">channels </span><span class="s3">= </span><span class="s1">channels</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">= </span><span class="s1">target_mode</span>
+
+        <span class="s0"># Hidden flag `_copy_table=False` could be used to avoid extra copying</span>
+        <span class="s0"># of the table if the table is specially made for the constructor.</span>
+        <span class="s1">copy_table </span><span class="s3">= </span><span class="s1">kwargs</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">&quot;_copy_table&quot;</span><span class="s3">, </span><span class="s2">True</span><span class="s3">)</span>
+        <span class="s1">items </span><span class="s3">= </span><span class="s1">size</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] * </span><span class="s1">size</span><span class="s3">[</span><span class="s6">1</span><span class="s3">] * </span><span class="s1">size</span><span class="s3">[</span><span class="s6">2</span><span class="s3">]</span>
+        <span class="s1">wrong_size </span><span class="s3">= </span><span class="s2">False</span>
+
+        <span class="s1">numpy</span><span class="s3">: </span><span class="s1">ModuleType </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">table</span><span class="s3">, </span><span class="s4">&quot;shape&quot;</span><span class="s3">):</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s2">import </span><span class="s1">numpy</span>
+            <span class="s2">except </span><span class="s1">ImportError</span><span class="s3">:</span>
+                <span class="s2">pass</span>
+
+        <span class="s2">if </span><span class="s1">numpy </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">table</span><span class="s3">, </span><span class="s1">numpy</span><span class="s3">.</span><span class="s1">ndarray</span><span class="s3">):</span>
+            <span class="s1">numpy_table</span><span class="s3">: </span><span class="s1">NumpyArray </span><span class="s3">= </span><span class="s1">table</span>
+            <span class="s2">if </span><span class="s1">copy_table</span><span class="s3">:</span>
+                <span class="s1">numpy_table </span><span class="s3">= </span><span class="s1">numpy_table</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+
+            <span class="s2">if </span><span class="s1">numpy_table</span><span class="s3">.</span><span class="s1">shape </span><span class="s2">in </span><span class="s3">[</span>
+                <span class="s3">(</span><span class="s1">items </span><span class="s3">* </span><span class="s1">channels</span><span class="s3">,),</span>
+                <span class="s3">(</span><span class="s1">items</span><span class="s3">, </span><span class="s1">channels</span><span class="s3">),</span>
+                <span class="s3">(</span><span class="s1">size</span><span class="s3">[</span><span class="s6">2</span><span class="s3">], </span><span class="s1">size</span><span class="s3">[</span><span class="s6">1</span><span class="s3">], </span><span class="s1">size</span><span class="s3">[</span><span class="s6">0</span><span class="s3">], </span><span class="s1">channels</span><span class="s3">),</span>
+            <span class="s3">]:</span>
+                <span class="s1">table </span><span class="s3">= </span><span class="s1">numpy_table</span><span class="s3">.</span><span class="s1">reshape</span><span class="s3">(</span><span class="s1">items </span><span class="s3">* </span><span class="s1">channels</span><span class="s3">)</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">wrong_size </span><span class="s3">= </span><span class="s2">True</span>
+
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">copy_table</span><span class="s3">:</span>
+                <span class="s1">table </span><span class="s3">= </span><span class="s1">list</span><span class="s3">(</span><span class="s1">table</span><span class="s3">)</span>
+
+            <span class="s0"># Convert to a flat list</span>
+            <span class="s2">if </span><span class="s1">table </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">table</span><span class="s3">[</span><span class="s6">0</span><span class="s3">], (</span><span class="s1">list</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">)):</span>
+                <span class="s1">raw_table </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">Sequence</span><span class="s3">[</span><span class="s1">Sequence</span><span class="s3">[</span><span class="s1">int</span><span class="s3">]], </span><span class="s1">table</span><span class="s3">)</span>
+                <span class="s1">flat_table</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">int</span><span class="s3">] = []</span>
+                <span class="s2">for </span><span class="s1">pixel </span><span class="s2">in </span><span class="s1">raw_table</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">pixel</span><span class="s3">) != </span><span class="s1">channels</span><span class="s3">:</span>
+                        <span class="s1">msg </span><span class="s3">= (</span>
+                            <span class="s4">&quot;The elements of the table should &quot;</span>
+                            <span class="s4">f&quot;have a length of </span><span class="s2">{</span><span class="s1">channels</span><span class="s2">}</span><span class="s4">.&quot;</span>
+                        <span class="s3">)</span>
+                        <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+                    <span class="s1">flat_table</span><span class="s3">.</span><span class="s1">extend</span><span class="s3">(</span><span class="s1">pixel</span><span class="s3">)</span>
+                <span class="s1">table </span><span class="s3">= </span><span class="s1">flat_table</span>
+
+        <span class="s2">if </span><span class="s1">wrong_size </span><span class="s2">or </span><span class="s1">len</span><span class="s3">(</span><span class="s1">table</span><span class="s3">) != </span><span class="s1">items </span><span class="s3">* </span><span class="s1">channels</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= (</span>
+                <span class="s4">&quot;The table should have either channels * size**3 float items &quot;</span>
+                <span class="s4">&quot;or size**3 items of channels-sized tuples with floats. &quot;</span>
+                <span class="s4">f&quot;Table should be: </span><span class="s2">{</span><span class="s1">channels</span><span class="s2">}</span><span class="s4">x</span><span class="s2">{</span><span class="s1">size</span><span class="s3">[</span><span class="s6">0</span><span class="s3">]</span><span class="s2">}</span><span class="s4">x</span><span class="s2">{</span><span class="s1">size</span><span class="s3">[</span><span class="s6">1</span><span class="s3">]</span><span class="s2">}</span><span class="s4">x</span><span class="s2">{</span><span class="s1">size</span><span class="s3">[</span><span class="s6">2</span><span class="s3">]</span><span class="s2">}</span><span class="s4">. &quot;</span>
+                <span class="s4">f&quot;Actual length: </span><span class="s2">{</span><span class="s1">len</span><span class="s3">(</span><span class="s1">table</span><span class="s3">)</span><span class="s2">}</span><span class="s4">&quot;</span>
+            <span class="s3">)</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">table </span><span class="s3">= </span><span class="s1">table</span>
+
+    <span class="s3">@</span><span class="s1">staticmethod</span>
+    <span class="s2">def </span><span class="s1">_check_size</span><span class="s3">(</span><span class="s1">size</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]:</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">_</span><span class="s3">, </span><span class="s1">_</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">size</span>
+        <span class="s2">except </span><span class="s1">ValueError </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;Size should be either an integer or a tuple of three integers.&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">) </span><span class="s2">from </span><span class="s1">e</span>
+        <span class="s2">except </span><span class="s1">TypeError</span><span class="s3">:</span>
+            <span class="s1">size </span><span class="s3">= (</span><span class="s1">size</span><span class="s3">, </span><span class="s1">size</span><span class="s3">, </span><span class="s1">size</span><span class="s3">)</span>
+        <span class="s1">size </span><span class="s3">= </span><span class="s1">tuple</span><span class="s3">(</span><span class="s1">int</span><span class="s3">(</span><span class="s1">x</span><span class="s3">) </span><span class="s2">for </span><span class="s1">x </span><span class="s2">in </span><span class="s1">size</span><span class="s3">)</span>
+        <span class="s2">for </span><span class="s1">size_1d </span><span class="s2">in </span><span class="s1">size</span><span class="s3">:</span>
+            <span class="s2">if not </span><span class="s6">2 </span><span class="s3">&lt;= </span><span class="s1">size_1d </span><span class="s3">&lt;= </span><span class="s6">65</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;Size should be in [2, 65] range.&quot;</span>
+                <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">size</span>
+
+    <span class="s3">@</span><span class="s1">classmethod</span>
+    <span class="s2">def </span><span class="s1">generate</span><span class="s3">(</span>
+        <span class="s1">cls</span><span class="s3">,</span>
+        <span class="s1">size</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">],</span>
+        <span class="s1">callback</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">float</span><span class="s3">, </span><span class="s1">float</span><span class="s3">, </span><span class="s1">float</span><span class="s3">], </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">float</span><span class="s3">, ...]],</span>
+        <span class="s1">channels</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s6">3</span><span class="s3">,</span>
+        <span class="s1">target_mode</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; Color3DLUT</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot;Generates new LUT using provided callback. 
+ 
+        :param size: Size of the table. Passed to the constructor. 
+        :param callback: Function with three parameters which correspond 
+                         three color channels. Will be called ``size**3`` 
+                         times with values from 0.0 to 1.0 and should return 
+                         a tuple with ``channels`` elements. 
+        :param channels: The number of channels which should return callback. 
+        :param target_mode: Passed to the constructor of the resulting 
+                            lookup table. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">size_1d</span><span class="s3">, </span><span class="s1">size_2d</span><span class="s3">, </span><span class="s1">size_3d </span><span class="s3">= </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">_check_size</span><span class="s3">(</span><span class="s1">size</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">channels </span><span class="s2">not in </span><span class="s3">(</span><span class="s6">3</span><span class="s3">, </span><span class="s6">4</span><span class="s3">):</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;Only 3 or 4 output channels are supported&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s1">table</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">float</span><span class="s3">] = [</span><span class="s6">0</span><span class="s3">] * (</span><span class="s1">size_1d </span><span class="s3">* </span><span class="s1">size_2d </span><span class="s3">* </span><span class="s1">size_3d </span><span class="s3">* </span><span class="s1">channels</span><span class="s3">)</span>
+        <span class="s1">idx_out </span><span class="s3">= </span><span class="s6">0</span>
+        <span class="s2">for </span><span class="s1">b </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">size_3d</span><span class="s3">):</span>
+            <span class="s2">for </span><span class="s1">g </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">size_2d</span><span class="s3">):</span>
+                <span class="s2">for </span><span class="s1">r </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">size_1d</span><span class="s3">):</span>
+                    <span class="s1">table</span><span class="s3">[</span><span class="s1">idx_out </span><span class="s3">: </span><span class="s1">idx_out </span><span class="s3">+ </span><span class="s1">channels</span><span class="s3">] = </span><span class="s1">callback</span><span class="s3">(</span>
+                        <span class="s1">r </span><span class="s3">/ (</span><span class="s1">size_1d </span><span class="s3">- </span><span class="s6">1</span><span class="s3">), </span><span class="s1">g </span><span class="s3">/ (</span><span class="s1">size_2d </span><span class="s3">- </span><span class="s6">1</span><span class="s3">), </span><span class="s1">b </span><span class="s3">/ (</span><span class="s1">size_3d </span><span class="s3">- </span><span class="s6">1</span><span class="s3">)</span>
+                    <span class="s3">)</span>
+                    <span class="s1">idx_out </span><span class="s3">+= </span><span class="s1">channels</span>
+
+        <span class="s2">return </span><span class="s1">cls</span><span class="s3">(</span>
+            <span class="s3">(</span><span class="s1">size_1d</span><span class="s3">, </span><span class="s1">size_2d</span><span class="s3">, </span><span class="s1">size_3d</span><span class="s3">),</span>
+            <span class="s1">table</span><span class="s3">,</span>
+            <span class="s1">channels</span><span class="s3">=</span><span class="s1">channels</span><span class="s3">,</span>
+            <span class="s1">target_mode</span><span class="s3">=</span><span class="s1">target_mode</span><span class="s3">,</span>
+            <span class="s1">_copy_table</span><span class="s3">=</span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">transform</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">callback</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[..., </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">float</span><span class="s3">, ...]],</span>
+        <span class="s1">with_normals</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">channels</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">target_mode</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; Color3DLUT</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot;Transforms the table values using provided callback and returns 
+        a new LUT with altered values. 
+ 
+        :param callback: A function which takes old lookup table values 
+                         and returns a new set of values. The number 
+                         of arguments which function should take is 
+                         ``self.channels`` or ``3 + self.channels`` 
+                         if ``with_normals`` flag is set. 
+                         Should return a tuple of ``self.channels`` or 
+                         ``channels`` elements if it is set. 
+        :param with_normals: If true, ``callback`` will be called with 
+                             coordinates in the color cube as the first 
+                             three arguments. Otherwise, ``callback`` 
+                             will be called only with actual color values. 
+        :param channels: The number of channels in the resulting lookup table. 
+        :param target_mode: Passed to the constructor of the resulting 
+                            lookup table. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">channels </span><span class="s2">not in </span><span class="s3">(</span><span class="s2">None</span><span class="s3">, </span><span class="s6">3</span><span class="s3">, </span><span class="s6">4</span><span class="s3">):</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;Only 3 or 4 output channels are supported&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">ch_in </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">channels</span>
+        <span class="s1">ch_out </span><span class="s3">= </span><span class="s1">channels </span><span class="s2">or </span><span class="s1">ch_in</span>
+        <span class="s1">size_1d</span><span class="s3">, </span><span class="s1">size_2d</span><span class="s3">, </span><span class="s1">size_3d </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span>
+
+        <span class="s1">table</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">float</span><span class="s3">] = [</span><span class="s6">0</span><span class="s3">] * (</span><span class="s1">size_1d </span><span class="s3">* </span><span class="s1">size_2d </span><span class="s3">* </span><span class="s1">size_3d </span><span class="s3">* </span><span class="s1">ch_out</span><span class="s3">)</span>
+        <span class="s1">idx_in </span><span class="s3">= </span><span class="s6">0</span>
+        <span class="s1">idx_out </span><span class="s3">= </span><span class="s6">0</span>
+        <span class="s2">for </span><span class="s1">b </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">size_3d</span><span class="s3">):</span>
+            <span class="s2">for </span><span class="s1">g </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">size_2d</span><span class="s3">):</span>
+                <span class="s2">for </span><span class="s1">r </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">size_1d</span><span class="s3">):</span>
+                    <span class="s1">values </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">table</span><span class="s3">[</span><span class="s1">idx_in </span><span class="s3">: </span><span class="s1">idx_in </span><span class="s3">+ </span><span class="s1">ch_in</span><span class="s3">]</span>
+                    <span class="s2">if </span><span class="s1">with_normals</span><span class="s3">:</span>
+                        <span class="s1">values </span><span class="s3">= </span><span class="s1">callback</span><span class="s3">(</span>
+                            <span class="s1">r </span><span class="s3">/ (</span><span class="s1">size_1d </span><span class="s3">- </span><span class="s6">1</span><span class="s3">),</span>
+                            <span class="s1">g </span><span class="s3">/ (</span><span class="s1">size_2d </span><span class="s3">- </span><span class="s6">1</span><span class="s3">),</span>
+                            <span class="s1">b </span><span class="s3">/ (</span><span class="s1">size_3d </span><span class="s3">- </span><span class="s6">1</span><span class="s3">),</span>
+                            <span class="s3">*</span><span class="s1">values</span><span class="s3">,</span>
+                        <span class="s3">)</span>
+                    <span class="s2">else</span><span class="s3">:</span>
+                        <span class="s1">values </span><span class="s3">= </span><span class="s1">callback</span><span class="s3">(*</span><span class="s1">values</span><span class="s3">)</span>
+                    <span class="s1">table</span><span class="s3">[</span><span class="s1">idx_out </span><span class="s3">: </span><span class="s1">idx_out </span><span class="s3">+ </span><span class="s1">ch_out</span><span class="s3">] = </span><span class="s1">values</span>
+                    <span class="s1">idx_in </span><span class="s3">+= </span><span class="s1">ch_in</span>
+                    <span class="s1">idx_out </span><span class="s3">+= </span><span class="s1">ch_out</span>
+
+        <span class="s2">return </span><span class="s1">type</span><span class="s3">(</span><span class="s1">self</span><span class="s3">)(</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">,</span>
+            <span class="s1">table</span><span class="s3">,</span>
+            <span class="s1">channels</span><span class="s3">=</span><span class="s1">ch_out</span><span class="s3">,</span>
+            <span class="s1">target_mode</span><span class="s3">=</span><span class="s1">target_mode </span><span class="s2">or </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">,</span>
+            <span class="s1">_copy_table</span><span class="s3">=</span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">__repr__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; str</span><span class="s3">:</span>
+        <span class="s1">r </span><span class="s3">= [</span>
+            <span class="s4">f&quot;</span><span class="s2">{</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__class__</span><span class="s3">.</span><span class="s1">__name__</span><span class="s2">} </span><span class="s4">from </span><span class="s2">{</span><span class="s1">self</span><span class="s3">.</span><span class="s1">table</span><span class="s3">.</span><span class="s1">__class__</span><span class="s3">.</span><span class="s1">__name__</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s3">,</span>
+            <span class="s4">&quot;size={:d}x{:d}x{:d}&quot;</span><span class="s3">.</span><span class="s1">format</span><span class="s3">(*</span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">),</span>
+            <span class="s4">f&quot;channels=</span><span class="s2">{</span><span class="s1">self</span><span class="s3">.</span><span class="s1">channels</span><span class="s2">:</span><span class="s4">d</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s3">,</span>
+        <span class="s3">]</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">:</span>
+            <span class="s1">r</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s4">f&quot;target_mode=</span><span class="s2">{</span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s4">&quot;&lt;{}&gt;&quot;</span><span class="s3">.</span><span class="s1">format</span><span class="s3">(</span><span class="s4">&quot; &quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">r</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">filter</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">_imaging</span><span class="s3">.</span><span class="s1">ImagingCore</span><span class="s3">) </span><span class="s1">-&gt; _imaging</span><span class="s3">.</span><span class="s1">ImagingCore</span><span class="s3">:</span>
+        <span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">Image</span>
+
+        <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">color_lut_3d</span><span class="s3">(</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">or </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">,</span>
+            <span class="s1">Image</span><span class="s3">.</span><span class="s1">Resampling</span><span class="s3">.</span><span class="s1">BILINEAR</span><span class="s3">,</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">channels</span><span class="s3">,</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s6">0</span><span class="s3">],</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s6">1</span><span class="s3">],</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s6">2</span><span class="s3">],</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">table</span><span class="s3">,</span>
+        <span class="s3">)</span>
+</pre>
+</body>
+</html>

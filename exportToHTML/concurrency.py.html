@@ -1,0 +1,84 @@
+<html>
+<head>
+<title>concurrency.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+.s5 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+concurrency.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">functools</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">import </span><span class="s1">typing</span>
+<span class="s0">import </span><span class="s1">warnings</span>
+
+<span class="s0">import </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">to_thread</span>
+
+<span class="s0">if </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">version_info </span><span class="s2">&gt;= (</span><span class="s3">3</span><span class="s2">, </span><span class="s3">10</span><span class="s2">):  </span><span class="s4"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">ParamSpec</span>
+<span class="s0">else</span><span class="s2">:  </span><span class="s4"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s1">typing_extensions </span><span class="s0">import </span><span class="s1">ParamSpec</span>
+
+<span class="s1">P </span><span class="s2">= </span><span class="s1">ParamSpec</span><span class="s2">(</span><span class="s5">&quot;P&quot;</span><span class="s2">)</span>
+<span class="s1">T </span><span class="s2">= </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s5">&quot;T&quot;</span><span class="s2">)</span>
+
+
+<span class="s0">async def </span><span class="s1">run_until_first_complete</span><span class="s2">(*</span><span class="s1">args</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">, </span><span class="s1">dict</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:  </span><span class="s4"># type: ignore[type-arg]</span>
+    <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+        <span class="s5">&quot;run_until_first_complete is deprecated and will be removed in a future version.&quot;</span><span class="s2">,</span>
+        <span class="s1">DeprecationWarning</span><span class="s2">,</span>
+    <span class="s2">)</span>
+
+    <span class="s0">async with </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">create_task_group</span><span class="s2">() </span><span class="s0">as </span><span class="s1">task_group</span><span class="s2">:</span>
+
+        <span class="s0">async def </span><span class="s1">run</span><span class="s2">(</span><span class="s1">func</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[], </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Coroutine</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:  </span><span class="s4"># type: ignore[type-arg]</span>
+            <span class="s0">await </span><span class="s1">func</span><span class="s2">()</span>
+            <span class="s1">task_group</span><span class="s2">.</span><span class="s1">cancel_scope</span><span class="s2">.</span><span class="s1">cancel</span><span class="s2">()</span>
+
+        <span class="s0">for </span><span class="s1">func</span><span class="s2">, </span><span class="s1">kwargs </span><span class="s0">in </span><span class="s1">args</span><span class="s2">:</span>
+            <span class="s1">task_group</span><span class="s2">.</span><span class="s1">start_soon</span><span class="s2">(</span><span class="s1">run</span><span class="s2">, </span><span class="s1">functools</span><span class="s2">.</span><span class="s1">partial</span><span class="s2">(</span><span class="s1">func</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">))</span>
+
+
+<span class="s0">async def </span><span class="s1">run_in_threadpool</span><span class="s2">(</span><span class="s1">func</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[</span><span class="s1">P</span><span class="s2">, </span><span class="s1">T</span><span class="s2">], *</span><span class="s1">args</span><span class="s2">: </span><span class="s1">P</span><span class="s2">.</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">P</span><span class="s2">.</span><span class="s1">kwargs</span><span class="s2">) </span><span class="s1">-&gt; T</span><span class="s2">:</span>
+    <span class="s1">func </span><span class="s2">= </span><span class="s1">functools</span><span class="s2">.</span><span class="s1">partial</span><span class="s2">(</span><span class="s1">func</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+    <span class="s0">return await </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">to_thread</span><span class="s2">.</span><span class="s1">run_sync</span><span class="s2">(</span><span class="s1">func</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">_StopIteration</span><span class="s2">(</span><span class="s1">Exception</span><span class="s2">):</span>
+    <span class="s0">pass</span>
+
+
+<span class="s0">def </span><span class="s1">_next</span><span class="s2">(</span><span class="s1">iterator</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">T</span><span class="s2">]) </span><span class="s1">-&gt; T</span><span class="s2">:</span>
+    <span class="s4"># We can't raise `StopIteration` from within the threadpool iterator</span>
+    <span class="s4"># and catch it outside that context, so we coerce them into a different</span>
+    <span class="s4"># exception type.</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">next</span><span class="s2">(</span><span class="s1">iterator</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">StopIteration</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">_StopIteration</span>
+
+
+<span class="s0">async def </span><span class="s1">iterate_in_threadpool</span><span class="s2">(</span>
+    <span class="s1">iterator</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">T</span><span class="s2">],</span>
+<span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">AsyncIterator</span><span class="s2">[</span><span class="s1">T</span><span class="s2">]:</span>
+    <span class="s1">as_iterator </span><span class="s2">= </span><span class="s1">iter</span><span class="s2">(</span><span class="s1">iterator</span><span class="s2">)</span>
+    <span class="s0">while True</span><span class="s2">:</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">yield await </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">to_thread</span><span class="s2">.</span><span class="s1">run_sync</span><span class="s2">(</span><span class="s1">_next</span><span class="s2">, </span><span class="s1">as_iterator</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">_StopIteration</span><span class="s2">:</span>
+            <span class="s0">break</span>
+</pre>
+</body>
+</html>

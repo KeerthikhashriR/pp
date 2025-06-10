@@ -1,0 +1,279 @@
+<html>
+<head>
+<title>FpxImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #2aacb8;}
+.s5 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+FpxImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># THIS IS WORK IN PROGRESS</span>
+<span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># FlashPix support for PIL</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 97-01-25 fl   Created (reads uncompressed RGB images only)</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) Secret Labs AB 1997.</span>
+<span class="s0"># Copyright (c) Fredrik Lundh 1997.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">olefile</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">ImageFile</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">i32le </span><span class="s2">as </span><span class="s1">i32</span>
+
+<span class="s0"># we map from colour field tuples to (mode, rawmode) descriptors</span>
+<span class="s1">MODES </span><span class="s3">= {</span>
+    <span class="s0"># opacity</span>
+    <span class="s3">(</span><span class="s4">0x00007FFE</span><span class="s3">,): (</span><span class="s5">&quot;A&quot;</span><span class="s3">, </span><span class="s5">&quot;L&quot;</span><span class="s3">),</span>
+    <span class="s0"># monochrome</span>
+    <span class="s3">(</span><span class="s4">0x00010000</span><span class="s3">,): (</span><span class="s5">&quot;L&quot;</span><span class="s3">, </span><span class="s5">&quot;L&quot;</span><span class="s3">),</span>
+    <span class="s3">(</span><span class="s4">0x00018000</span><span class="s3">, </span><span class="s4">0x00017FFE</span><span class="s3">): (</span><span class="s5">&quot;RGBA&quot;</span><span class="s3">, </span><span class="s5">&quot;LA&quot;</span><span class="s3">),</span>
+    <span class="s0"># photo YCC</span>
+    <span class="s3">(</span><span class="s4">0x00020000</span><span class="s3">, </span><span class="s4">0x00020001</span><span class="s3">, </span><span class="s4">0x00020002</span><span class="s3">): (</span><span class="s5">&quot;RGB&quot;</span><span class="s3">, </span><span class="s5">&quot;YCC;P&quot;</span><span class="s3">),</span>
+    <span class="s3">(</span><span class="s4">0x00028000</span><span class="s3">, </span><span class="s4">0x00028001</span><span class="s3">, </span><span class="s4">0x00028002</span><span class="s3">, </span><span class="s4">0x00027FFE</span><span class="s3">): (</span><span class="s5">&quot;RGBA&quot;</span><span class="s3">, </span><span class="s5">&quot;YCCA;P&quot;</span><span class="s3">),</span>
+    <span class="s0"># standard RGB (NIFRGB)</span>
+    <span class="s3">(</span><span class="s4">0x00030000</span><span class="s3">, </span><span class="s4">0x00030001</span><span class="s3">, </span><span class="s4">0x00030002</span><span class="s3">): (</span><span class="s5">&quot;RGB&quot;</span><span class="s3">, </span><span class="s5">&quot;RGB&quot;</span><span class="s3">),</span>
+    <span class="s3">(</span><span class="s4">0x00038000</span><span class="s3">, </span><span class="s4">0x00038001</span><span class="s3">, </span><span class="s4">0x00038002</span><span class="s3">, </span><span class="s4">0x00037FFE</span><span class="s3">): (</span><span class="s5">&quot;RGBA&quot;</span><span class="s3">, </span><span class="s5">&quot;RGBA&quot;</span><span class="s3">),</span>
+<span class="s3">}</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+
+
+<span class="s2">def </span><span class="s1">_accept</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">: </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s2">return </span><span class="s1">prefix</span><span class="s3">[:</span><span class="s4">8</span><span class="s3">] == </span><span class="s1">olefile</span><span class="s3">.</span><span class="s1">MAGIC</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for the FlashPix images.</span>
+
+
+<span class="s2">class </span><span class="s1">FpxImageFile</span><span class="s3">(</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">ImageFile</span><span class="s3">):</span>
+    <span class="s1">format </span><span class="s3">= </span><span class="s5">&quot;FPX&quot;</span>
+    <span class="s1">format_description </span><span class="s3">= </span><span class="s5">&quot;FlashPix&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s0">#</span>
+        <span class="s0"># read the OLE directory and see if this is a likely</span>
+        <span class="s0"># to be a FlashPix file</span>
+
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">ole </span><span class="s3">= </span><span class="s1">olefile</span><span class="s3">.</span><span class="s1">OleFileIO</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">)</span>
+        <span class="s2">except </span><span class="s1">OSError </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;not an FPX file; invalid OLE file&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">) </span><span class="s2">from </span><span class="s1">e</span>
+
+        <span class="s1">root </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">ole</span><span class="s3">.</span><span class="s1">root</span>
+        <span class="s2">if not </span><span class="s1">root </span><span class="s2">or </span><span class="s1">root</span><span class="s3">.</span><span class="s1">clsid </span><span class="s3">!= </span><span class="s5">&quot;56616700-C154-11CE-8553-00AA00A1F95B&quot;</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;not an FPX file; bad root CLSID&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_open_index</span><span class="s3">(</span><span class="s4">1</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">_open_index</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">index</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s4">1</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s0">#</span>
+        <span class="s0"># get the Image Contents Property Set</span>
+
+        <span class="s1">prop </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">ole</span><span class="s3">.</span><span class="s1">getproperties</span><span class="s3">(</span>
+            <span class="s3">[</span><span class="s5">f&quot;Data Object Store </span><span class="s2">{</span><span class="s1">index</span><span class="s2">:</span><span class="s5">06d</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s3">, </span><span class="s5">&quot;</span><span class="s2">\005</span><span class="s5">Image Contents&quot;</span><span class="s3">]</span>
+        <span class="s3">)</span>
+
+        <span class="s0"># size (highest resolution)</span>
+
+        <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">prop</span><span class="s3">[</span><span class="s4">0x1000002</span><span class="s3">], </span><span class="s1">int</span><span class="s3">)</span>
+        <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">prop</span><span class="s3">[</span><span class="s4">0x1000003</span><span class="s3">], </span><span class="s1">int</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= </span><span class="s1">prop</span><span class="s3">[</span><span class="s4">0x1000002</span><span class="s3">], </span><span class="s1">prop</span><span class="s3">[</span><span class="s4">0x1000003</span><span class="s3">]</span>
+
+        <span class="s1">size </span><span class="s3">= </span><span class="s1">max</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+        <span class="s1">i </span><span class="s3">= </span><span class="s4">1</span>
+        <span class="s2">while </span><span class="s1">size </span><span class="s3">&gt; </span><span class="s4">64</span><span class="s3">:</span>
+            <span class="s1">size </span><span class="s3">= </span><span class="s1">size </span><span class="s3">// </span><span class="s4">2</span>
+            <span class="s1">i </span><span class="s3">+= </span><span class="s4">1</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">maxid </span><span class="s3">= </span><span class="s1">i </span><span class="s3">- </span><span class="s4">1</span>
+
+        <span class="s0"># mode.  instead of using a single field for this, flashpix</span>
+        <span class="s0"># requires you to specify the mode for each channel in each</span>
+        <span class="s0"># resolution subimage, and leaves it to the decoder to make</span>
+        <span class="s0"># sure that they all match.  for now, we'll cheat and assume</span>
+        <span class="s0"># that this is always the case.</span>
+
+        <span class="s1">id </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">maxid </span><span class="s3">&lt;&lt; </span><span class="s4">16</span>
+
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">prop</span><span class="s3">[</span><span class="s4">0x2000002 </span><span class="s3">| </span><span class="s1">id</span><span class="s3">]</span>
+
+        <span class="s2">if not </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">bytes</span><span class="s3">) </span><span class="s2">or </span><span class="s3">(</span><span class="s1">bands </span><span class="s3">:= </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s4">4</span><span class="s3">)) &gt; </span><span class="s4">4</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;Invalid number of bands&quot;</span>
+            <span class="s2">raise </span><span class="s1">OSError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s0"># note: for now, we ignore the &quot;uncalibrated&quot; flag</span>
+        <span class="s1">colors </span><span class="s3">= </span><span class="s1">tuple</span><span class="s3">(</span><span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s4">8 </span><span class="s3">+ </span><span class="s1">i </span><span class="s3">* </span><span class="s4">4</span><span class="s3">) &amp; </span><span class="s4">0x7FFFFFFF </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">bands</span><span class="s3">))</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">rawmode </span><span class="s3">= </span><span class="s1">MODES</span><span class="s3">[</span><span class="s1">colors</span><span class="s3">]</span>
+
+        <span class="s0"># load JPEG tables, if any</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">jpeg </span><span class="s3">= {}</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">256</span><span class="s3">):</span>
+            <span class="s1">id </span><span class="s3">= </span><span class="s4">0x3000001 </span><span class="s3">| (</span><span class="s1">i </span><span class="s3">&lt;&lt; </span><span class="s4">16</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">id </span><span class="s2">in </span><span class="s1">prop</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">jpeg</span><span class="s3">[</span><span class="s1">i</span><span class="s3">] = </span><span class="s1">prop</span><span class="s3">[</span><span class="s1">id</span><span class="s3">]</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_open_subimage</span><span class="s3">(</span><span class="s4">1</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">maxid</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">_open_subimage</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">index</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s4">1</span><span class="s3">, </span><span class="s1">subimage</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s4">0</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s0">#</span>
+        <span class="s0"># setup tile descriptors for a given subimage</span>
+
+        <span class="s1">stream </span><span class="s3">= [</span>
+            <span class="s5">f&quot;Data Object Store </span><span class="s2">{</span><span class="s1">index</span><span class="s2">:</span><span class="s5">06d</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s3">,</span>
+            <span class="s5">f&quot;Resolution </span><span class="s2">{</span><span class="s1">subimage</span><span class="s2">:</span><span class="s5">04d</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s3">,</span>
+            <span class="s5">&quot;Subimage 0000 Header&quot;</span><span class="s3">,</span>
+        <span class="s3">]</span>
+
+        <span class="s1">fp </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">ole</span><span class="s3">.</span><span class="s1">openstream</span><span class="s3">(</span><span class="s1">stream</span><span class="s3">)</span>
+
+        <span class="s0"># skip prefix</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">28</span><span class="s3">)</span>
+
+        <span class="s0"># header stream</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">36</span><span class="s3">)</span>
+
+        <span class="s1">size </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s4">4</span><span class="s3">), </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s4">8</span><span class="s3">)</span>
+        <span class="s0"># tilecount = i32(s, 12)</span>
+        <span class="s1">tilesize </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s4">16</span><span class="s3">), </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s4">20</span><span class="s3">)</span>
+        <span class="s0"># channels = i32(s, 24)</span>
+        <span class="s1">offset </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s4">28</span><span class="s3">)</span>
+        <span class="s1">length </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s4">32</span><span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s1">size </span><span class="s3">!= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;subimage mismatch&quot;</span>
+            <span class="s2">raise </span><span class="s1">OSError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s0"># get tile descriptors</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s4">28 </span><span class="s3">+ </span><span class="s1">offset</span><span class="s3">)</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s4">12</span><span class="s3">) * </span><span class="s1">length</span><span class="s3">)</span>
+
+        <span class="s1">x </span><span class="s3">= </span><span class="s1">y </span><span class="s3">= </span><span class="s4">0</span>
+        <span class="s1">xsize</span><span class="s3">, </span><span class="s1">ysize </span><span class="s3">= </span><span class="s1">size</span>
+        <span class="s1">xtile</span><span class="s3">, </span><span class="s1">ytile </span><span class="s3">= </span><span class="s1">tilesize</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= []</span>
+
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">0</span><span class="s3">, </span><span class="s1">len</span><span class="s3">(</span><span class="s1">s</span><span class="s3">), </span><span class="s1">length</span><span class="s3">):</span>
+            <span class="s1">x1 </span><span class="s3">= </span><span class="s1">min</span><span class="s3">(</span><span class="s1">xsize</span><span class="s3">, </span><span class="s1">x </span><span class="s3">+ </span><span class="s1">xtile</span><span class="s3">)</span>
+            <span class="s1">y1 </span><span class="s3">= </span><span class="s1">min</span><span class="s3">(</span><span class="s1">ysize</span><span class="s3">, </span><span class="s1">y </span><span class="s3">+ </span><span class="s1">ytile</span><span class="s3">)</span>
+
+            <span class="s1">compression </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">i </span><span class="s3">+ </span><span class="s4">8</span><span class="s3">)</span>
+
+            <span class="s2">if </span><span class="s1">compression </span><span class="s3">== </span><span class="s4">0</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">tile</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span>
+                    <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span>
+                        <span class="s5">&quot;raw&quot;</span><span class="s3">,</span>
+                        <span class="s3">(</span><span class="s1">x</span><span class="s3">, </span><span class="s1">y</span><span class="s3">, </span><span class="s1">x1</span><span class="s3">, </span><span class="s1">y1</span><span class="s3">),</span>
+                        <span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">i</span><span class="s3">) + </span><span class="s4">28</span><span class="s3">,</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">rawmode</span><span class="s3">,</span>
+                    <span class="s3">)</span>
+                <span class="s3">)</span>
+
+            <span class="s2">elif </span><span class="s1">compression </span><span class="s3">== </span><span class="s4">1</span><span class="s3">:</span>
+                <span class="s0"># FIXME: the fill decoder is not implemented</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">tile</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span>
+                    <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span>
+                        <span class="s5">&quot;fill&quot;</span><span class="s3">,</span>
+                        <span class="s3">(</span><span class="s1">x</span><span class="s3">, </span><span class="s1">y</span><span class="s3">, </span><span class="s1">x1</span><span class="s3">, </span><span class="s1">y1</span><span class="s3">),</span>
+                        <span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">i</span><span class="s3">) + </span><span class="s4">28</span><span class="s3">,</span>
+                        <span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">rawmode</span><span class="s3">, </span><span class="s1">s</span><span class="s3">[</span><span class="s4">12</span><span class="s3">:</span><span class="s4">16</span><span class="s3">]),</span>
+                    <span class="s3">)</span>
+                <span class="s3">)</span>
+
+            <span class="s2">elif </span><span class="s1">compression </span><span class="s3">== </span><span class="s4">2</span><span class="s3">:</span>
+                <span class="s1">internal_color_conversion </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s4">14</span><span class="s3">]</span>
+                <span class="s1">jpeg_tables </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s4">15</span><span class="s3">]</span>
+                <span class="s1">rawmode </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">rawmode</span>
+
+                <span class="s2">if </span><span class="s1">internal_color_conversion</span><span class="s3">:</span>
+                    <span class="s0"># The image is stored as usual (usually YCbCr).</span>
+                    <span class="s2">if </span><span class="s1">rawmode </span><span class="s3">== </span><span class="s5">&quot;RGBA&quot;</span><span class="s3">:</span>
+                        <span class="s0"># For &quot;RGBA&quot;, data is stored as YCbCrA based on</span>
+                        <span class="s0"># negative RGB. The following trick works around</span>
+                        <span class="s0"># this problem :</span>
+                        <span class="s1">jpegmode</span><span class="s3">, </span><span class="s1">rawmode </span><span class="s3">= </span><span class="s5">&quot;YCbCrK&quot;</span><span class="s3">, </span><span class="s5">&quot;CMYK&quot;</span>
+                    <span class="s2">else</span><span class="s3">:</span>
+                        <span class="s1">jpegmode </span><span class="s3">= </span><span class="s2">None  </span><span class="s0"># let the decoder decide</span>
+
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s0"># The image is stored as defined by rawmode</span>
+                    <span class="s1">jpegmode </span><span class="s3">= </span><span class="s1">rawmode</span>
+
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">tile</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span>
+                    <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span>
+                        <span class="s5">&quot;jpeg&quot;</span><span class="s3">,</span>
+                        <span class="s3">(</span><span class="s1">x</span><span class="s3">, </span><span class="s1">y</span><span class="s3">, </span><span class="s1">x1</span><span class="s3">, </span><span class="s1">y1</span><span class="s3">),</span>
+                        <span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">i</span><span class="s3">) + </span><span class="s4">28</span><span class="s3">,</span>
+                        <span class="s3">(</span><span class="s1">rawmode</span><span class="s3">, </span><span class="s1">jpegmode</span><span class="s3">),</span>
+                    <span class="s3">)</span>
+                <span class="s3">)</span>
+
+                <span class="s0"># FIXME: jpeg tables are tile dependent; the prefix</span>
+                <span class="s0"># data must be placed in the tile descriptor itself!</span>
+
+                <span class="s2">if </span><span class="s1">jpeg_tables</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">tile_prefix </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">jpeg</span><span class="s3">[</span><span class="s1">jpeg_tables</span><span class="s3">]</span>
+
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;unknown/invalid compression&quot;</span>
+                <span class="s2">raise </span><span class="s1">OSError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+            <span class="s1">x </span><span class="s3">= </span><span class="s1">x </span><span class="s3">+ </span><span class="s1">xtile</span>
+            <span class="s2">if </span><span class="s1">x </span><span class="s3">&gt;= </span><span class="s1">xsize</span><span class="s3">:</span>
+                <span class="s1">x</span><span class="s3">, </span><span class="s1">y </span><span class="s3">= </span><span class="s4">0</span><span class="s3">, </span><span class="s1">y </span><span class="s3">+ </span><span class="s1">ytile</span>
+                <span class="s2">if </span><span class="s1">y </span><span class="s3">&gt;= </span><span class="s1">ysize</span><span class="s3">:</span>
+                    <span class="s2">break  </span><span class="s0"># isn't really required</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">stream </span><span class="s3">= </span><span class="s1">stream</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_fp </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">fp </span><span class="s3">= </span><span class="s2">None</span>
+
+    <span class="s2">def </span><span class="s1">load</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">.</span><span class="s1">PixelAccess </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if not </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">fp </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">ole</span><span class="s3">.</span><span class="s1">openstream</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">stream</span><span class="s3">[:</span><span class="s4">2</span><span class="s3">] + [</span><span class="s5">&quot;Subimage 0000 Data&quot;</span><span class="s3">])</span>
+
+        <span class="s2">return </span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">load</span><span class="s3">(</span><span class="s1">self</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">close</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">ole</span><span class="s3">.</span><span class="s1">close</span><span class="s3">()</span>
+        <span class="s1">super</span><span class="s3">().</span><span class="s1">close</span><span class="s3">()</span>
+
+    <span class="s2">def </span><span class="s1">__exit__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">: </span><span class="s1">object</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">ole</span><span class="s3">.</span><span class="s1">close</span><span class="s3">()</span>
+        <span class="s1">super</span><span class="s3">().</span><span class="s1">__exit__</span><span class="s3">()</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_open</span><span class="s3">(</span><span class="s1">FpxImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">FpxImageFile</span><span class="s3">, </span><span class="s1">_accept</span><span class="s3">)</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_extension</span><span class="s3">(</span><span class="s1">FpxImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s5">&quot;.fpx&quot;</span><span class="s3">)</span>
+</pre>
+</body>
+</html>

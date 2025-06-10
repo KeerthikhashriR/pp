@@ -1,0 +1,366 @@
+<html>
+<head>
+<title>encoders.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #7a7e85;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #2aacb8;}
+.s6 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+encoders.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">dataclasses</span>
+<span class="s0">import </span><span class="s1">datetime</span>
+<span class="s0">from </span><span class="s1">collections </span><span class="s0">import </span><span class="s1">defaultdict</span><span class="s2">, </span><span class="s1">deque</span>
+<span class="s0">from </span><span class="s1">decimal </span><span class="s0">import </span><span class="s1">Decimal</span>
+<span class="s0">from </span><span class="s1">enum </span><span class="s0">import </span><span class="s1">Enum</span>
+<span class="s0">from </span><span class="s1">ipaddress </span><span class="s0">import </span><span class="s2">(</span>
+    <span class="s1">IPv4Address</span><span class="s2">,</span>
+    <span class="s1">IPv4Interface</span><span class="s2">,</span>
+    <span class="s1">IPv4Network</span><span class="s2">,</span>
+    <span class="s1">IPv6Address</span><span class="s2">,</span>
+    <span class="s1">IPv6Interface</span><span class="s2">,</span>
+    <span class="s1">IPv6Network</span><span class="s2">,</span>
+<span class="s2">)</span>
+<span class="s0">from </span><span class="s1">pathlib </span><span class="s0">import </span><span class="s1">Path</span><span class="s2">, </span><span class="s1">PurePath</span>
+<span class="s0">from </span><span class="s1">re </span><span class="s0">import </span><span class="s1">Pattern</span>
+<span class="s0">from </span><span class="s1">types </span><span class="s0">import </span><span class="s1">GeneratorType</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Callable</span><span class="s2">, </span><span class="s1">Dict</span><span class="s2">, </span><span class="s1">List</span><span class="s2">, </span><span class="s1">Optional</span><span class="s2">, </span><span class="s1">Tuple</span><span class="s2">, </span><span class="s1">Type</span><span class="s2">, </span><span class="s1">Union</span>
+<span class="s0">from </span><span class="s1">uuid </span><span class="s0">import </span><span class="s1">UUID</span>
+
+<span class="s0">from </span><span class="s1">fastapi</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">IncEx</span>
+<span class="s0">from </span><span class="s1">pydantic </span><span class="s0">import </span><span class="s1">BaseModel</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">color </span><span class="s0">import </span><span class="s1">Color</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">networks </span><span class="s0">import </span><span class="s1">AnyUrl</span><span class="s2">, </span><span class="s1">NameEmail</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">SecretBytes</span><span class="s2">, </span><span class="s1">SecretStr</span>
+<span class="s0">from </span><span class="s1">typing_extensions </span><span class="s0">import </span><span class="s1">Annotated</span><span class="s2">, </span><span class="s1">Doc</span>
+
+<span class="s0">from </span><span class="s2">.</span><span class="s1">_compat </span><span class="s0">import </span><span class="s1">PYDANTIC_V2</span><span class="s2">, </span><span class="s1">UndefinedType</span><span class="s2">, </span><span class="s1">Url</span><span class="s2">, </span><span class="s1">_model_dump</span>
+
+
+<span class="s3"># Taken from Pydantic v1 as is</span>
+<span class="s0">def </span><span class="s1">isoformat</span><span class="s2">(</span><span class="s1">o</span><span class="s2">: </span><span class="s1">Union</span><span class="s2">[</span><span class="s1">datetime</span><span class="s2">.</span><span class="s1">date</span><span class="s2">, </span><span class="s1">datetime</span><span class="s2">.</span><span class="s1">time</span><span class="s2">]) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+    <span class="s0">return </span><span class="s1">o</span><span class="s2">.</span><span class="s1">isoformat</span><span class="s2">()</span>
+
+
+<span class="s3"># Taken from Pydantic v1 as is</span>
+<span class="s3"># TODO: pv2 should this return strings instead?</span>
+<span class="s0">def </span><span class="s1">decimal_encoder</span><span class="s2">(</span><span class="s1">dec_value</span><span class="s2">: </span><span class="s1">Decimal</span><span class="s2">) </span><span class="s1">-&gt; Union</span><span class="s2">[</span><span class="s1">int</span><span class="s2">, </span><span class="s1">float</span><span class="s2">]:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Encodes a Decimal as int of there's no exponent, otherwise float 
+ 
+    This is useful when we use ConstrainedDecimal to represent Numeric(x,0) 
+    where a integer (but not int typed) is used. Encoding this as a float 
+    results in failed round-tripping between encode and parse. 
+    Our Id type is a prime example of this. 
+ 
+    &gt;&gt;&gt; decimal_encoder(Decimal(&quot;1.0&quot;)) 
+    1.0 
+ 
+    &gt;&gt;&gt; decimal_encoder(Decimal(&quot;1&quot;)) 
+    1 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">dec_value</span><span class="s2">.</span><span class="s1">as_tuple</span><span class="s2">().</span><span class="s1">exponent </span><span class="s2">&gt;= </span><span class="s5">0</span><span class="s2">:  </span><span class="s3"># type: ignore[operator]</span>
+        <span class="s0">return </span><span class="s1">int</span><span class="s2">(</span><span class="s1">dec_value</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">float</span><span class="s2">(</span><span class="s1">dec_value</span><span class="s2">)</span>
+
+
+<span class="s1">ENCODERS_BY_TYPE</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">Type</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">Any</span><span class="s2">]] = {</span>
+    <span class="s1">bytes</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">o</span><span class="s2">: </span><span class="s1">o</span><span class="s2">.</span><span class="s1">decode</span><span class="s2">(),</span>
+    <span class="s1">Color</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">datetime</span><span class="s2">.</span><span class="s1">date</span><span class="s2">: </span><span class="s1">isoformat</span><span class="s2">,</span>
+    <span class="s1">datetime</span><span class="s2">.</span><span class="s1">datetime</span><span class="s2">: </span><span class="s1">isoformat</span><span class="s2">,</span>
+    <span class="s1">datetime</span><span class="s2">.</span><span class="s1">time</span><span class="s2">: </span><span class="s1">isoformat</span><span class="s2">,</span>
+    <span class="s1">datetime</span><span class="s2">.</span><span class="s1">timedelta</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">td</span><span class="s2">: </span><span class="s1">td</span><span class="s2">.</span><span class="s1">total_seconds</span><span class="s2">(),</span>
+    <span class="s1">Decimal</span><span class="s2">: </span><span class="s1">decimal_encoder</span><span class="s2">,</span>
+    <span class="s1">Enum</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">o</span><span class="s2">: </span><span class="s1">o</span><span class="s2">.</span><span class="s1">value</span><span class="s2">,</span>
+    <span class="s1">frozenset</span><span class="s2">: </span><span class="s1">list</span><span class="s2">,</span>
+    <span class="s1">deque</span><span class="s2">: </span><span class="s1">list</span><span class="s2">,</span>
+    <span class="s1">GeneratorType</span><span class="s2">: </span><span class="s1">list</span><span class="s2">,</span>
+    <span class="s1">IPv4Address</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">IPv4Interface</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">IPv4Network</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">IPv6Address</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">IPv6Interface</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">IPv6Network</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">NameEmail</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">Path</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">Pattern</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">o</span><span class="s2">: </span><span class="s1">o</span><span class="s2">.</span><span class="s1">pattern</span><span class="s2">,</span>
+    <span class="s1">SecretBytes</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">SecretStr</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">set</span><span class="s2">: </span><span class="s1">list</span><span class="s2">,</span>
+    <span class="s1">UUID</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">Url</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">AnyUrl</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+<span class="s2">}</span>
+
+
+<span class="s0">def </span><span class="s1">generate_encoders_by_class_tuples</span><span class="s2">(</span>
+    <span class="s1">type_encoder_map</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">Any</span><span class="s2">]],</span>
+<span class="s2">) </span><span class="s1">-&gt; Dict</span><span class="s2">[</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">Any</span><span class="s2">], </span><span class="s1">Tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...]]:</span>
+    <span class="s1">encoders_by_class_tuples</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">Any</span><span class="s2">], </span><span class="s1">Tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...]] = </span><span class="s1">defaultdict</span><span class="s2">(</span>
+        <span class="s1">tuple</span>
+    <span class="s2">)</span>
+    <span class="s0">for </span><span class="s1">type_</span><span class="s2">, </span><span class="s1">encoder </span><span class="s0">in </span><span class="s1">type_encoder_map</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+        <span class="s1">encoders_by_class_tuples</span><span class="s2">[</span><span class="s1">encoder</span><span class="s2">] += (</span><span class="s1">type_</span><span class="s2">,)</span>
+    <span class="s0">return </span><span class="s1">encoders_by_class_tuples</span>
+
+
+<span class="s1">encoders_by_class_tuples </span><span class="s2">= </span><span class="s1">generate_encoders_by_class_tuples</span><span class="s2">(</span><span class="s1">ENCODERS_BY_TYPE</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">jsonable_encoder</span><span class="s2">(</span>
+    <span class="s1">obj</span><span class="s2">: </span><span class="s1">Annotated</span><span class="s2">[</span>
+        <span class="s1">Any</span><span class="s2">,</span>
+        <span class="s1">Doc</span><span class="s2">(</span>
+            <span class="s6">&quot;&quot;&quot; 
+            The input object to convert to JSON. 
+            &quot;&quot;&quot;</span>
+        <span class="s2">),</span>
+    <span class="s2">],</span>
+    <span class="s1">include</span><span class="s2">: </span><span class="s1">Annotated</span><span class="s2">[</span>
+        <span class="s1">Optional</span><span class="s2">[</span><span class="s1">IncEx</span><span class="s2">],</span>
+        <span class="s1">Doc</span><span class="s2">(</span>
+            <span class="s6">&quot;&quot;&quot; 
+            Pydantic's `include` parameter, passed to Pydantic models to set the 
+            fields to include. 
+            &quot;&quot;&quot;</span>
+        <span class="s2">),</span>
+    <span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">exclude</span><span class="s2">: </span><span class="s1">Annotated</span><span class="s2">[</span>
+        <span class="s1">Optional</span><span class="s2">[</span><span class="s1">IncEx</span><span class="s2">],</span>
+        <span class="s1">Doc</span><span class="s2">(</span>
+            <span class="s6">&quot;&quot;&quot; 
+            Pydantic's `exclude` parameter, passed to Pydantic models to set the 
+            fields to exclude. 
+            &quot;&quot;&quot;</span>
+        <span class="s2">),</span>
+    <span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">by_alias</span><span class="s2">: </span><span class="s1">Annotated</span><span class="s2">[</span>
+        <span class="s1">bool</span><span class="s2">,</span>
+        <span class="s1">Doc</span><span class="s2">(</span>
+            <span class="s6">&quot;&quot;&quot; 
+            Pydantic's `by_alias` parameter, passed to Pydantic models to define if 
+            the output should use the alias names (when provided) or the Python 
+            attribute names. In an API, if you set an alias, it's probably because you 
+            want to use it in the result, so you probably want to leave this set to 
+            `True`. 
+            &quot;&quot;&quot;</span>
+        <span class="s2">),</span>
+    <span class="s2">] = </span><span class="s0">True</span><span class="s2">,</span>
+    <span class="s1">exclude_unset</span><span class="s2">: </span><span class="s1">Annotated</span><span class="s2">[</span>
+        <span class="s1">bool</span><span class="s2">,</span>
+        <span class="s1">Doc</span><span class="s2">(</span>
+            <span class="s6">&quot;&quot;&quot; 
+            Pydantic's `exclude_unset` parameter, passed to Pydantic models to define 
+            if it should exclude from the output the fields that were not explicitly 
+            set (and that only had their default values). 
+            &quot;&quot;&quot;</span>
+        <span class="s2">),</span>
+    <span class="s2">] = </span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">exclude_defaults</span><span class="s2">: </span><span class="s1">Annotated</span><span class="s2">[</span>
+        <span class="s1">bool</span><span class="s2">,</span>
+        <span class="s1">Doc</span><span class="s2">(</span>
+            <span class="s6">&quot;&quot;&quot; 
+            Pydantic's `exclude_defaults` parameter, passed to Pydantic models to define 
+            if it should exclude from the output the fields that had the same default 
+            value, even when they were explicitly set. 
+            &quot;&quot;&quot;</span>
+        <span class="s2">),</span>
+    <span class="s2">] = </span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">exclude_none</span><span class="s2">: </span><span class="s1">Annotated</span><span class="s2">[</span>
+        <span class="s1">bool</span><span class="s2">,</span>
+        <span class="s1">Doc</span><span class="s2">(</span>
+            <span class="s6">&quot;&quot;&quot; 
+            Pydantic's `exclude_none` parameter, passed to Pydantic models to define 
+            if it should exclude from the output any fields that have a `None` value. 
+            &quot;&quot;&quot;</span>
+        <span class="s2">),</span>
+    <span class="s2">] = </span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">custom_encoder</span><span class="s2">: </span><span class="s1">Annotated</span><span class="s2">[</span>
+        <span class="s1">Optional</span><span class="s2">[</span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">Any</span><span class="s2">]]],</span>
+        <span class="s1">Doc</span><span class="s2">(</span>
+            <span class="s6">&quot;&quot;&quot; 
+            Pydantic's `custom_encoder` parameter, passed to Pydantic models to define 
+            a custom encoder. 
+            &quot;&quot;&quot;</span>
+        <span class="s2">),</span>
+    <span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">sqlalchemy_safe</span><span class="s2">: </span><span class="s1">Annotated</span><span class="s2">[</span>
+        <span class="s1">bool</span><span class="s2">,</span>
+        <span class="s1">Doc</span><span class="s2">(</span>
+            <span class="s6">&quot;&quot;&quot; 
+            Exclude from the output any fields that start with the name `_sa`. 
+ 
+            This is mainly a hack for compatibility with SQLAlchemy objects, they 
+            store internal SQLAlchemy-specific state in attributes named with `_sa`, 
+            and those objects can't (and shouldn't be) serialized to JSON. 
+            &quot;&quot;&quot;</span>
+        <span class="s2">),</span>
+    <span class="s2">] = </span><span class="s0">True</span><span class="s2">,</span>
+<span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Convert any object to something that can be encoded in JSON. 
+ 
+    This is used internally by FastAPI to make sure anything you return can be 
+    encoded as JSON before it is sent to the client. 
+ 
+    You can also use it yourself, for example to convert objects before saving them 
+    in a database that supports only JSON. 
+ 
+    Read more about it in the 
+    [FastAPI docs for JSON Compatible Encoder](https://fastapi.tiangolo.com/tutorial/encoder/). 
+    &quot;&quot;&quot;</span>
+    <span class="s1">custom_encoder </span><span class="s2">= </span><span class="s1">custom_encoder </span><span class="s0">or </span><span class="s2">{}</span>
+    <span class="s0">if </span><span class="s1">custom_encoder</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">type</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">) </span><span class="s0">in </span><span class="s1">custom_encoder</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">custom_encoder</span><span class="s2">[</span><span class="s1">type</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)](</span><span class="s1">obj</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">for </span><span class="s1">encoder_type</span><span class="s2">, </span><span class="s1">encoder_instance </span><span class="s0">in </span><span class="s1">custom_encoder</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+                <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s1">encoder_type</span><span class="s2">):</span>
+                    <span class="s0">return </span><span class="s1">encoder_instance</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">include </span><span class="s0">is not None and not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">include</span><span class="s2">, (</span><span class="s1">set</span><span class="s2">, </span><span class="s1">dict</span><span class="s2">)):</span>
+        <span class="s1">include </span><span class="s2">= </span><span class="s1">set</span><span class="s2">(</span><span class="s1">include</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">exclude </span><span class="s0">is not None and not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">exclude</span><span class="s2">, (</span><span class="s1">set</span><span class="s2">, </span><span class="s1">dict</span><span class="s2">)):</span>
+        <span class="s1">exclude </span><span class="s2">= </span><span class="s1">set</span><span class="s2">(</span><span class="s1">exclude</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s1">BaseModel</span><span class="s2">):</span>
+        <span class="s3"># TODO: remove when deprecating Pydantic v1</span>
+        <span class="s1">encoders</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] = {}</span>
+        <span class="s0">if not </span><span class="s1">PYDANTIC_V2</span><span class="s2">:</span>
+            <span class="s1">encoders </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">, </span><span class="s6">&quot;json_encoders&quot;</span><span class="s2">, {})  </span><span class="s3"># type: ignore[attr-defined]</span>
+            <span class="s0">if </span><span class="s1">custom_encoder</span><span class="s2">:</span>
+                <span class="s1">encoders</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">custom_encoder</span><span class="s2">)</span>
+        <span class="s1">obj_dict </span><span class="s2">= </span><span class="s1">_model_dump</span><span class="s2">(</span>
+            <span class="s1">obj</span><span class="s2">,</span>
+            <span class="s1">mode</span><span class="s2">=</span><span class="s6">&quot;json&quot;</span><span class="s2">,</span>
+            <span class="s1">include</span><span class="s2">=</span><span class="s1">include</span><span class="s2">,</span>
+            <span class="s1">exclude</span><span class="s2">=</span><span class="s1">exclude</span><span class="s2">,</span>
+            <span class="s1">by_alias</span><span class="s2">=</span><span class="s1">by_alias</span><span class="s2">,</span>
+            <span class="s1">exclude_unset</span><span class="s2">=</span><span class="s1">exclude_unset</span><span class="s2">,</span>
+            <span class="s1">exclude_none</span><span class="s2">=</span><span class="s1">exclude_none</span><span class="s2">,</span>
+            <span class="s1">exclude_defaults</span><span class="s2">=</span><span class="s1">exclude_defaults</span><span class="s2">,</span>
+        <span class="s2">)</span>
+        <span class="s0">if </span><span class="s6">&quot;__root__&quot; </span><span class="s0">in </span><span class="s1">obj_dict</span><span class="s2">:</span>
+            <span class="s1">obj_dict </span><span class="s2">= </span><span class="s1">obj_dict</span><span class="s2">[</span><span class="s6">&quot;__root__&quot;</span><span class="s2">]</span>
+        <span class="s0">return </span><span class="s1">jsonable_encoder</span><span class="s2">(</span>
+            <span class="s1">obj_dict</span><span class="s2">,</span>
+            <span class="s1">exclude_none</span><span class="s2">=</span><span class="s1">exclude_none</span><span class="s2">,</span>
+            <span class="s1">exclude_defaults</span><span class="s2">=</span><span class="s1">exclude_defaults</span><span class="s2">,</span>
+            <span class="s3"># TODO: remove when deprecating Pydantic v1</span>
+            <span class="s1">custom_encoder</span><span class="s2">=</span><span class="s1">encoders</span><span class="s2">,</span>
+            <span class="s1">sqlalchemy_safe</span><span class="s2">=</span><span class="s1">sqlalchemy_safe</span><span class="s2">,</span>
+        <span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">dataclasses</span><span class="s2">.</span><span class="s1">is_dataclass</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">):</span>
+        <span class="s1">obj_dict </span><span class="s2">= </span><span class="s1">dataclasses</span><span class="s2">.</span><span class="s1">asdict</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">jsonable_encoder</span><span class="s2">(</span>
+            <span class="s1">obj_dict</span><span class="s2">,</span>
+            <span class="s1">include</span><span class="s2">=</span><span class="s1">include</span><span class="s2">,</span>
+            <span class="s1">exclude</span><span class="s2">=</span><span class="s1">exclude</span><span class="s2">,</span>
+            <span class="s1">by_alias</span><span class="s2">=</span><span class="s1">by_alias</span><span class="s2">,</span>
+            <span class="s1">exclude_unset</span><span class="s2">=</span><span class="s1">exclude_unset</span><span class="s2">,</span>
+            <span class="s1">exclude_defaults</span><span class="s2">=</span><span class="s1">exclude_defaults</span><span class="s2">,</span>
+            <span class="s1">exclude_none</span><span class="s2">=</span><span class="s1">exclude_none</span><span class="s2">,</span>
+            <span class="s1">custom_encoder</span><span class="s2">=</span><span class="s1">custom_encoder</span><span class="s2">,</span>
+            <span class="s1">sqlalchemy_safe</span><span class="s2">=</span><span class="s1">sqlalchemy_safe</span><span class="s2">,</span>
+        <span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s1">Enum</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">obj</span><span class="s2">.</span><span class="s1">value</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s1">PurePath</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">str</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, (</span><span class="s1">str</span><span class="s2">, </span><span class="s1">int</span><span class="s2">, </span><span class="s1">float</span><span class="s2">, </span><span class="s1">type</span><span class="s2">(</span><span class="s0">None</span><span class="s2">))):</span>
+        <span class="s0">return </span><span class="s1">obj</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s1">UndefinedType</span><span class="s2">):</span>
+        <span class="s0">return None</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s1">dict</span><span class="s2">):</span>
+        <span class="s1">encoded_dict </span><span class="s2">= {}</span>
+        <span class="s1">allowed_keys </span><span class="s2">= </span><span class="s1">set</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">())</span>
+        <span class="s0">if </span><span class="s1">include </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">allowed_keys </span><span class="s2">&amp;= </span><span class="s1">set</span><span class="s2">(</span><span class="s1">include</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">exclude </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">allowed_keys </span><span class="s2">-= </span><span class="s1">set</span><span class="s2">(</span><span class="s1">exclude</span><span class="s2">)</span>
+        <span class="s0">for </span><span class="s1">key</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">obj</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+            <span class="s0">if </span><span class="s2">(</span>
+                <span class="s2">(</span>
+                    <span class="s0">not </span><span class="s1">sqlalchemy_safe</span>
+                    <span class="s0">or </span><span class="s2">(</span><span class="s0">not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">key</span><span class="s2">, </span><span class="s1">str</span><span class="s2">))</span>
+                    <span class="s0">or </span><span class="s2">(</span><span class="s0">not </span><span class="s1">key</span><span class="s2">.</span><span class="s1">startswith</span><span class="s2">(</span><span class="s6">&quot;_sa&quot;</span><span class="s2">))</span>
+                <span class="s2">)</span>
+                <span class="s0">and </span><span class="s2">(</span><span class="s1">value </span><span class="s0">is not None or not </span><span class="s1">exclude_none</span><span class="s2">)</span>
+                <span class="s0">and </span><span class="s1">key </span><span class="s0">in </span><span class="s1">allowed_keys</span>
+            <span class="s2">):</span>
+                <span class="s1">encoded_key </span><span class="s2">= </span><span class="s1">jsonable_encoder</span><span class="s2">(</span>
+                    <span class="s1">key</span><span class="s2">,</span>
+                    <span class="s1">by_alias</span><span class="s2">=</span><span class="s1">by_alias</span><span class="s2">,</span>
+                    <span class="s1">exclude_unset</span><span class="s2">=</span><span class="s1">exclude_unset</span><span class="s2">,</span>
+                    <span class="s1">exclude_none</span><span class="s2">=</span><span class="s1">exclude_none</span><span class="s2">,</span>
+                    <span class="s1">custom_encoder</span><span class="s2">=</span><span class="s1">custom_encoder</span><span class="s2">,</span>
+                    <span class="s1">sqlalchemy_safe</span><span class="s2">=</span><span class="s1">sqlalchemy_safe</span><span class="s2">,</span>
+                <span class="s2">)</span>
+                <span class="s1">encoded_value </span><span class="s2">= </span><span class="s1">jsonable_encoder</span><span class="s2">(</span>
+                    <span class="s1">value</span><span class="s2">,</span>
+                    <span class="s1">by_alias</span><span class="s2">=</span><span class="s1">by_alias</span><span class="s2">,</span>
+                    <span class="s1">exclude_unset</span><span class="s2">=</span><span class="s1">exclude_unset</span><span class="s2">,</span>
+                    <span class="s1">exclude_none</span><span class="s2">=</span><span class="s1">exclude_none</span><span class="s2">,</span>
+                    <span class="s1">custom_encoder</span><span class="s2">=</span><span class="s1">custom_encoder</span><span class="s2">,</span>
+                    <span class="s1">sqlalchemy_safe</span><span class="s2">=</span><span class="s1">sqlalchemy_safe</span><span class="s2">,</span>
+                <span class="s2">)</span>
+                <span class="s1">encoded_dict</span><span class="s2">[</span><span class="s1">encoded_key</span><span class="s2">] = </span><span class="s1">encoded_value</span>
+        <span class="s0">return </span><span class="s1">encoded_dict</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, (</span><span class="s1">list</span><span class="s2">, </span><span class="s1">set</span><span class="s2">, </span><span class="s1">frozenset</span><span class="s2">, </span><span class="s1">GeneratorType</span><span class="s2">, </span><span class="s1">tuple</span><span class="s2">, </span><span class="s1">deque</span><span class="s2">)):</span>
+        <span class="s1">encoded_list </span><span class="s2">= []</span>
+        <span class="s0">for </span><span class="s1">item </span><span class="s0">in </span><span class="s1">obj</span><span class="s2">:</span>
+            <span class="s1">encoded_list</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span>
+                <span class="s1">jsonable_encoder</span><span class="s2">(</span>
+                    <span class="s1">item</span><span class="s2">,</span>
+                    <span class="s1">include</span><span class="s2">=</span><span class="s1">include</span><span class="s2">,</span>
+                    <span class="s1">exclude</span><span class="s2">=</span><span class="s1">exclude</span><span class="s2">,</span>
+                    <span class="s1">by_alias</span><span class="s2">=</span><span class="s1">by_alias</span><span class="s2">,</span>
+                    <span class="s1">exclude_unset</span><span class="s2">=</span><span class="s1">exclude_unset</span><span class="s2">,</span>
+                    <span class="s1">exclude_defaults</span><span class="s2">=</span><span class="s1">exclude_defaults</span><span class="s2">,</span>
+                    <span class="s1">exclude_none</span><span class="s2">=</span><span class="s1">exclude_none</span><span class="s2">,</span>
+                    <span class="s1">custom_encoder</span><span class="s2">=</span><span class="s1">custom_encoder</span><span class="s2">,</span>
+                    <span class="s1">sqlalchemy_safe</span><span class="s2">=</span><span class="s1">sqlalchemy_safe</span><span class="s2">,</span>
+                <span class="s2">)</span>
+            <span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">encoded_list</span>
+
+    <span class="s0">if </span><span class="s1">type</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">) </span><span class="s0">in </span><span class="s1">ENCODERS_BY_TYPE</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">ENCODERS_BY_TYPE</span><span class="s2">[</span><span class="s1">type</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)](</span><span class="s1">obj</span><span class="s2">)</span>
+    <span class="s0">for </span><span class="s1">encoder</span><span class="s2">, </span><span class="s1">classes_tuple </span><span class="s0">in </span><span class="s1">encoders_by_class_tuples</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s1">classes_tuple</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">encoder</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s1">data </span><span class="s2">= </span><span class="s1">dict</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">Exception </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+        <span class="s1">errors</span><span class="s2">: </span><span class="s1">List</span><span class="s2">[</span><span class="s1">Exception</span><span class="s2">] = []</span>
+        <span class="s1">errors</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">e</span><span class="s2">)</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">data </span><span class="s2">= </span><span class="s1">vars</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">Exception </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+            <span class="s1">errors</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">e</span><span class="s2">)</span>
+            <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s1">errors</span><span class="s2">) </span><span class="s0">from </span><span class="s1">e</span>
+    <span class="s0">return </span><span class="s1">jsonable_encoder</span><span class="s2">(</span>
+        <span class="s1">data</span><span class="s2">,</span>
+        <span class="s1">include</span><span class="s2">=</span><span class="s1">include</span><span class="s2">,</span>
+        <span class="s1">exclude</span><span class="s2">=</span><span class="s1">exclude</span><span class="s2">,</span>
+        <span class="s1">by_alias</span><span class="s2">=</span><span class="s1">by_alias</span><span class="s2">,</span>
+        <span class="s1">exclude_unset</span><span class="s2">=</span><span class="s1">exclude_unset</span><span class="s2">,</span>
+        <span class="s1">exclude_defaults</span><span class="s2">=</span><span class="s1">exclude_defaults</span><span class="s2">,</span>
+        <span class="s1">exclude_none</span><span class="s2">=</span><span class="s1">exclude_none</span><span class="s2">,</span>
+        <span class="s1">custom_encoder</span><span class="s2">=</span><span class="s1">custom_encoder</span><span class="s2">,</span>
+        <span class="s1">sqlalchemy_safe</span><span class="s2">=</span><span class="s1">sqlalchemy_safe</span><span class="s2">,</span>
+    <span class="s2">)</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,86 @@
+<html>
+<head>
+<title>_exception_handler.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_exception_handler.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">typing</span>
+
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">_utils </span><span class="s0">import </span><span class="s1">is_async_callable</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">concurrency </span><span class="s0">import </span><span class="s1">run_in_threadpool</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">HTTPException</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">requests </span><span class="s0">import </span><span class="s1">Request</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">ASGIApp</span><span class="s2">, </span><span class="s1">ExceptionHandler</span><span class="s2">, </span><span class="s1">Message</span><span class="s2">, </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">Send</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">websockets </span><span class="s0">import </span><span class="s1">WebSocket</span>
+
+<span class="s1">ExceptionHandlers </span><span class="s2">= </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, </span><span class="s1">ExceptionHandler</span><span class="s2">]</span>
+<span class="s1">StatusHandlers </span><span class="s2">= </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">int</span><span class="s2">, </span><span class="s1">ExceptionHandler</span><span class="s2">]</span>
+
+
+<span class="s0">def </span><span class="s1">_lookup_exception_handler</span><span class="s2">(</span><span class="s1">exc_handlers</span><span class="s2">: </span><span class="s1">ExceptionHandlers</span><span class="s2">, </span><span class="s1">exc</span><span class="s2">: </span><span class="s1">Exception</span><span class="s2">) </span><span class="s1">-&gt; ExceptionHandler </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s0">for </span><span class="s1">cls </span><span class="s0">in </span><span class="s1">type</span><span class="s2">(</span><span class="s1">exc</span><span class="s2">).</span><span class="s1">__mro__</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">cls </span><span class="s0">in </span><span class="s1">exc_handlers</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">exc_handlers</span><span class="s2">[</span><span class="s1">cls</span><span class="s2">]</span>
+    <span class="s0">return None</span>
+
+
+<span class="s0">def </span><span class="s1">wrap_app_handling_exceptions</span><span class="s2">(</span><span class="s1">app</span><span class="s2">: </span><span class="s1">ASGIApp</span><span class="s2">, </span><span class="s1">conn</span><span class="s2">: </span><span class="s1">Request </span><span class="s2">| </span><span class="s1">WebSocket</span><span class="s2">) </span><span class="s1">-&gt; ASGIApp</span><span class="s2">:</span>
+    <span class="s1">exception_handlers</span><span class="s2">: </span><span class="s1">ExceptionHandlers</span>
+    <span class="s1">status_handlers</span><span class="s2">: </span><span class="s1">StatusHandlers</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s1">exception_handlers</span><span class="s2">, </span><span class="s1">status_handlers </span><span class="s2">= </span><span class="s1">conn</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">[</span><span class="s3">&quot;starlette.exception_handlers&quot;</span><span class="s2">]</span>
+    <span class="s0">except </span><span class="s1">KeyError</span><span class="s2">:</span>
+        <span class="s1">exception_handlers</span><span class="s2">, </span><span class="s1">status_handlers </span><span class="s2">= {}, {}</span>
+
+    <span class="s0">async def </span><span class="s1">wrapped_app</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">: </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">: </span><span class="s1">Send</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">response_started </span><span class="s2">= </span><span class="s0">False</span>
+
+        <span class="s0">async def </span><span class="s1">sender</span><span class="s2">(</span><span class="s1">message</span><span class="s2">: </span><span class="s1">Message</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s0">nonlocal </span><span class="s1">response_started</span>
+
+            <span class="s0">if </span><span class="s1">message</span><span class="s2">[</span><span class="s3">&quot;type&quot;</span><span class="s2">] == </span><span class="s3">&quot;http.response.start&quot;</span><span class="s2">:</span>
+                <span class="s1">response_started </span><span class="s2">= </span><span class="s0">True</span>
+            <span class="s0">await </span><span class="s1">send</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">app</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">sender</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">Exception </span><span class="s0">as </span><span class="s1">exc</span><span class="s2">:</span>
+            <span class="s1">handler </span><span class="s2">= </span><span class="s0">None</span>
+
+            <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">exc</span><span class="s2">, </span><span class="s1">HTTPException</span><span class="s2">):</span>
+                <span class="s1">handler </span><span class="s2">= </span><span class="s1">status_handlers</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">exc</span><span class="s2">.</span><span class="s1">status_code</span><span class="s2">)</span>
+
+            <span class="s0">if </span><span class="s1">handler </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s1">handler </span><span class="s2">= </span><span class="s1">_lookup_exception_handler</span><span class="s2">(</span><span class="s1">exception_handlers</span><span class="s2">, </span><span class="s1">exc</span><span class="s2">)</span>
+
+            <span class="s0">if </span><span class="s1">handler </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">exc</span>
+
+            <span class="s0">if </span><span class="s1">response_started</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s3">&quot;Caught handled exception, but response already started.&quot;</span><span class="s2">) </span><span class="s0">from </span><span class="s1">exc</span>
+
+            <span class="s0">if </span><span class="s1">is_async_callable</span><span class="s2">(</span><span class="s1">handler</span><span class="s2">):</span>
+                <span class="s1">response </span><span class="s2">= </span><span class="s0">await </span><span class="s1">handler</span><span class="s2">(</span><span class="s1">conn</span><span class="s2">, </span><span class="s1">exc</span><span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">response </span><span class="s2">= </span><span class="s0">await </span><span class="s1">run_in_threadpool</span><span class="s2">(</span><span class="s1">handler</span><span class="s2">, </span><span class="s1">conn</span><span class="s2">, </span><span class="s1">exc</span><span class="s2">)  </span><span class="s4"># type: ignore</span>
+            <span class="s0">if </span><span class="s1">response </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s0">await </span><span class="s1">response</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">sender</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">wrapped_app</span>
+</pre>
+</body>
+</html>

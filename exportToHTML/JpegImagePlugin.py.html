@@ -1,0 +1,929 @@
+<html>
+<head>
+<title>JpegImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #2aacb8;}
+.s5 { color: #6aab73;}
+.s6 { color: #a5c261;}
+.s7 { color: #5f826b; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+JpegImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># JPEG (JFIF) file handling</span>
+<span class="s0">#</span>
+<span class="s0"># See &quot;Digital Compression and Coding of Continuous-Tone Still Images,</span>
+<span class="s0"># Part 1, Requirements and Guidelines&quot; (CCITT T.81 / ISO 10918-1)</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1995-09-09 fl   Created</span>
+<span class="s0"># 1995-09-13 fl   Added full parser</span>
+<span class="s0"># 1996-03-25 fl   Added hack to use the IJG command line utilities</span>
+<span class="s0"># 1996-05-05 fl   Workaround Photoshop 2.5 CMYK polarity bug</span>
+<span class="s0"># 1996-05-28 fl   Added draft support, JFIF version (0.1)</span>
+<span class="s0"># 1996-12-30 fl   Added encoder options, added progression property (0.2)</span>
+<span class="s0"># 1997-08-27 fl   Save mode 1 images as BW (0.3)</span>
+<span class="s0"># 1998-07-12 fl   Added YCbCr to draft and save methods (0.4)</span>
+<span class="s0"># 1998-10-19 fl   Don't hang on files using 16-bit DQT's (0.4.1)</span>
+<span class="s0"># 2001-04-16 fl   Extract DPI settings from JFIF files (0.4.2)</span>
+<span class="s0"># 2002-07-01 fl   Skip pad bytes before markers; identify Exif files (0.4.3)</span>
+<span class="s0"># 2003-04-25 fl   Added experimental EXIF decoder (0.5)</span>
+<span class="s0"># 2003-06-06 fl   Added experimental EXIF GPSinfo decoder</span>
+<span class="s0"># 2003-09-13 fl   Extract COM markers</span>
+<span class="s0"># 2009-09-06 fl   Added icc_profile support (from Florian Hoech)</span>
+<span class="s0"># 2009-03-06 fl   Changed CMYK handling; always use Adobe polarity (0.6)</span>
+<span class="s0"># 2009-03-08 fl   Added subsampling support (from Justin Huff).</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2003 by Secret Labs AB.</span>
+<span class="s0"># Copyright (c) 1995-1996 by Fredrik Lundh.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">array</span>
+<span class="s2">import </span><span class="s1">io</span>
+<span class="s2">import </span><span class="s1">math</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">struct</span>
+<span class="s2">import </span><span class="s1">subprocess</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">import </span><span class="s1">tempfile</span>
+<span class="s2">import </span><span class="s1">warnings</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">IO</span><span class="s3">, </span><span class="s1">TYPE_CHECKING</span><span class="s3">, </span><span class="s1">Any</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">ImageFile</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">i16be </span><span class="s2">as </span><span class="s1">i16</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">i32be </span><span class="s2">as </span><span class="s1">i32</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">o8</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">o16be </span><span class="s2">as </span><span class="s1">o16</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_deprecate </span><span class="s2">import </span><span class="s1">deprecate</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">JpegPresets </span><span class="s2">import </span><span class="s1">presets</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s3">.</span><span class="s1">MpoImagePlugin </span><span class="s2">import </span><span class="s1">MpoImageFile</span>
+
+<span class="s0">#</span>
+<span class="s0"># Parser</span>
+
+
+<span class="s2">def </span><span class="s1">Skip</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">JpegImageFile</span><span class="s3">, </span><span class="s1">marker</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s1">n </span><span class="s3">= </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">2</span><span class="s3">)) - </span><span class="s4">2</span>
+    <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_safe_read</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">, </span><span class="s1">n</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">APP</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">JpegImageFile</span><span class="s3">, </span><span class="s1">marker</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s0">#</span>
+    <span class="s0"># Application marker.  Store these in the APP dictionary.</span>
+    <span class="s0"># Also look for well-known application markers.</span>
+
+    <span class="s1">n </span><span class="s3">= </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">2</span><span class="s3">)) - </span><span class="s4">2</span>
+    <span class="s1">s </span><span class="s3">= </span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_safe_read</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">, </span><span class="s1">n</span><span class="s3">)</span>
+
+    <span class="s1">app </span><span class="s3">= </span><span class="s5">f&quot;APP</span><span class="s2">{</span><span class="s1">marker </span><span class="s3">&amp; </span><span class="s4">15</span><span class="s2">}</span><span class="s5">&quot;</span>
+
+    <span class="s1">self</span><span class="s3">.</span><span class="s1">app</span><span class="s3">[</span><span class="s1">app</span><span class="s3">] = </span><span class="s1">s  </span><span class="s0"># compatibility</span>
+    <span class="s1">self</span><span class="s3">.</span><span class="s1">applist</span><span class="s3">.</span><span class="s1">append</span><span class="s3">((</span><span class="s1">app</span><span class="s3">, </span><span class="s1">s</span><span class="s3">))</span>
+
+    <span class="s2">if </span><span class="s1">marker </span><span class="s3">== </span><span class="s4">0xFFE0 </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[:</span><span class="s4">4</span><span class="s3">] == </span><span class="s6">b&quot;JFIF&quot;</span><span class="s3">:</span>
+        <span class="s0"># extract JFIF information</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;jfif&quot;</span><span class="s3">] = </span><span class="s1">version </span><span class="s3">= </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s4">5</span><span class="s3">)  </span><span class="s0"># version</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;jfif_version&quot;</span><span class="s3">] = </span><span class="s1">divmod</span><span class="s3">(</span><span class="s1">version</span><span class="s3">, </span><span class="s4">256</span><span class="s3">)</span>
+        <span class="s0"># extract JFIF properties</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">jfif_unit </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s4">7</span><span class="s3">]</span>
+            <span class="s1">jfif_density </span><span class="s3">= </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s4">8</span><span class="s3">), </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s4">10</span><span class="s3">)</span>
+        <span class="s2">except </span><span class="s1">Exception</span><span class="s3">:</span>
+            <span class="s2">pass</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">jfif_unit </span><span class="s3">== </span><span class="s4">1</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;dpi&quot;</span><span class="s3">] = </span><span class="s1">jfif_density</span>
+            <span class="s2">elif </span><span class="s1">jfif_unit </span><span class="s3">== </span><span class="s4">2</span><span class="s3">:  </span><span class="s0"># cm</span>
+                <span class="s0"># 1 dpcm = 2.54 dpi</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;dpi&quot;</span><span class="s3">] = </span><span class="s1">tuple</span><span class="s3">(</span><span class="s1">d </span><span class="s3">* </span><span class="s4">2.54 </span><span class="s2">for </span><span class="s1">d </span><span class="s2">in </span><span class="s1">jfif_density</span><span class="s3">)</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;jfif_unit&quot;</span><span class="s3">] = </span><span class="s1">jfif_unit</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;jfif_density&quot;</span><span class="s3">] = </span><span class="s1">jfif_density</span>
+    <span class="s2">elif </span><span class="s1">marker </span><span class="s3">== </span><span class="s4">0xFFE1 </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[:</span><span class="s4">6</span><span class="s3">] == </span><span class="s6">b&quot;Exif</span><span class="s2">\0\0</span><span class="s6">&quot;</span><span class="s3">:</span>
+        <span class="s0"># extract EXIF information</span>
+        <span class="s2">if </span><span class="s5">&quot;exif&quot; </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;exif&quot;</span><span class="s3">] += </span><span class="s1">s</span><span class="s3">[</span><span class="s4">6</span><span class="s3">:]</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;exif&quot;</span><span class="s3">] = </span><span class="s1">s</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_exif_offset </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">() - </span><span class="s1">n </span><span class="s3">+ </span><span class="s4">6</span>
+    <span class="s2">elif </span><span class="s1">marker </span><span class="s3">== </span><span class="s4">0xFFE1 </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[:</span><span class="s4">29</span><span class="s3">] == </span><span class="s6">b&quot;http://ns.adobe.com/xap/1.0/</span><span class="s2">\x00</span><span class="s6">&quot;</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;xmp&quot;</span><span class="s3">] = </span><span class="s1">s</span><span class="s3">.</span><span class="s1">split</span><span class="s3">(</span><span class="s6">b&quot;</span><span class="s2">\x00</span><span class="s6">&quot;</span><span class="s3">, </span><span class="s4">1</span><span class="s3">)[</span><span class="s4">1</span><span class="s3">]</span>
+    <span class="s2">elif </span><span class="s1">marker </span><span class="s3">== </span><span class="s4">0xFFE2 </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[:</span><span class="s4">5</span><span class="s3">] == </span><span class="s6">b&quot;FPXR</span><span class="s2">\0</span><span class="s6">&quot;</span><span class="s3">:</span>
+        <span class="s0"># extract FlashPix information (incomplete)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;flashpix&quot;</span><span class="s3">] = </span><span class="s1">s  </span><span class="s0"># FIXME: value will change</span>
+    <span class="s2">elif </span><span class="s1">marker </span><span class="s3">== </span><span class="s4">0xFFE2 </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[:</span><span class="s4">12</span><span class="s3">] == </span><span class="s6">b&quot;ICC_PROFILE</span><span class="s2">\0</span><span class="s6">&quot;</span><span class="s3">:</span>
+        <span class="s0"># Since an ICC profile can be larger than the maximum size of</span>
+        <span class="s0"># a JPEG marker (64K), we need provisions to split it into</span>
+        <span class="s0"># multiple markers. The format defined by the ICC specifies</span>
+        <span class="s0"># one or more APP2 markers containing the following data:</span>
+        <span class="s0">#   Identifying string      ASCII &quot;ICC_PROFILE\0&quot;  (12 bytes)</span>
+        <span class="s0">#   Marker sequence number  1, 2, etc (1 byte)</span>
+        <span class="s0">#   Number of markers       Total of APP2's used (1 byte)</span>
+        <span class="s0">#   Profile data            (remainder of APP2 data)</span>
+        <span class="s0"># Decoders should use the marker sequence numbers to</span>
+        <span class="s0"># reassemble the profile, rather than assuming that the APP2</span>
+        <span class="s0"># markers appear in the correct sequence.</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">icclist</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">marker </span><span class="s3">== </span><span class="s4">0xFFED </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[:</span><span class="s4">14</span><span class="s3">] == </span><span class="s6">b&quot;Photoshop 3.0</span><span class="s2">\x00</span><span class="s6">&quot;</span><span class="s3">:</span>
+        <span class="s0"># parse the image resource block</span>
+        <span class="s1">offset </span><span class="s3">= </span><span class="s4">14</span>
+        <span class="s1">photoshop </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">.</span><span class="s1">setdefault</span><span class="s3">(</span><span class="s5">&quot;photoshop&quot;</span><span class="s3">, {})</span>
+        <span class="s2">while </span><span class="s1">s</span><span class="s3">[</span><span class="s1">offset </span><span class="s3">: </span><span class="s1">offset </span><span class="s3">+ </span><span class="s4">4</span><span class="s3">] == </span><span class="s6">b&quot;8BIM&quot;</span><span class="s3">:</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">offset </span><span class="s3">+= </span><span class="s4">4</span>
+                <span class="s0"># resource code</span>
+                <span class="s1">code </span><span class="s3">= </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">offset</span><span class="s3">)</span>
+                <span class="s1">offset </span><span class="s3">+= </span><span class="s4">2</span>
+                <span class="s0"># resource name (usually empty)</span>
+                <span class="s1">name_len </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s1">offset</span><span class="s3">]</span>
+                <span class="s0"># name = s[offset+1:offset+1+name_len]</span>
+                <span class="s1">offset </span><span class="s3">+= </span><span class="s4">1 </span><span class="s3">+ </span><span class="s1">name_len</span>
+                <span class="s1">offset </span><span class="s3">+= </span><span class="s1">offset </span><span class="s3">&amp; </span><span class="s4">1  </span><span class="s0"># align</span>
+                <span class="s0"># resource data block</span>
+                <span class="s1">size </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">offset</span><span class="s3">)</span>
+                <span class="s1">offset </span><span class="s3">+= </span><span class="s4">4</span>
+                <span class="s1">data </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s1">offset </span><span class="s3">: </span><span class="s1">offset </span><span class="s3">+ </span><span class="s1">size</span><span class="s3">]</span>
+                <span class="s2">if </span><span class="s1">code </span><span class="s3">== </span><span class="s4">0x03ED</span><span class="s3">:  </span><span class="s0"># ResolutionInfo</span>
+                    <span class="s1">photoshop</span><span class="s3">[</span><span class="s1">code</span><span class="s3">] = {</span>
+                        <span class="s5">&quot;XResolution&quot;</span><span class="s3">: </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">data</span><span class="s3">, </span><span class="s4">0</span><span class="s3">) / </span><span class="s4">65536</span><span class="s3">,</span>
+                        <span class="s5">&quot;DisplayedUnitsX&quot;</span><span class="s3">: </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">data</span><span class="s3">, </span><span class="s4">4</span><span class="s3">),</span>
+                        <span class="s5">&quot;YResolution&quot;</span><span class="s3">: </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">data</span><span class="s3">, </span><span class="s4">8</span><span class="s3">) / </span><span class="s4">65536</span><span class="s3">,</span>
+                        <span class="s5">&quot;DisplayedUnitsY&quot;</span><span class="s3">: </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">data</span><span class="s3">, </span><span class="s4">12</span><span class="s3">),</span>
+                    <span class="s3">}</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">photoshop</span><span class="s3">[</span><span class="s1">code</span><span class="s3">] = </span><span class="s1">data</span>
+                <span class="s1">offset </span><span class="s3">+= </span><span class="s1">size</span>
+                <span class="s1">offset </span><span class="s3">+= </span><span class="s1">offset </span><span class="s3">&amp; </span><span class="s4">1  </span><span class="s0"># align</span>
+            <span class="s2">except </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">error</span><span class="s3">:</span>
+                <span class="s2">break  </span><span class="s0"># insufficient data</span>
+
+    <span class="s2">elif </span><span class="s1">marker </span><span class="s3">== </span><span class="s4">0xFFEE </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[:</span><span class="s4">5</span><span class="s3">] == </span><span class="s6">b&quot;Adobe&quot;</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;adobe&quot;</span><span class="s3">] = </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s4">5</span><span class="s3">)</span>
+        <span class="s0"># extract Adobe custom properties</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">adobe_transform </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s4">11</span><span class="s3">]</span>
+        <span class="s2">except </span><span class="s1">IndexError</span><span class="s3">:</span>
+            <span class="s2">pass</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;adobe_transform&quot;</span><span class="s3">] = </span><span class="s1">adobe_transform</span>
+    <span class="s2">elif </span><span class="s1">marker </span><span class="s3">== </span><span class="s4">0xFFE2 </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[:</span><span class="s4">4</span><span class="s3">] == </span><span class="s6">b&quot;MPF</span><span class="s2">\0</span><span class="s6">&quot;</span><span class="s3">:</span>
+        <span class="s0"># extract MPO information</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;mp&quot;</span><span class="s3">] = </span><span class="s1">s</span><span class="s3">[</span><span class="s4">4</span><span class="s3">:]</span>
+        <span class="s0"># offset is current location minus buffer size</span>
+        <span class="s0"># plus constant header size</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;mpoffset&quot;</span><span class="s3">] = </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">() - </span><span class="s1">n </span><span class="s3">+ </span><span class="s4">4</span>
+
+
+<span class="s2">def </span><span class="s1">COM</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">JpegImageFile</span><span class="s3">, </span><span class="s1">marker</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s0">#</span>
+    <span class="s0"># Comment marker.  Store these in the APP dictionary.</span>
+    <span class="s1">n </span><span class="s3">= </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">2</span><span class="s3">)) - </span><span class="s4">2</span>
+    <span class="s1">s </span><span class="s3">= </span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_safe_read</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">, </span><span class="s1">n</span><span class="s3">)</span>
+
+    <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;comment&quot;</span><span class="s3">] = </span><span class="s1">s</span>
+    <span class="s1">self</span><span class="s3">.</span><span class="s1">app</span><span class="s3">[</span><span class="s5">&quot;COM&quot;</span><span class="s3">] = </span><span class="s1">s  </span><span class="s0"># compatibility</span>
+    <span class="s1">self</span><span class="s3">.</span><span class="s1">applist</span><span class="s3">.</span><span class="s1">append</span><span class="s3">((</span><span class="s5">&quot;COM&quot;</span><span class="s3">, </span><span class="s1">s</span><span class="s3">))</span>
+
+
+<span class="s2">def </span><span class="s1">SOF</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">JpegImageFile</span><span class="s3">, </span><span class="s1">marker</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s0">#</span>
+    <span class="s0"># Start of frame marker.  Defines the size and mode of the</span>
+    <span class="s0"># image.  JPEG is colour blind, so we use some simple</span>
+    <span class="s0"># heuristics to map the number of layers to an appropriate</span>
+    <span class="s0"># mode.  Note that this could be made a bit brighter, by</span>
+    <span class="s0"># looking for JFIF and Adobe APP markers.</span>
+
+    <span class="s1">n </span><span class="s3">= </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">2</span><span class="s3">)) - </span><span class="s4">2</span>
+    <span class="s1">s </span><span class="s3">= </span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_safe_read</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">, </span><span class="s1">n</span><span class="s3">)</span>
+    <span class="s1">self</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s4">3</span><span class="s3">), </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s4">1</span><span class="s3">)</span>
+
+    <span class="s1">self</span><span class="s3">.</span><span class="s1">bits </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s4">0</span><span class="s3">]</span>
+    <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">bits </span><span class="s3">!= </span><span class="s4">8</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s5">f&quot;cannot handle </span><span class="s2">{</span><span class="s1">self</span><span class="s3">.</span><span class="s1">bits</span><span class="s2">}</span><span class="s5">-bit layers&quot;</span>
+        <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+    <span class="s1">self</span><span class="s3">.</span><span class="s1">layers </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s4">5</span><span class="s3">]</span>
+    <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">layers </span><span class="s3">== </span><span class="s4">1</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s5">&quot;L&quot;</span>
+    <span class="s2">elif </span><span class="s1">self</span><span class="s3">.</span><span class="s1">layers </span><span class="s3">== </span><span class="s4">3</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s5">&quot;RGB&quot;</span>
+    <span class="s2">elif </span><span class="s1">self</span><span class="s3">.</span><span class="s1">layers </span><span class="s3">== </span><span class="s4">4</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s5">&quot;CMYK&quot;</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s5">f&quot;cannot handle </span><span class="s2">{</span><span class="s1">self</span><span class="s3">.</span><span class="s1">layers</span><span class="s2">}</span><span class="s5">-layer images&quot;</span>
+        <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">marker </span><span class="s2">in </span><span class="s3">[</span><span class="s4">0xFFC2</span><span class="s3">, </span><span class="s4">0xFFC6</span><span class="s3">, </span><span class="s4">0xFFCA</span><span class="s3">, </span><span class="s4">0xFFCE</span><span class="s3">]:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;progressive&quot;</span><span class="s3">] = </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;progression&quot;</span><span class="s3">] = </span><span class="s4">1</span>
+
+    <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">icclist</span><span class="s3">:</span>
+        <span class="s0"># fixup icc profile</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">icclist</span><span class="s3">.</span><span class="s1">sort</span><span class="s3">()  </span><span class="s0"># sort by sequence number</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">icclist</span><span class="s3">[</span><span class="s4">0</span><span class="s3">][</span><span class="s4">13</span><span class="s3">] == </span><span class="s1">len</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">icclist</span><span class="s3">):</span>
+            <span class="s1">profile </span><span class="s3">= [</span><span class="s1">p</span><span class="s3">[</span><span class="s4">14</span><span class="s3">:] </span><span class="s2">for </span><span class="s1">p </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">icclist</span><span class="s3">]</span>
+            <span class="s1">icc_profile </span><span class="s3">= </span><span class="s6">b&quot;&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">profile</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">icc_profile </span><span class="s3">= </span><span class="s2">None  </span><span class="s0"># wrong number of fragments</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;icc_profile&quot;</span><span class="s3">] = </span><span class="s1">icc_profile</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">icclist </span><span class="s3">= []</span>
+
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">6</span><span class="s3">, </span><span class="s1">len</span><span class="s3">(</span><span class="s1">s</span><span class="s3">), </span><span class="s4">3</span><span class="s3">):</span>
+        <span class="s1">t </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s1">i </span><span class="s3">: </span><span class="s1">i </span><span class="s3">+ </span><span class="s4">3</span><span class="s3">]</span>
+        <span class="s0"># 4-tuples: id, vsamp, hsamp, qtable</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">layer</span><span class="s3">.</span><span class="s1">append</span><span class="s3">((</span><span class="s1">t</span><span class="s3">[</span><span class="s4">0</span><span class="s3">], </span><span class="s1">t</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] // </span><span class="s4">16</span><span class="s3">, </span><span class="s1">t</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] &amp; </span><span class="s4">15</span><span class="s3">, </span><span class="s1">t</span><span class="s3">[</span><span class="s4">2</span><span class="s3">]))</span>
+
+
+<span class="s2">def </span><span class="s1">DQT</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">JpegImageFile</span><span class="s3">, </span><span class="s1">marker</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s0">#</span>
+    <span class="s0"># Define quantization table.  Note that there might be more</span>
+    <span class="s0"># than one table in each marker.</span>
+
+    <span class="s0"># FIXME: The quantization tables can be used to estimate the</span>
+    <span class="s0"># compression quality.</span>
+
+    <span class="s1">n </span><span class="s3">= </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">2</span><span class="s3">)) - </span><span class="s4">2</span>
+    <span class="s1">s </span><span class="s3">= </span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_safe_read</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">, </span><span class="s1">n</span><span class="s3">)</span>
+    <span class="s2">while </span><span class="s1">len</span><span class="s3">(</span><span class="s1">s</span><span class="s3">):</span>
+        <span class="s1">v </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s4">0</span><span class="s3">]</span>
+        <span class="s1">precision </span><span class="s3">= </span><span class="s4">1 </span><span class="s2">if </span><span class="s3">(</span><span class="s1">v </span><span class="s3">// </span><span class="s4">16 </span><span class="s3">== </span><span class="s4">0</span><span class="s3">) </span><span class="s2">else </span><span class="s4">2  </span><span class="s0"># in bytes</span>
+        <span class="s1">qt_length </span><span class="s3">= </span><span class="s4">1 </span><span class="s3">+ </span><span class="s1">precision </span><span class="s3">* </span><span class="s4">64</span>
+        <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">s</span><span class="s3">) &lt; </span><span class="s1">qt_length</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;bad quantization table marker&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">data </span><span class="s3">= </span><span class="s1">array</span><span class="s3">.</span><span class="s1">array</span><span class="s3">(</span><span class="s5">&quot;B&quot; </span><span class="s2">if </span><span class="s1">precision </span><span class="s3">== </span><span class="s4">1 </span><span class="s2">else </span><span class="s5">&quot;H&quot;</span><span class="s3">, </span><span class="s1">s</span><span class="s3">[</span><span class="s4">1</span><span class="s3">:</span><span class="s1">qt_length</span><span class="s3">])</span>
+        <span class="s2">if </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">byteorder </span><span class="s3">== </span><span class="s5">&quot;little&quot; </span><span class="s2">and </span><span class="s1">precision </span><span class="s3">&gt; </span><span class="s4">1</span><span class="s3">:</span>
+            <span class="s1">data</span><span class="s3">.</span><span class="s1">byteswap</span><span class="s3">()  </span><span class="s0"># the values are always big-endian</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">quantization</span><span class="s3">[</span><span class="s1">v </span><span class="s3">&amp; </span><span class="s4">15</span><span class="s3">] = [</span><span class="s1">data</span><span class="s3">[</span><span class="s1">i</span><span class="s3">] </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">zigzag_index</span><span class="s3">]</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s1">qt_length</span><span class="s3">:]</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># JPEG marker table</span>
+
+<span class="s1">MARKER </span><span class="s3">= {</span>
+    <span class="s4">0xFFC0</span><span class="s3">: (</span><span class="s5">&quot;SOF0&quot;</span><span class="s3">, </span><span class="s5">&quot;Baseline DCT&quot;</span><span class="s3">, </span><span class="s1">SOF</span><span class="s3">),</span>
+    <span class="s4">0xFFC1</span><span class="s3">: (</span><span class="s5">&quot;SOF1&quot;</span><span class="s3">, </span><span class="s5">&quot;Extended Sequential DCT&quot;</span><span class="s3">, </span><span class="s1">SOF</span><span class="s3">),</span>
+    <span class="s4">0xFFC2</span><span class="s3">: (</span><span class="s5">&quot;SOF2&quot;</span><span class="s3">, </span><span class="s5">&quot;Progressive DCT&quot;</span><span class="s3">, </span><span class="s1">SOF</span><span class="s3">),</span>
+    <span class="s4">0xFFC3</span><span class="s3">: (</span><span class="s5">&quot;SOF3&quot;</span><span class="s3">, </span><span class="s5">&quot;Spatial lossless&quot;</span><span class="s3">, </span><span class="s1">SOF</span><span class="s3">),</span>
+    <span class="s4">0xFFC4</span><span class="s3">: (</span><span class="s5">&quot;DHT&quot;</span><span class="s3">, </span><span class="s5">&quot;Define Huffman table&quot;</span><span class="s3">, </span><span class="s1">Skip</span><span class="s3">),</span>
+    <span class="s4">0xFFC5</span><span class="s3">: (</span><span class="s5">&quot;SOF5&quot;</span><span class="s3">, </span><span class="s5">&quot;Differential sequential DCT&quot;</span><span class="s3">, </span><span class="s1">SOF</span><span class="s3">),</span>
+    <span class="s4">0xFFC6</span><span class="s3">: (</span><span class="s5">&quot;SOF6&quot;</span><span class="s3">, </span><span class="s5">&quot;Differential progressive DCT&quot;</span><span class="s3">, </span><span class="s1">SOF</span><span class="s3">),</span>
+    <span class="s4">0xFFC7</span><span class="s3">: (</span><span class="s5">&quot;SOF7&quot;</span><span class="s3">, </span><span class="s5">&quot;Differential spatial&quot;</span><span class="s3">, </span><span class="s1">SOF</span><span class="s3">),</span>
+    <span class="s4">0xFFC8</span><span class="s3">: (</span><span class="s5">&quot;JPG&quot;</span><span class="s3">, </span><span class="s5">&quot;Extension&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFC9</span><span class="s3">: (</span><span class="s5">&quot;SOF9&quot;</span><span class="s3">, </span><span class="s5">&quot;Extended sequential DCT (AC)&quot;</span><span class="s3">, </span><span class="s1">SOF</span><span class="s3">),</span>
+    <span class="s4">0xFFCA</span><span class="s3">: (</span><span class="s5">&quot;SOF10&quot;</span><span class="s3">, </span><span class="s5">&quot;Progressive DCT (AC)&quot;</span><span class="s3">, </span><span class="s1">SOF</span><span class="s3">),</span>
+    <span class="s4">0xFFCB</span><span class="s3">: (</span><span class="s5">&quot;SOF11&quot;</span><span class="s3">, </span><span class="s5">&quot;Spatial lossless DCT (AC)&quot;</span><span class="s3">, </span><span class="s1">SOF</span><span class="s3">),</span>
+    <span class="s4">0xFFCC</span><span class="s3">: (</span><span class="s5">&quot;DAC&quot;</span><span class="s3">, </span><span class="s5">&quot;Define arithmetic coding conditioning&quot;</span><span class="s3">, </span><span class="s1">Skip</span><span class="s3">),</span>
+    <span class="s4">0xFFCD</span><span class="s3">: (</span><span class="s5">&quot;SOF13&quot;</span><span class="s3">, </span><span class="s5">&quot;Differential sequential DCT (AC)&quot;</span><span class="s3">, </span><span class="s1">SOF</span><span class="s3">),</span>
+    <span class="s4">0xFFCE</span><span class="s3">: (</span><span class="s5">&quot;SOF14&quot;</span><span class="s3">, </span><span class="s5">&quot;Differential progressive DCT (AC)&quot;</span><span class="s3">, </span><span class="s1">SOF</span><span class="s3">),</span>
+    <span class="s4">0xFFCF</span><span class="s3">: (</span><span class="s5">&quot;SOF15&quot;</span><span class="s3">, </span><span class="s5">&quot;Differential spatial (AC)&quot;</span><span class="s3">, </span><span class="s1">SOF</span><span class="s3">),</span>
+    <span class="s4">0xFFD0</span><span class="s3">: (</span><span class="s5">&quot;RST0&quot;</span><span class="s3">, </span><span class="s5">&quot;Restart 0&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFD1</span><span class="s3">: (</span><span class="s5">&quot;RST1&quot;</span><span class="s3">, </span><span class="s5">&quot;Restart 1&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFD2</span><span class="s3">: (</span><span class="s5">&quot;RST2&quot;</span><span class="s3">, </span><span class="s5">&quot;Restart 2&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFD3</span><span class="s3">: (</span><span class="s5">&quot;RST3&quot;</span><span class="s3">, </span><span class="s5">&quot;Restart 3&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFD4</span><span class="s3">: (</span><span class="s5">&quot;RST4&quot;</span><span class="s3">, </span><span class="s5">&quot;Restart 4&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFD5</span><span class="s3">: (</span><span class="s5">&quot;RST5&quot;</span><span class="s3">, </span><span class="s5">&quot;Restart 5&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFD6</span><span class="s3">: (</span><span class="s5">&quot;RST6&quot;</span><span class="s3">, </span><span class="s5">&quot;Restart 6&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFD7</span><span class="s3">: (</span><span class="s5">&quot;RST7&quot;</span><span class="s3">, </span><span class="s5">&quot;Restart 7&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFD8</span><span class="s3">: (</span><span class="s5">&quot;SOI&quot;</span><span class="s3">, </span><span class="s5">&quot;Start of image&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFD9</span><span class="s3">: (</span><span class="s5">&quot;EOI&quot;</span><span class="s3">, </span><span class="s5">&quot;End of image&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFDA</span><span class="s3">: (</span><span class="s5">&quot;SOS&quot;</span><span class="s3">, </span><span class="s5">&quot;Start of scan&quot;</span><span class="s3">, </span><span class="s1">Skip</span><span class="s3">),</span>
+    <span class="s4">0xFFDB</span><span class="s3">: (</span><span class="s5">&quot;DQT&quot;</span><span class="s3">, </span><span class="s5">&quot;Define quantization table&quot;</span><span class="s3">, </span><span class="s1">DQT</span><span class="s3">),</span>
+    <span class="s4">0xFFDC</span><span class="s3">: (</span><span class="s5">&quot;DNL&quot;</span><span class="s3">, </span><span class="s5">&quot;Define number of lines&quot;</span><span class="s3">, </span><span class="s1">Skip</span><span class="s3">),</span>
+    <span class="s4">0xFFDD</span><span class="s3">: (</span><span class="s5">&quot;DRI&quot;</span><span class="s3">, </span><span class="s5">&quot;Define restart interval&quot;</span><span class="s3">, </span><span class="s1">Skip</span><span class="s3">),</span>
+    <span class="s4">0xFFDE</span><span class="s3">: (</span><span class="s5">&quot;DHP&quot;</span><span class="s3">, </span><span class="s5">&quot;Define hierarchical progression&quot;</span><span class="s3">, </span><span class="s1">SOF</span><span class="s3">),</span>
+    <span class="s4">0xFFDF</span><span class="s3">: (</span><span class="s5">&quot;EXP&quot;</span><span class="s3">, </span><span class="s5">&quot;Expand reference component&quot;</span><span class="s3">, </span><span class="s1">Skip</span><span class="s3">),</span>
+    <span class="s4">0xFFE0</span><span class="s3">: (</span><span class="s5">&quot;APP0&quot;</span><span class="s3">, </span><span class="s5">&quot;Application segment 0&quot;</span><span class="s3">, </span><span class="s1">APP</span><span class="s3">),</span>
+    <span class="s4">0xFFE1</span><span class="s3">: (</span><span class="s5">&quot;APP1&quot;</span><span class="s3">, </span><span class="s5">&quot;Application segment 1&quot;</span><span class="s3">, </span><span class="s1">APP</span><span class="s3">),</span>
+    <span class="s4">0xFFE2</span><span class="s3">: (</span><span class="s5">&quot;APP2&quot;</span><span class="s3">, </span><span class="s5">&quot;Application segment 2&quot;</span><span class="s3">, </span><span class="s1">APP</span><span class="s3">),</span>
+    <span class="s4">0xFFE3</span><span class="s3">: (</span><span class="s5">&quot;APP3&quot;</span><span class="s3">, </span><span class="s5">&quot;Application segment 3&quot;</span><span class="s3">, </span><span class="s1">APP</span><span class="s3">),</span>
+    <span class="s4">0xFFE4</span><span class="s3">: (</span><span class="s5">&quot;APP4&quot;</span><span class="s3">, </span><span class="s5">&quot;Application segment 4&quot;</span><span class="s3">, </span><span class="s1">APP</span><span class="s3">),</span>
+    <span class="s4">0xFFE5</span><span class="s3">: (</span><span class="s5">&quot;APP5&quot;</span><span class="s3">, </span><span class="s5">&quot;Application segment 5&quot;</span><span class="s3">, </span><span class="s1">APP</span><span class="s3">),</span>
+    <span class="s4">0xFFE6</span><span class="s3">: (</span><span class="s5">&quot;APP6&quot;</span><span class="s3">, </span><span class="s5">&quot;Application segment 6&quot;</span><span class="s3">, </span><span class="s1">APP</span><span class="s3">),</span>
+    <span class="s4">0xFFE7</span><span class="s3">: (</span><span class="s5">&quot;APP7&quot;</span><span class="s3">, </span><span class="s5">&quot;Application segment 7&quot;</span><span class="s3">, </span><span class="s1">APP</span><span class="s3">),</span>
+    <span class="s4">0xFFE8</span><span class="s3">: (</span><span class="s5">&quot;APP8&quot;</span><span class="s3">, </span><span class="s5">&quot;Application segment 8&quot;</span><span class="s3">, </span><span class="s1">APP</span><span class="s3">),</span>
+    <span class="s4">0xFFE9</span><span class="s3">: (</span><span class="s5">&quot;APP9&quot;</span><span class="s3">, </span><span class="s5">&quot;Application segment 9&quot;</span><span class="s3">, </span><span class="s1">APP</span><span class="s3">),</span>
+    <span class="s4">0xFFEA</span><span class="s3">: (</span><span class="s5">&quot;APP10&quot;</span><span class="s3">, </span><span class="s5">&quot;Application segment 10&quot;</span><span class="s3">, </span><span class="s1">APP</span><span class="s3">),</span>
+    <span class="s4">0xFFEB</span><span class="s3">: (</span><span class="s5">&quot;APP11&quot;</span><span class="s3">, </span><span class="s5">&quot;Application segment 11&quot;</span><span class="s3">, </span><span class="s1">APP</span><span class="s3">),</span>
+    <span class="s4">0xFFEC</span><span class="s3">: (</span><span class="s5">&quot;APP12&quot;</span><span class="s3">, </span><span class="s5">&quot;Application segment 12&quot;</span><span class="s3">, </span><span class="s1">APP</span><span class="s3">),</span>
+    <span class="s4">0xFFED</span><span class="s3">: (</span><span class="s5">&quot;APP13&quot;</span><span class="s3">, </span><span class="s5">&quot;Application segment 13&quot;</span><span class="s3">, </span><span class="s1">APP</span><span class="s3">),</span>
+    <span class="s4">0xFFEE</span><span class="s3">: (</span><span class="s5">&quot;APP14&quot;</span><span class="s3">, </span><span class="s5">&quot;Application segment 14&quot;</span><span class="s3">, </span><span class="s1">APP</span><span class="s3">),</span>
+    <span class="s4">0xFFEF</span><span class="s3">: (</span><span class="s5">&quot;APP15&quot;</span><span class="s3">, </span><span class="s5">&quot;Application segment 15&quot;</span><span class="s3">, </span><span class="s1">APP</span><span class="s3">),</span>
+    <span class="s4">0xFFF0</span><span class="s3">: (</span><span class="s5">&quot;JPG0&quot;</span><span class="s3">, </span><span class="s5">&quot;Extension 0&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFF1</span><span class="s3">: (</span><span class="s5">&quot;JPG1&quot;</span><span class="s3">, </span><span class="s5">&quot;Extension 1&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFF2</span><span class="s3">: (</span><span class="s5">&quot;JPG2&quot;</span><span class="s3">, </span><span class="s5">&quot;Extension 2&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFF3</span><span class="s3">: (</span><span class="s5">&quot;JPG3&quot;</span><span class="s3">, </span><span class="s5">&quot;Extension 3&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFF4</span><span class="s3">: (</span><span class="s5">&quot;JPG4&quot;</span><span class="s3">, </span><span class="s5">&quot;Extension 4&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFF5</span><span class="s3">: (</span><span class="s5">&quot;JPG5&quot;</span><span class="s3">, </span><span class="s5">&quot;Extension 5&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFF6</span><span class="s3">: (</span><span class="s5">&quot;JPG6&quot;</span><span class="s3">, </span><span class="s5">&quot;Extension 6&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFF7</span><span class="s3">: (</span><span class="s5">&quot;JPG7&quot;</span><span class="s3">, </span><span class="s5">&quot;Extension 7&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFF8</span><span class="s3">: (</span><span class="s5">&quot;JPG8&quot;</span><span class="s3">, </span><span class="s5">&quot;Extension 8&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFF9</span><span class="s3">: (</span><span class="s5">&quot;JPG9&quot;</span><span class="s3">, </span><span class="s5">&quot;Extension 9&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFFA</span><span class="s3">: (</span><span class="s5">&quot;JPG10&quot;</span><span class="s3">, </span><span class="s5">&quot;Extension 10&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFFB</span><span class="s3">: (</span><span class="s5">&quot;JPG11&quot;</span><span class="s3">, </span><span class="s5">&quot;Extension 11&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFFC</span><span class="s3">: (</span><span class="s5">&quot;JPG12&quot;</span><span class="s3">, </span><span class="s5">&quot;Extension 12&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFFD</span><span class="s3">: (</span><span class="s5">&quot;JPG13&quot;</span><span class="s3">, </span><span class="s5">&quot;Extension 13&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">),</span>
+    <span class="s4">0xFFFE</span><span class="s3">: (</span><span class="s5">&quot;COM&quot;</span><span class="s3">, </span><span class="s5">&quot;Comment&quot;</span><span class="s3">, </span><span class="s1">COM</span><span class="s3">),</span>
+<span class="s3">}</span>
+
+
+<span class="s2">def </span><span class="s1">_accept</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">: </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s0"># Magic number was taken from https://en.wikipedia.org/wiki/JPEG</span>
+    <span class="s2">return </span><span class="s1">prefix</span><span class="s3">[:</span><span class="s4">3</span><span class="s3">] == </span><span class="s6">b&quot;</span><span class="s2">\xFF\xD8\xFF</span><span class="s6">&quot;</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for JPEG and JFIF images.</span>
+
+
+<span class="s2">class </span><span class="s1">JpegImageFile</span><span class="s3">(</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">ImageFile</span><span class="s3">):</span>
+    <span class="s1">format </span><span class="s3">= </span><span class="s5">&quot;JPEG&quot;</span>
+    <span class="s1">format_description </span><span class="s3">= </span><span class="s5">&quot;JPEG (ISO 10918)&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">3</span><span class="s3">)</span>
+
+        <span class="s2">if not </span><span class="s1">_accept</span><span class="s3">(</span><span class="s1">s</span><span class="s3">):</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;not a JPEG file&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s6">b&quot;</span><span class="s2">\xFF</span><span class="s6">&quot;</span>
+
+        <span class="s0"># Create attributes</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">bits </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">layers </span><span class="s3">= </span><span class="s4">0</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_exif_offset </span><span class="s3">= </span><span class="s4">0</span>
+
+        <span class="s0"># JPEG specifics (internal)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">layer</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]] = []</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_huffman_dc</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] = {}</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_huffman_ac</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] = {}</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">quantization</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">list</span><span class="s3">[</span><span class="s1">int</span><span class="s3">]] = {}</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">app</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">bytes</span><span class="s3">] = {}  </span><span class="s0"># compatibility</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">applist</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">bytes</span><span class="s3">]] = []</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">icclist</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">] = []</span>
+
+        <span class="s2">while True</span><span class="s3">:</span>
+            <span class="s1">i </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s4">0</span><span class="s3">]</span>
+            <span class="s2">if </span><span class="s1">i </span><span class="s3">== </span><span class="s4">0xFF</span><span class="s3">:</span>
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">s </span><span class="s3">+ </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">1</span><span class="s3">)</span>
+                <span class="s1">i </span><span class="s3">= </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s0"># Skip non-0xFF junk</span>
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">1</span><span class="s3">)</span>
+                <span class="s2">continue</span>
+
+            <span class="s2">if </span><span class="s1">i </span><span class="s2">in </span><span class="s1">MARKER</span><span class="s3">:</span>
+                <span class="s1">name</span><span class="s3">, </span><span class="s1">description</span><span class="s3">, </span><span class="s1">handler </span><span class="s3">= </span><span class="s1">MARKER</span><span class="s3">[</span><span class="s1">i</span><span class="s3">]</span>
+                <span class="s2">if </span><span class="s1">handler </span><span class="s2">is not None</span><span class="s3">:</span>
+                    <span class="s1">handler</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">i</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">i </span><span class="s3">== </span><span class="s4">0xFFDA</span><span class="s3">:  </span><span class="s0"># start of scan</span>
+                    <span class="s1">rawmode </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode</span>
+                    <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s5">&quot;CMYK&quot;</span><span class="s3">:</span>
+                        <span class="s1">rawmode </span><span class="s3">= </span><span class="s5">&quot;CMYK;I&quot;  </span><span class="s0"># assume adobe conventions</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= [</span>
+                        <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s5">&quot;jpeg&quot;</span><span class="s3">, (</span><span class="s4">0</span><span class="s3">, </span><span class="s4">0</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s4">0</span><span class="s3">, (</span><span class="s1">rawmode</span><span class="s3">, </span><span class="s5">&quot;&quot;</span><span class="s3">))</span>
+                    <span class="s3">]</span>
+                    <span class="s0"># self.__offset = self.fp.tell()</span>
+                    <span class="s2">break</span>
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">1</span><span class="s3">)</span>
+            <span class="s2">elif </span><span class="s1">i </span><span class="s2">in </span><span class="s3">{</span><span class="s4">0</span><span class="s3">, </span><span class="s4">0xFFFF</span><span class="s3">}:</span>
+                <span class="s0"># padded marker or junk; move on</span>
+                <span class="s1">s </span><span class="s3">= </span><span class="s6">b&quot;</span><span class="s2">\xff</span><span class="s6">&quot;</span>
+            <span class="s2">elif </span><span class="s1">i </span><span class="s3">== </span><span class="s4">0xFF00</span><span class="s3">:  </span><span class="s0"># Skip extraneous data (escaped 0xFF)</span>
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">1</span><span class="s3">)</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;no marker found&quot;</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_read_dpi_from_exif</span><span class="s3">()</span>
+
+    <span class="s2">def </span><span class="s1">__getattr__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">name </span><span class="s2">in </span><span class="s3">(</span><span class="s5">&quot;huffman_ac&quot;</span><span class="s3">, </span><span class="s5">&quot;huffman_dc&quot;</span><span class="s3">):</span>
+            <span class="s1">deprecate</span><span class="s3">(</span><span class="s1">name</span><span class="s3">, </span><span class="s4">12</span><span class="s3">)</span>
+            <span class="s2">return </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s5">&quot;_&quot; </span><span class="s3">+ </span><span class="s1">name</span><span class="s3">)</span>
+        <span class="s2">raise </span><span class="s1">AttributeError</span><span class="s3">(</span><span class="s1">name</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">__getstate__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; list</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]:</span>
+        <span class="s2">return </span><span class="s1">super</span><span class="s3">().</span><span class="s1">__getstate__</span><span class="s3">() + [</span><span class="s1">self</span><span class="s3">.</span><span class="s1">layers</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">layer</span><span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">__setstate__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">state</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">super</span><span class="s3">().</span><span class="s1">__setstate__</span><span class="s3">(</span><span class="s1">state</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">layers</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">layer </span><span class="s3">= </span><span class="s1">state</span><span class="s3">[</span><span class="s4">5</span><span class="s3">:]</span>
+
+    <span class="s2">def </span><span class="s1">load_read</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">read_bytes</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; bytes</span><span class="s3">:</span>
+        <span class="s7">&quot;&quot;&quot; 
+        internal: read more image data 
+        For premature EOF and LOAD_TRUNCATED_IMAGES adds EOI marker 
+        so libjpeg can finish decoding 
+        &quot;&quot;&quot;</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s1">read_bytes</span><span class="s3">)</span>
+
+        <span class="s2">if not </span><span class="s1">s </span><span class="s2">and </span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">LOAD_TRUNCATED_IMAGES </span><span class="s2">and not </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s5">&quot;_ended&quot;</span><span class="s3">):</span>
+            <span class="s0"># Premature EOF.</span>
+            <span class="s0"># Pretend file is finished adding EOI marker</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_ended </span><span class="s3">= </span><span class="s2">True</span>
+            <span class="s2">return </span><span class="s6">b&quot;</span><span class="s2">\xFF\xD9</span><span class="s6">&quot;</span>
+
+        <span class="s2">return </span><span class="s1">s</span>
+
+    <span class="s2">def </span><span class="s1">draft</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">, </span><span class="s1">mode</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None</span><span class="s3">, </span><span class="s1">size</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">] | </span><span class="s2">None</span>
+    <span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">float</span><span class="s3">, </span><span class="s1">float</span><span class="s3">]] | </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">tile</span><span class="s3">) != </span><span class="s4">1</span><span class="s3">:</span>
+            <span class="s2">return None</span>
+
+        <span class="s0"># Protect from second call</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">decoderconfig</span><span class="s3">:</span>
+            <span class="s2">return None</span>
+
+        <span class="s1">d</span><span class="s3">, </span><span class="s1">e</span><span class="s3">, </span><span class="s1">o</span><span class="s3">, </span><span class="s1">a </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">tile</span><span class="s3">[</span><span class="s4">0</span><span class="s3">]</span>
+        <span class="s1">scale </span><span class="s3">= </span><span class="s4">1</span>
+        <span class="s1">original_size </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span>
+
+        <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">a</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">a</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] == </span><span class="s5">&quot;RGB&quot; </span><span class="s2">and </span><span class="s1">mode </span><span class="s2">in </span><span class="s3">[</span><span class="s5">&quot;L&quot;</span><span class="s3">, </span><span class="s5">&quot;YCbCr&quot;</span><span class="s3">]:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s1">mode</span>
+            <span class="s1">a </span><span class="s3">= </span><span class="s1">mode</span><span class="s3">, </span><span class="s5">&quot;&quot;</span>
+
+        <span class="s2">if </span><span class="s1">size</span><span class="s3">:</span>
+            <span class="s1">scale </span><span class="s3">= </span><span class="s1">min</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] // </span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">], </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] // </span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">])</span>
+            <span class="s2">for </span><span class="s1">s </span><span class="s2">in </span><span class="s3">[</span><span class="s4">8</span><span class="s3">, </span><span class="s4">4</span><span class="s3">, </span><span class="s4">2</span><span class="s3">, </span><span class="s4">1</span><span class="s3">]:</span>
+                <span class="s2">if </span><span class="s1">scale </span><span class="s3">&gt;= </span><span class="s1">s</span><span class="s3">:</span>
+                    <span class="s2">break</span>
+            <span class="s2">assert </span><span class="s1">e </span><span class="s2">is not None</span>
+            <span class="s1">e </span><span class="s3">= (</span>
+                <span class="s1">e</span><span class="s3">[</span><span class="s4">0</span><span class="s3">],</span>
+                <span class="s1">e</span><span class="s3">[</span><span class="s4">1</span><span class="s3">],</span>
+                <span class="s3">(</span><span class="s1">e</span><span class="s3">[</span><span class="s4">2</span><span class="s3">] - </span><span class="s1">e</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] + </span><span class="s1">s </span><span class="s3">- </span><span class="s4">1</span><span class="s3">) // </span><span class="s1">s </span><span class="s3">+ </span><span class="s1">e</span><span class="s3">[</span><span class="s4">0</span><span class="s3">],</span>
+                <span class="s3">(</span><span class="s1">e</span><span class="s3">[</span><span class="s4">3</span><span class="s3">] - </span><span class="s1">e</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] + </span><span class="s1">s </span><span class="s3">- </span><span class="s4">1</span><span class="s3">) // </span><span class="s1">s </span><span class="s3">+ </span><span class="s1">e</span><span class="s3">[</span><span class="s4">1</span><span class="s3">],</span>
+            <span class="s3">)</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= ((</span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] + </span><span class="s1">s </span><span class="s3">- </span><span class="s4">1</span><span class="s3">) // </span><span class="s1">s</span><span class="s3">, (</span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] + </span><span class="s1">s </span><span class="s3">- </span><span class="s4">1</span><span class="s3">) // </span><span class="s1">s</span><span class="s3">)</span>
+            <span class="s1">scale </span><span class="s3">= </span><span class="s1">s</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= [</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s1">d</span><span class="s3">, </span><span class="s1">e</span><span class="s3">, </span><span class="s1">o</span><span class="s3">, </span><span class="s1">a</span><span class="s3">)]</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">decoderconfig </span><span class="s3">= (</span><span class="s1">scale</span><span class="s3">, </span><span class="s4">0</span><span class="s3">)</span>
+
+        <span class="s1">box </span><span class="s3">= (</span><span class="s4">0</span><span class="s3">, </span><span class="s4">0</span><span class="s3">, </span><span class="s1">original_size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] / </span><span class="s1">scale</span><span class="s3">, </span><span class="s1">original_size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] / </span><span class="s1">scale</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">, </span><span class="s1">box</span>
+
+    <span class="s2">def </span><span class="s1">load_djpeg</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s0"># ALTERNATIVE: handle JPEGs via the IJG command line utilities</span>
+
+        <span class="s1">f</span><span class="s3">, </span><span class="s1">path </span><span class="s3">= </span><span class="s1">tempfile</span><span class="s3">.</span><span class="s1">mkstemp</span><span class="s3">()</span>
+        <span class="s1">os</span><span class="s3">.</span><span class="s1">close</span><span class="s3">(</span><span class="s1">f</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">exists</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">filename</span><span class="s3">):</span>
+            <span class="s1">subprocess</span><span class="s3">.</span><span class="s1">check_call</span><span class="s3">([</span><span class="s5">&quot;djpeg&quot;</span><span class="s3">, </span><span class="s5">&quot;-outfile&quot;</span><span class="s3">, </span><span class="s1">path</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">filename</span><span class="s3">])</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">os</span><span class="s3">.</span><span class="s1">unlink</span><span class="s3">(</span><span class="s1">path</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">OSError</span><span class="s3">:</span>
+                <span class="s2">pass</span>
+
+            <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;Invalid Filename&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s2">with </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">open</span><span class="s3">(</span><span class="s1">path</span><span class="s3">) </span><span class="s2">as </span><span class="s1">_im</span><span class="s3">:</span>
+                <span class="s1">_im</span><span class="s3">.</span><span class="s1">load</span><span class="s3">()</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">im </span><span class="s3">= </span><span class="s1">_im</span><span class="s3">.</span><span class="s1">im</span>
+        <span class="s2">finally</span><span class="s3">:</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">os</span><span class="s3">.</span><span class="s1">unlink</span><span class="s3">(</span><span class="s1">path</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">OSError</span><span class="s3">:</span>
+                <span class="s2">pass</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= []</span>
+
+    <span class="s2">def </span><span class="s1">_getexif</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; dict</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">_getexif</span><span class="s3">(</span><span class="s1">self</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">_read_dpi_from_exif</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s0"># If DPI isn't in JPEG header, fetch from EXIF</span>
+        <span class="s2">if </span><span class="s5">&quot;dpi&quot; </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info </span><span class="s2">or </span><span class="s5">&quot;exif&quot; </span><span class="s2">not in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+            <span class="s2">return</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">exif </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">getexif</span><span class="s3">()</span>
+            <span class="s1">resolution_unit </span><span class="s3">= </span><span class="s1">exif</span><span class="s3">[</span><span class="s4">0x0128</span><span class="s3">]</span>
+            <span class="s1">x_resolution </span><span class="s3">= </span><span class="s1">exif</span><span class="s3">[</span><span class="s4">0x011A</span><span class="s3">]</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">dpi </span><span class="s3">= </span><span class="s1">float</span><span class="s3">(</span><span class="s1">x_resolution</span><span class="s3">[</span><span class="s4">0</span><span class="s3">]) / </span><span class="s1">x_resolution</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]</span>
+            <span class="s2">except </span><span class="s1">TypeError</span><span class="s3">:</span>
+                <span class="s1">dpi </span><span class="s3">= </span><span class="s1">x_resolution</span>
+            <span class="s2">if </span><span class="s1">math</span><span class="s3">.</span><span class="s1">isnan</span><span class="s3">(</span><span class="s1">dpi</span><span class="s3">):</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;DPI is not a number&quot;</span>
+                <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">resolution_unit </span><span class="s3">== </span><span class="s4">3</span><span class="s3">:  </span><span class="s0"># cm</span>
+                <span class="s0"># 1 dpcm = 2.54 dpi</span>
+                <span class="s1">dpi </span><span class="s3">*= </span><span class="s4">2.54</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;dpi&quot;</span><span class="s3">] = </span><span class="s1">dpi</span><span class="s3">, </span><span class="s1">dpi</span>
+        <span class="s2">except </span><span class="s3">(</span>
+            <span class="s1">struct</span><span class="s3">.</span><span class="s1">error</span><span class="s3">,  </span><span class="s0"># truncated EXIF</span>
+            <span class="s1">KeyError</span><span class="s3">,  </span><span class="s0"># dpi not included</span>
+            <span class="s1">SyntaxError</span><span class="s3">,  </span><span class="s0"># invalid/unreadable EXIF</span>
+            <span class="s1">TypeError</span><span class="s3">,  </span><span class="s0"># dpi is an invalid float</span>
+            <span class="s1">ValueError</span><span class="s3">,  </span><span class="s0"># dpi is an invalid float</span>
+            <span class="s1">ZeroDivisionError</span><span class="s3">,  </span><span class="s0"># invalid dpi rational value</span>
+        <span class="s3">):</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;dpi&quot;</span><span class="s3">] = </span><span class="s4">72</span><span class="s3">, </span><span class="s4">72</span>
+
+    <span class="s2">def </span><span class="s1">_getmp</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; dict</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">_getmp</span><span class="s3">(</span><span class="s1">self</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_getexif</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">JpegImageFile</span><span class="s3">) </span><span class="s1">-&gt; dict</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s2">if </span><span class="s5">&quot;exif&quot; </span><span class="s2">not in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+        <span class="s2">return None</span>
+    <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">getexif</span><span class="s3">().</span><span class="s1">_get_merged_dict</span><span class="s3">()</span>
+
+
+<span class="s2">def </span><span class="s1">_getmp</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">JpegImageFile</span><span class="s3">) </span><span class="s1">-&gt; dict</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s0"># Extract MP information.  This method was inspired by the &quot;highly</span>
+    <span class="s0"># experimental&quot; _getexif version that's been in use for years now,</span>
+    <span class="s0"># itself based on the ImageFileDirectory class in the TIFF plugin.</span>
+
+    <span class="s0"># The MP record essentially consists of a TIFF file embedded in a JPEG</span>
+    <span class="s0"># application marker.</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">data </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;mp&quot;</span><span class="s3">]</span>
+    <span class="s2">except </span><span class="s1">KeyError</span><span class="s3">:</span>
+        <span class="s2">return None</span>
+    <span class="s1">file_contents </span><span class="s3">= </span><span class="s1">io</span><span class="s3">.</span><span class="s1">BytesIO</span><span class="s3">(</span><span class="s1">data</span><span class="s3">)</span>
+    <span class="s1">head </span><span class="s3">= </span><span class="s1">file_contents</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">8</span><span class="s3">)</span>
+    <span class="s1">endianness </span><span class="s3">= </span><span class="s5">&quot;&gt;&quot; </span><span class="s2">if </span><span class="s1">head</span><span class="s3">[:</span><span class="s4">4</span><span class="s3">] == </span><span class="s6">b&quot;</span><span class="s2">\x4d\x4d\x00\x2a</span><span class="s6">&quot; </span><span class="s2">else </span><span class="s5">&quot;&lt;&quot;</span>
+    <span class="s0"># process dictionary</span>
+    <span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">TiffImagePlugin</span>
+
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">info </span><span class="s3">= </span><span class="s1">TiffImagePlugin</span><span class="s3">.</span><span class="s1">ImageFileDirectory_v2</span><span class="s3">(</span><span class="s1">head</span><span class="s3">)</span>
+        <span class="s1">file_contents</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">info</span><span class="s3">.</span><span class="s1">next</span><span class="s3">)</span>
+        <span class="s1">info</span><span class="s3">.</span><span class="s1">load</span><span class="s3">(</span><span class="s1">file_contents</span><span class="s3">)</span>
+        <span class="s1">mp </span><span class="s3">= </span><span class="s1">dict</span><span class="s3">(</span><span class="s1">info</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s1">Exception </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;malformed MP Index (unreadable directory)&quot;</span>
+        <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">) </span><span class="s2">from </span><span class="s1">e</span>
+    <span class="s0"># it's an error not to have a number of images</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">quant </span><span class="s3">= </span><span class="s1">mp</span><span class="s3">[</span><span class="s4">0xB001</span><span class="s3">]</span>
+    <span class="s2">except </span><span class="s1">KeyError </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;malformed MP Index (no number of images)&quot;</span>
+        <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">) </span><span class="s2">from </span><span class="s1">e</span>
+    <span class="s0"># get MP entries</span>
+    <span class="s1">mpentries </span><span class="s3">= []</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">rawmpentries </span><span class="s3">= </span><span class="s1">mp</span><span class="s3">[</span><span class="s4">0xB002</span><span class="s3">]</span>
+        <span class="s2">for </span><span class="s1">entrynum </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">0</span><span class="s3">, </span><span class="s1">quant</span><span class="s3">):</span>
+            <span class="s1">unpackedentry </span><span class="s3">= </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">unpack_from</span><span class="s3">(</span>
+                <span class="s5">f&quot;</span><span class="s2">{</span><span class="s1">endianness</span><span class="s2">}</span><span class="s5">LLLHH&quot;</span><span class="s3">, </span><span class="s1">rawmpentries</span><span class="s3">, </span><span class="s1">entrynum </span><span class="s3">* </span><span class="s4">16</span>
+            <span class="s3">)</span>
+            <span class="s1">labels </span><span class="s3">= (</span><span class="s5">&quot;Attribute&quot;</span><span class="s3">, </span><span class="s5">&quot;Size&quot;</span><span class="s3">, </span><span class="s5">&quot;DataOffset&quot;</span><span class="s3">, </span><span class="s5">&quot;EntryNo1&quot;</span><span class="s3">, </span><span class="s5">&quot;EntryNo2&quot;</span><span class="s3">)</span>
+            <span class="s1">mpentry </span><span class="s3">= </span><span class="s1">dict</span><span class="s3">(</span><span class="s1">zip</span><span class="s3">(</span><span class="s1">labels</span><span class="s3">, </span><span class="s1">unpackedentry</span><span class="s3">))</span>
+            <span class="s1">mpentryattr </span><span class="s3">= {</span>
+                <span class="s5">&quot;DependentParentImageFlag&quot;</span><span class="s3">: </span><span class="s1">bool</span><span class="s3">(</span><span class="s1">mpentry</span><span class="s3">[</span><span class="s5">&quot;Attribute&quot;</span><span class="s3">] &amp; (</span><span class="s4">1 </span><span class="s3">&lt;&lt; </span><span class="s4">31</span><span class="s3">)),</span>
+                <span class="s5">&quot;DependentChildImageFlag&quot;</span><span class="s3">: </span><span class="s1">bool</span><span class="s3">(</span><span class="s1">mpentry</span><span class="s3">[</span><span class="s5">&quot;Attribute&quot;</span><span class="s3">] &amp; (</span><span class="s4">1 </span><span class="s3">&lt;&lt; </span><span class="s4">30</span><span class="s3">)),</span>
+                <span class="s5">&quot;RepresentativeImageFlag&quot;</span><span class="s3">: </span><span class="s1">bool</span><span class="s3">(</span><span class="s1">mpentry</span><span class="s3">[</span><span class="s5">&quot;Attribute&quot;</span><span class="s3">] &amp; (</span><span class="s4">1 </span><span class="s3">&lt;&lt; </span><span class="s4">29</span><span class="s3">)),</span>
+                <span class="s5">&quot;Reserved&quot;</span><span class="s3">: (</span><span class="s1">mpentry</span><span class="s3">[</span><span class="s5">&quot;Attribute&quot;</span><span class="s3">] &amp; (</span><span class="s4">3 </span><span class="s3">&lt;&lt; </span><span class="s4">27</span><span class="s3">)) &gt;&gt; </span><span class="s4">27</span><span class="s3">,</span>
+                <span class="s5">&quot;ImageDataFormat&quot;</span><span class="s3">: (</span><span class="s1">mpentry</span><span class="s3">[</span><span class="s5">&quot;Attribute&quot;</span><span class="s3">] &amp; (</span><span class="s4">7 </span><span class="s3">&lt;&lt; </span><span class="s4">24</span><span class="s3">)) &gt;&gt; </span><span class="s4">24</span><span class="s3">,</span>
+                <span class="s5">&quot;MPType&quot;</span><span class="s3">: </span><span class="s1">mpentry</span><span class="s3">[</span><span class="s5">&quot;Attribute&quot;</span><span class="s3">] &amp; </span><span class="s4">0x00FFFFFF</span><span class="s3">,</span>
+            <span class="s3">}</span>
+            <span class="s2">if </span><span class="s1">mpentryattr</span><span class="s3">[</span><span class="s5">&quot;ImageDataFormat&quot;</span><span class="s3">] == </span><span class="s4">0</span><span class="s3">:</span>
+                <span class="s1">mpentryattr</span><span class="s3">[</span><span class="s5">&quot;ImageDataFormat&quot;</span><span class="s3">] = </span><span class="s5">&quot;JPEG&quot;</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;unsupported picture format in MPO&quot;</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+            <span class="s1">mptypemap </span><span class="s3">= {</span>
+                <span class="s4">0x000000</span><span class="s3">: </span><span class="s5">&quot;Undefined&quot;</span><span class="s3">,</span>
+                <span class="s4">0x010001</span><span class="s3">: </span><span class="s5">&quot;Large Thumbnail (VGA Equivalent)&quot;</span><span class="s3">,</span>
+                <span class="s4">0x010002</span><span class="s3">: </span><span class="s5">&quot;Large Thumbnail (Full HD Equivalent)&quot;</span><span class="s3">,</span>
+                <span class="s4">0x020001</span><span class="s3">: </span><span class="s5">&quot;Multi-Frame Image (Panorama)&quot;</span><span class="s3">,</span>
+                <span class="s4">0x020002</span><span class="s3">: </span><span class="s5">&quot;Multi-Frame Image: (Disparity)&quot;</span><span class="s3">,</span>
+                <span class="s4">0x020003</span><span class="s3">: </span><span class="s5">&quot;Multi-Frame Image: (Multi-Angle)&quot;</span><span class="s3">,</span>
+                <span class="s4">0x030000</span><span class="s3">: </span><span class="s5">&quot;Baseline MP Primary Image&quot;</span><span class="s3">,</span>
+            <span class="s3">}</span>
+            <span class="s1">mpentryattr</span><span class="s3">[</span><span class="s5">&quot;MPType&quot;</span><span class="s3">] = </span><span class="s1">mptypemap</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">mpentryattr</span><span class="s3">[</span><span class="s5">&quot;MPType&quot;</span><span class="s3">], </span><span class="s5">&quot;Unknown&quot;</span><span class="s3">)</span>
+            <span class="s1">mpentry</span><span class="s3">[</span><span class="s5">&quot;Attribute&quot;</span><span class="s3">] = </span><span class="s1">mpentryattr</span>
+            <span class="s1">mpentries</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">mpentry</span><span class="s3">)</span>
+        <span class="s1">mp</span><span class="s3">[</span><span class="s4">0xB002</span><span class="s3">] = </span><span class="s1">mpentries</span>
+    <span class="s2">except </span><span class="s1">KeyError </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;malformed MP Index (bad MP Entry)&quot;</span>
+        <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">) </span><span class="s2">from </span><span class="s1">e</span>
+    <span class="s0"># Next we should try and parse the individual image unique ID list;</span>
+    <span class="s0"># we don't because I've never seen this actually used in a real MPO</span>
+    <span class="s0"># file and so can't test it.</span>
+    <span class="s2">return </span><span class="s1">mp</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># stuff to save JPEG files</span>
+
+<span class="s1">RAWMODE </span><span class="s3">= {</span>
+    <span class="s5">&quot;1&quot;</span><span class="s3">: </span><span class="s5">&quot;L&quot;</span><span class="s3">,</span>
+    <span class="s5">&quot;L&quot;</span><span class="s3">: </span><span class="s5">&quot;L&quot;</span><span class="s3">,</span>
+    <span class="s5">&quot;RGB&quot;</span><span class="s3">: </span><span class="s5">&quot;RGB&quot;</span><span class="s3">,</span>
+    <span class="s5">&quot;RGBX&quot;</span><span class="s3">: </span><span class="s5">&quot;RGB&quot;</span><span class="s3">,</span>
+    <span class="s5">&quot;CMYK&quot;</span><span class="s3">: </span><span class="s5">&quot;CMYK;I&quot;</span><span class="s3">,  </span><span class="s0"># assume adobe conventions</span>
+    <span class="s5">&quot;YCbCr&quot;</span><span class="s3">: </span><span class="s5">&quot;YCbCr&quot;</span><span class="s3">,</span>
+<span class="s3">}</span>
+
+<span class="s0"># fmt: off</span>
+<span class="s1">zigzag_index </span><span class="s3">= (</span>
+    <span class="s4">0</span><span class="s3">,  </span><span class="s4">1</span><span class="s3">,  </span><span class="s4">5</span><span class="s3">,  </span><span class="s4">6</span><span class="s3">, </span><span class="s4">14</span><span class="s3">, </span><span class="s4">15</span><span class="s3">, </span><span class="s4">27</span><span class="s3">, </span><span class="s4">28</span><span class="s3">,</span>
+    <span class="s4">2</span><span class="s3">,  </span><span class="s4">4</span><span class="s3">,  </span><span class="s4">7</span><span class="s3">, </span><span class="s4">13</span><span class="s3">, </span><span class="s4">16</span><span class="s3">, </span><span class="s4">26</span><span class="s3">, </span><span class="s4">29</span><span class="s3">, </span><span class="s4">42</span><span class="s3">,</span>
+    <span class="s4">3</span><span class="s3">,  </span><span class="s4">8</span><span class="s3">, </span><span class="s4">12</span><span class="s3">, </span><span class="s4">17</span><span class="s3">, </span><span class="s4">25</span><span class="s3">, </span><span class="s4">30</span><span class="s3">, </span><span class="s4">41</span><span class="s3">, </span><span class="s4">43</span><span class="s3">,</span>
+    <span class="s4">9</span><span class="s3">, </span><span class="s4">11</span><span class="s3">, </span><span class="s4">18</span><span class="s3">, </span><span class="s4">24</span><span class="s3">, </span><span class="s4">31</span><span class="s3">, </span><span class="s4">40</span><span class="s3">, </span><span class="s4">44</span><span class="s3">, </span><span class="s4">53</span><span class="s3">,</span>
+    <span class="s4">10</span><span class="s3">, </span><span class="s4">19</span><span class="s3">, </span><span class="s4">23</span><span class="s3">, </span><span class="s4">32</span><span class="s3">, </span><span class="s4">39</span><span class="s3">, </span><span class="s4">45</span><span class="s3">, </span><span class="s4">52</span><span class="s3">, </span><span class="s4">54</span><span class="s3">,</span>
+    <span class="s4">20</span><span class="s3">, </span><span class="s4">22</span><span class="s3">, </span><span class="s4">33</span><span class="s3">, </span><span class="s4">38</span><span class="s3">, </span><span class="s4">46</span><span class="s3">, </span><span class="s4">51</span><span class="s3">, </span><span class="s4">55</span><span class="s3">, </span><span class="s4">60</span><span class="s3">,</span>
+    <span class="s4">21</span><span class="s3">, </span><span class="s4">34</span><span class="s3">, </span><span class="s4">37</span><span class="s3">, </span><span class="s4">47</span><span class="s3">, </span><span class="s4">50</span><span class="s3">, </span><span class="s4">56</span><span class="s3">, </span><span class="s4">59</span><span class="s3">, </span><span class="s4">61</span><span class="s3">,</span>
+    <span class="s4">35</span><span class="s3">, </span><span class="s4">36</span><span class="s3">, </span><span class="s4">48</span><span class="s3">, </span><span class="s4">49</span><span class="s3">, </span><span class="s4">57</span><span class="s3">, </span><span class="s4">58</span><span class="s3">, </span><span class="s4">62</span><span class="s3">, </span><span class="s4">63</span><span class="s3">,</span>
+<span class="s3">)</span>
+
+<span class="s1">samplings </span><span class="s3">= {</span>
+    <span class="s3">(</span><span class="s4">1</span><span class="s3">, </span><span class="s4">1</span><span class="s3">, </span><span class="s4">1</span><span class="s3">, </span><span class="s4">1</span><span class="s3">, </span><span class="s4">1</span><span class="s3">, </span><span class="s4">1</span><span class="s3">): </span><span class="s4">0</span><span class="s3">,</span>
+    <span class="s3">(</span><span class="s4">2</span><span class="s3">, </span><span class="s4">1</span><span class="s3">, </span><span class="s4">1</span><span class="s3">, </span><span class="s4">1</span><span class="s3">, </span><span class="s4">1</span><span class="s3">, </span><span class="s4">1</span><span class="s3">): </span><span class="s4">1</span><span class="s3">,</span>
+    <span class="s3">(</span><span class="s4">2</span><span class="s3">, </span><span class="s4">2</span><span class="s3">, </span><span class="s4">1</span><span class="s3">, </span><span class="s4">1</span><span class="s3">, </span><span class="s4">1</span><span class="s3">, </span><span class="s4">1</span><span class="s3">): </span><span class="s4">2</span><span class="s3">,</span>
+<span class="s3">}</span>
+<span class="s0"># fmt: on</span>
+
+
+<span class="s2">def </span><span class="s1">get_sampling</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+    <span class="s0"># There's no subsampling when images have only 1 layer</span>
+    <span class="s0"># (grayscale images) or when they are CMYK (4 layers),</span>
+    <span class="s0"># so set subsampling to the default value.</span>
+    <span class="s0">#</span>
+    <span class="s0"># NOTE: currently Pillow can't encode JPEG to YCCK format.</span>
+    <span class="s0"># If YCCK support is added in the future, subsampling code will have</span>
+    <span class="s0"># to be updated (here and in JpegEncode.c) to deal with 4 layers.</span>
+    <span class="s2">if not </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">JpegImageFile</span><span class="s3">) </span><span class="s2">or </span><span class="s1">im</span><span class="s3">.</span><span class="s1">layers </span><span class="s2">in </span><span class="s3">(</span><span class="s4">1</span><span class="s3">, </span><span class="s4">4</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s3">-</span><span class="s4">1</span>
+    <span class="s1">sampling </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">layer</span><span class="s3">[</span><span class="s4">0</span><span class="s3">][</span><span class="s4">1</span><span class="s3">:</span><span class="s4">3</span><span class="s3">] + </span><span class="s1">im</span><span class="s3">.</span><span class="s1">layer</span><span class="s3">[</span><span class="s4">1</span><span class="s3">][</span><span class="s4">1</span><span class="s3">:</span><span class="s4">3</span><span class="s3">] + </span><span class="s1">im</span><span class="s3">.</span><span class="s1">layer</span><span class="s3">[</span><span class="s4">2</span><span class="s3">][</span><span class="s4">1</span><span class="s3">:</span><span class="s4">3</span><span class="s3">]</span>
+    <span class="s2">return </span><span class="s1">samplings</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">sampling</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">width </span><span class="s3">== </span><span class="s4">0 </span><span class="s2">or </span><span class="s1">im</span><span class="s3">.</span><span class="s1">height </span><span class="s3">== </span><span class="s4">0</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;cannot write empty image as JPEG&quot;</span>
+        <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">rawmode </span><span class="s3">= </span><span class="s1">RAWMODE</span><span class="s3">[</span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">]</span>
+    <span class="s2">except </span><span class="s1">KeyError </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s5">f&quot;cannot write mode </span><span class="s2">{</span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span><span class="s2">} </span><span class="s5">as JPEG&quot;</span>
+        <span class="s2">raise </span><span class="s1">OSError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">) </span><span class="s2">from </span><span class="s1">e</span>
+
+    <span class="s1">info </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span>
+
+    <span class="s1">dpi </span><span class="s3">= [</span><span class="s1">round</span><span class="s3">(</span><span class="s1">x</span><span class="s3">) </span><span class="s2">for </span><span class="s1">x </span><span class="s2">in </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;dpi&quot;</span><span class="s3">, (</span><span class="s4">0</span><span class="s3">, </span><span class="s4">0</span><span class="s3">))]</span>
+
+    <span class="s1">quality </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;quality&quot;</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">)</span>
+    <span class="s1">subsampling </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;subsampling&quot;</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">)</span>
+    <span class="s1">qtables </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;qtables&quot;</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">quality </span><span class="s3">== </span><span class="s5">&quot;keep&quot;</span><span class="s3">:</span>
+        <span class="s1">quality </span><span class="s3">= -</span><span class="s4">1</span>
+        <span class="s1">subsampling </span><span class="s3">= </span><span class="s5">&quot;keep&quot;</span>
+        <span class="s1">qtables </span><span class="s3">= </span><span class="s5">&quot;keep&quot;</span>
+    <span class="s2">elif </span><span class="s1">quality </span><span class="s2">in </span><span class="s1">presets</span><span class="s3">:</span>
+        <span class="s1">preset </span><span class="s3">= </span><span class="s1">presets</span><span class="s3">[</span><span class="s1">quality</span><span class="s3">]</span>
+        <span class="s1">quality </span><span class="s3">= -</span><span class="s4">1</span>
+        <span class="s1">subsampling </span><span class="s3">= </span><span class="s1">preset</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;subsampling&quot;</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">)</span>
+        <span class="s1">qtables </span><span class="s3">= </span><span class="s1">preset</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;quantization&quot;</span><span class="s3">)</span>
+    <span class="s2">elif not </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">quality</span><span class="s3">, </span><span class="s1">int</span><span class="s3">):</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;Invalid quality setting&quot;</span>
+        <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">subsampling </span><span class="s2">in </span><span class="s1">presets</span><span class="s3">:</span>
+            <span class="s1">subsampling </span><span class="s3">= </span><span class="s1">presets</span><span class="s3">[</span><span class="s1">subsampling</span><span class="s3">].</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;subsampling&quot;</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">qtables</span><span class="s3">, </span><span class="s1">str</span><span class="s3">) </span><span class="s2">and </span><span class="s1">qtables </span><span class="s2">in </span><span class="s1">presets</span><span class="s3">:</span>
+            <span class="s1">qtables </span><span class="s3">= </span><span class="s1">presets</span><span class="s3">[</span><span class="s1">qtables</span><span class="s3">].</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;quantization&quot;</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">subsampling </span><span class="s3">== </span><span class="s5">&quot;4:4:4&quot;</span><span class="s3">:</span>
+        <span class="s1">subsampling </span><span class="s3">= </span><span class="s4">0</span>
+    <span class="s2">elif </span><span class="s1">subsampling </span><span class="s3">== </span><span class="s5">&quot;4:2:2&quot;</span><span class="s3">:</span>
+        <span class="s1">subsampling </span><span class="s3">= </span><span class="s4">1</span>
+    <span class="s2">elif </span><span class="s1">subsampling </span><span class="s3">== </span><span class="s5">&quot;4:2:0&quot;</span><span class="s3">:</span>
+        <span class="s1">subsampling </span><span class="s3">= </span><span class="s4">2</span>
+    <span class="s2">elif </span><span class="s1">subsampling </span><span class="s3">== </span><span class="s5">&quot;4:1:1&quot;</span><span class="s3">:</span>
+        <span class="s0"># For compatibility. Before Pillow 4.3, 4:1:1 actually meant 4:2:0.</span>
+        <span class="s0"># Set 4:2:0 if someone is still using that value.</span>
+        <span class="s1">subsampling </span><span class="s3">= </span><span class="s4">2</span>
+    <span class="s2">elif </span><span class="s1">subsampling </span><span class="s3">== </span><span class="s5">&quot;keep&quot;</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">format </span><span class="s3">!= </span><span class="s5">&quot;JPEG&quot;</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;Cannot use 'keep' when original image is not a JPEG&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">subsampling </span><span class="s3">= </span><span class="s1">get_sampling</span><span class="s3">(</span><span class="s1">im</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">validate_qtables</span><span class="s3">(</span>
+        <span class="s1">qtables</span><span class="s3">: (</span>
+            <span class="s1">str </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">list</span><span class="s3">[</span><span class="s1">int</span><span class="s3">], ...] | </span><span class="s1">list</span><span class="s3">[</span><span class="s1">list</span><span class="s3">[</span><span class="s1">int</span><span class="s3">]] | </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">list</span><span class="s3">[</span><span class="s1">int</span><span class="s3">]] | </span><span class="s2">None</span>
+        <span class="s3">)</span>
+    <span class="s3">) </span><span class="s1">-&gt; list</span><span class="s3">[</span><span class="s1">list</span><span class="s3">[</span><span class="s1">int</span><span class="s3">]] | </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">qtables </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">qtables</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">qtables</span><span class="s3">, </span><span class="s1">str</span><span class="s3">):</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">lines </span><span class="s3">= [</span>
+                    <span class="s1">int</span><span class="s3">(</span><span class="s1">num</span><span class="s3">)</span>
+                    <span class="s2">for </span><span class="s1">line </span><span class="s2">in </span><span class="s1">qtables</span><span class="s3">.</span><span class="s1">splitlines</span><span class="s3">()</span>
+                    <span class="s2">for </span><span class="s1">num </span><span class="s2">in </span><span class="s1">line</span><span class="s3">.</span><span class="s1">split</span><span class="s3">(</span><span class="s5">&quot;#&quot;</span><span class="s3">, </span><span class="s4">1</span><span class="s3">)[</span><span class="s4">0</span><span class="s3">].</span><span class="s1">split</span><span class="s3">()</span>
+                <span class="s3">]</span>
+            <span class="s2">except </span><span class="s1">ValueError </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;Invalid quantization table&quot;</span>
+                <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">) </span><span class="s2">from </span><span class="s1">e</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">qtables </span><span class="s3">= [</span><span class="s1">lines</span><span class="s3">[</span><span class="s1">s </span><span class="s3">: </span><span class="s1">s </span><span class="s3">+ </span><span class="s4">64</span><span class="s3">] </span><span class="s2">for </span><span class="s1">s </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">0</span><span class="s3">, </span><span class="s1">len</span><span class="s3">(</span><span class="s1">lines</span><span class="s3">), </span><span class="s4">64</span><span class="s3">)]</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">qtables</span><span class="s3">, (</span><span class="s1">tuple</span><span class="s3">, </span><span class="s1">list</span><span class="s3">, </span><span class="s1">dict</span><span class="s3">)):</span>
+            <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">qtables</span><span class="s3">, </span><span class="s1">dict</span><span class="s3">):</span>
+                <span class="s1">qtables </span><span class="s3">= [</span>
+                    <span class="s1">qtables</span><span class="s3">[</span><span class="s1">key</span><span class="s3">] </span><span class="s2">for </span><span class="s1">key </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">len</span><span class="s3">(</span><span class="s1">qtables</span><span class="s3">)) </span><span class="s2">if </span><span class="s1">key </span><span class="s2">in </span><span class="s1">qtables</span>
+                <span class="s3">]</span>
+            <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">qtables</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">):</span>
+                <span class="s1">qtables </span><span class="s3">= </span><span class="s1">list</span><span class="s3">(</span><span class="s1">qtables</span><span class="s3">)</span>
+            <span class="s2">if not </span><span class="s3">(</span><span class="s4">0 </span><span class="s3">&lt; </span><span class="s1">len</span><span class="s3">(</span><span class="s1">qtables</span><span class="s3">) &lt; </span><span class="s4">5</span><span class="s3">):</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;None or too many quantization tables&quot;</span>
+                <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+            <span class="s2">for </span><span class="s1">idx</span><span class="s3">, </span><span class="s1">table </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">qtables</span><span class="s3">):</span>
+                <span class="s2">try</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">table</span><span class="s3">) != </span><span class="s4">64</span><span class="s3">:</span>
+                        <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;Invalid quantization table&quot;</span>
+                        <span class="s2">raise </span><span class="s1">TypeError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+                    <span class="s1">table_array </span><span class="s3">= </span><span class="s1">array</span><span class="s3">.</span><span class="s1">array</span><span class="s3">(</span><span class="s5">&quot;H&quot;</span><span class="s3">, </span><span class="s1">table</span><span class="s3">)</span>
+                <span class="s2">except </span><span class="s1">TypeError </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+                    <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;Invalid quantization table&quot;</span>
+                    <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">) </span><span class="s2">from </span><span class="s1">e</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">qtables</span><span class="s3">[</span><span class="s1">idx</span><span class="s3">] = </span><span class="s1">list</span><span class="s3">(</span><span class="s1">table_array</span><span class="s3">)</span>
+            <span class="s2">return </span><span class="s1">qtables</span>
+
+    <span class="s2">if </span><span class="s1">qtables </span><span class="s3">== </span><span class="s5">&quot;keep&quot;</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">format </span><span class="s3">!= </span><span class="s5">&quot;JPEG&quot;</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;Cannot use 'keep' when original image is not a JPEG&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">qtables </span><span class="s3">= </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s5">&quot;quantization&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)</span>
+    <span class="s1">qtables </span><span class="s3">= </span><span class="s1">validate_qtables</span><span class="s3">(</span><span class="s1">qtables</span><span class="s3">)</span>
+
+    <span class="s1">extra </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;extra&quot;</span><span class="s3">, </span><span class="s6">b&quot;&quot;</span><span class="s3">)</span>
+
+    <span class="s1">MAX_BYTES_IN_MARKER </span><span class="s3">= </span><span class="s4">65533</span>
+    <span class="s1">xmp </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;xmp&quot;</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">xmp</span><span class="s3">:</span>
+        <span class="s1">overhead_len </span><span class="s3">= </span><span class="s4">29  </span><span class="s0"># b&quot;http://ns.adobe.com/xap/1.0/\x00&quot;</span>
+        <span class="s1">max_data_bytes_in_marker </span><span class="s3">= </span><span class="s1">MAX_BYTES_IN_MARKER </span><span class="s3">- </span><span class="s1">overhead_len</span>
+        <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">xmp</span><span class="s3">) &gt; </span><span class="s1">max_data_bytes_in_marker</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;XMP data is too long&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">size </span><span class="s3">= </span><span class="s1">o16</span><span class="s3">(</span><span class="s4">2 </span><span class="s3">+ </span><span class="s1">overhead_len </span><span class="s3">+ </span><span class="s1">len</span><span class="s3">(</span><span class="s1">xmp</span><span class="s3">))</span>
+        <span class="s1">extra </span><span class="s3">+= </span><span class="s6">b&quot;</span><span class="s2">\xFF\xE1</span><span class="s6">&quot; </span><span class="s3">+ </span><span class="s1">size </span><span class="s3">+ </span><span class="s6">b&quot;http://ns.adobe.com/xap/1.0/</span><span class="s2">\x00</span><span class="s6">&quot; </span><span class="s3">+ </span><span class="s1">xmp</span>
+
+    <span class="s1">icc_profile </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;icc_profile&quot;</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">icc_profile</span><span class="s3">:</span>
+        <span class="s1">overhead_len </span><span class="s3">= </span><span class="s4">14  </span><span class="s0"># b&quot;ICC_PROFILE\0&quot; + o8(i) + o8(len(markers))</span>
+        <span class="s1">max_data_bytes_in_marker </span><span class="s3">= </span><span class="s1">MAX_BYTES_IN_MARKER </span><span class="s3">- </span><span class="s1">overhead_len</span>
+        <span class="s1">markers </span><span class="s3">= []</span>
+        <span class="s2">while </span><span class="s1">icc_profile</span><span class="s3">:</span>
+            <span class="s1">markers</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">icc_profile</span><span class="s3">[:</span><span class="s1">max_data_bytes_in_marker</span><span class="s3">])</span>
+            <span class="s1">icc_profile </span><span class="s3">= </span><span class="s1">icc_profile</span><span class="s3">[</span><span class="s1">max_data_bytes_in_marker</span><span class="s3">:]</span>
+        <span class="s1">i </span><span class="s3">= </span><span class="s4">1</span>
+        <span class="s2">for </span><span class="s1">marker </span><span class="s2">in </span><span class="s1">markers</span><span class="s3">:</span>
+            <span class="s1">size </span><span class="s3">= </span><span class="s1">o16</span><span class="s3">(</span><span class="s4">2 </span><span class="s3">+ </span><span class="s1">overhead_len </span><span class="s3">+ </span><span class="s1">len</span><span class="s3">(</span><span class="s1">marker</span><span class="s3">))</span>
+            <span class="s1">extra </span><span class="s3">+= (</span>
+                <span class="s6">b&quot;</span><span class="s2">\xFF\xE2</span><span class="s6">&quot;</span>
+                <span class="s3">+ </span><span class="s1">size</span>
+                <span class="s3">+ </span><span class="s6">b&quot;ICC_PROFILE</span><span class="s2">\0</span><span class="s6">&quot;</span>
+                <span class="s3">+ </span><span class="s1">o8</span><span class="s3">(</span><span class="s1">i</span><span class="s3">)</span>
+                <span class="s3">+ </span><span class="s1">o8</span><span class="s3">(</span><span class="s1">len</span><span class="s3">(</span><span class="s1">markers</span><span class="s3">))</span>
+                <span class="s3">+ </span><span class="s1">marker</span>
+            <span class="s3">)</span>
+            <span class="s1">i </span><span class="s3">+= </span><span class="s4">1</span>
+
+    <span class="s1">comment </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;comment&quot;</span><span class="s3">, </span><span class="s1">im</span><span class="s3">.</span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;comment&quot;</span><span class="s3">))</span>
+
+    <span class="s0"># &quot;progressive&quot; is the official name, but older documentation</span>
+    <span class="s0"># says &quot;progression&quot;</span>
+    <span class="s0"># FIXME: issue a warning if the wrong form is used (post-1.1.7)</span>
+    <span class="s1">progressive </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;progressive&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s3">) </span><span class="s2">or </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;progression&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+
+    <span class="s1">optimize </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;optimize&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+
+    <span class="s1">exif </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;exif&quot;</span><span class="s3">, </span><span class="s6">b&quot;&quot;</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">exif</span><span class="s3">, </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Exif</span><span class="s3">):</span>
+        <span class="s1">exif </span><span class="s3">= </span><span class="s1">exif</span><span class="s3">.</span><span class="s1">tobytes</span><span class="s3">()</span>
+    <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">exif</span><span class="s3">) &gt; </span><span class="s1">MAX_BYTES_IN_MARKER</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;EXIF data is too long&quot;</span>
+        <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+    <span class="s0"># get keyword arguments</span>
+    <span class="s1">im</span><span class="s3">.</span><span class="s1">encoderconfig </span><span class="s3">= (</span>
+        <span class="s1">quality</span><span class="s3">,</span>
+        <span class="s1">progressive</span><span class="s3">,</span>
+        <span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;smooth&quot;</span><span class="s3">, </span><span class="s4">0</span><span class="s3">),</span>
+        <span class="s1">optimize</span><span class="s3">,</span>
+        <span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;keep_rgb&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s3">),</span>
+        <span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;streamtype&quot;</span><span class="s3">, </span><span class="s4">0</span><span class="s3">),</span>
+        <span class="s1">dpi</span><span class="s3">[</span><span class="s4">0</span><span class="s3">],</span>
+        <span class="s1">dpi</span><span class="s3">[</span><span class="s4">1</span><span class="s3">],</span>
+        <span class="s1">subsampling</span><span class="s3">,</span>
+        <span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;restart_marker_blocks&quot;</span><span class="s3">, </span><span class="s4">0</span><span class="s3">),</span>
+        <span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;restart_marker_rows&quot;</span><span class="s3">, </span><span class="s4">0</span><span class="s3">),</span>
+        <span class="s1">qtables</span><span class="s3">,</span>
+        <span class="s1">comment</span><span class="s3">,</span>
+        <span class="s1">extra</span><span class="s3">,</span>
+        <span class="s1">exif</span><span class="s3">,</span>
+    <span class="s3">)</span>
+
+    <span class="s0"># if we optimize, libjpeg needs a buffer big enough to hold the whole image</span>
+    <span class="s0"># in a shot. Guessing on the size, at im.size bytes. (raw pixel size is</span>
+    <span class="s0"># channels*size, this is a value that's been used in a django patch.</span>
+    <span class="s0"># https://github.com/matthewwithanm/django-imagekit/issues/50</span>
+    <span class="s1">bufsize </span><span class="s3">= </span><span class="s4">0</span>
+    <span class="s2">if </span><span class="s1">optimize </span><span class="s2">or </span><span class="s1">progressive</span><span class="s3">:</span>
+        <span class="s0"># CMYK can be bigger</span>
+        <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s5">&quot;CMYK&quot;</span><span class="s3">:</span>
+            <span class="s1">bufsize </span><span class="s3">= </span><span class="s4">4 </span><span class="s3">* </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] * </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]</span>
+        <span class="s0"># keep sets quality to -1, but the actual value may be high.</span>
+        <span class="s2">elif </span><span class="s1">quality </span><span class="s3">&gt;= </span><span class="s4">95 </span><span class="s2">or </span><span class="s1">quality </span><span class="s3">== -</span><span class="s4">1</span><span class="s3">:</span>
+            <span class="s1">bufsize </span><span class="s3">= </span><span class="s4">2 </span><span class="s3">* </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] * </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">bufsize </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] * </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]</span>
+        <span class="s2">if </span><span class="s1">exif</span><span class="s3">:</span>
+            <span class="s1">bufsize </span><span class="s3">+= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">exif</span><span class="s3">) + </span><span class="s4">5</span>
+        <span class="s2">if </span><span class="s1">extra</span><span class="s3">:</span>
+            <span class="s1">bufsize </span><span class="s3">+= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">extra</span><span class="s3">) + </span><span class="s4">1</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s0"># The EXIF info needs to be written as one block, + APP1, + one spare byte.</span>
+        <span class="s0"># Ensure that our buffer is big enough. Same with the icc_profile block.</span>
+        <span class="s1">bufsize </span><span class="s3">= </span><span class="s1">max</span><span class="s3">(</span><span class="s1">bufsize</span><span class="s3">, </span><span class="s1">len</span><span class="s3">(</span><span class="s1">exif</span><span class="s3">) + </span><span class="s4">5</span><span class="s3">, </span><span class="s1">len</span><span class="s3">(</span><span class="s1">extra</span><span class="s3">) + </span><span class="s4">1</span><span class="s3">)</span>
+
+    <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_save</span><span class="s3">(</span>
+        <span class="s1">im</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">, [</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s5">&quot;jpeg&quot;</span><span class="s3">, (</span><span class="s4">0</span><span class="s3">, </span><span class="s4">0</span><span class="s3">) + </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s4">0</span><span class="s3">, </span><span class="s1">rawmode</span><span class="s3">)], </span><span class="s1">bufsize</span>
+    <span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_save_cjpeg</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s0"># ALTERNATIVE: handle JPEGs via the IJG command line utilities.</span>
+    <span class="s1">tempfile </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">_dump</span><span class="s3">()</span>
+    <span class="s1">subprocess</span><span class="s3">.</span><span class="s1">check_call</span><span class="s3">([</span><span class="s5">&quot;cjpeg&quot;</span><span class="s3">, </span><span class="s5">&quot;-outfile&quot;</span><span class="s3">, </span><span class="s1">filename</span><span class="s3">, </span><span class="s1">tempfile</span><span class="s3">])</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">os</span><span class="s3">.</span><span class="s1">unlink</span><span class="s3">(</span><span class="s1">tempfile</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s1">OSError</span><span class="s3">:</span>
+        <span class="s2">pass</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Factory for making JPEG and MPO instances</span>
+<span class="s2">def </span><span class="s1">jpeg_factory</span><span class="s3">(</span>
+    <span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+<span class="s3">) </span><span class="s1">-&gt; JpegImageFile </span><span class="s3">| </span><span class="s1">MpoImageFile</span><span class="s3">:</span>
+    <span class="s1">im </span><span class="s3">= </span><span class="s1">JpegImageFile</span><span class="s3">(</span><span class="s1">fp</span><span class="s3">, </span><span class="s1">filename</span><span class="s3">)</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">mpheader </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">_getmp</span><span class="s3">()</span>
+        <span class="s2">if </span><span class="s1">mpheader </span><span class="s2">is not None and </span><span class="s1">mpheader</span><span class="s3">[</span><span class="s4">45057</span><span class="s3">] &gt; </span><span class="s4">1</span><span class="s3">:</span>
+            <span class="s2">for </span><span class="s1">segment</span><span class="s3">, </span><span class="s1">content </span><span class="s2">in </span><span class="s1">im</span><span class="s3">.</span><span class="s1">applist</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s1">segment </span><span class="s3">== </span><span class="s5">&quot;APP1&quot; </span><span class="s2">and </span><span class="s6">b' hdrgm:Version=&quot;' </span><span class="s2">in </span><span class="s1">content</span><span class="s3">:</span>
+                    <span class="s0"># Ultra HDR images are not yet supported</span>
+                    <span class="s2">return </span><span class="s1">im</span>
+            <span class="s0"># It's actually an MPO</span>
+            <span class="s2">from </span><span class="s3">.</span><span class="s1">MpoImagePlugin </span><span class="s2">import </span><span class="s1">MpoImageFile</span>
+
+            <span class="s0"># Don't reload everything, just convert it.</span>
+            <span class="s1">im </span><span class="s3">= </span><span class="s1">MpoImageFile</span><span class="s3">.</span><span class="s1">adopt</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">mpheader</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s3">(</span><span class="s1">TypeError</span><span class="s3">, </span><span class="s1">IndexError</span><span class="s3">):</span>
+        <span class="s0"># It is really a JPEG</span>
+        <span class="s2">pass</span>
+    <span class="s2">except </span><span class="s1">SyntaxError</span><span class="s3">:</span>
+        <span class="s1">warnings</span><span class="s3">.</span><span class="s1">warn</span><span class="s3">(</span>
+            <span class="s5">&quot;Image appears to be a malformed MPO file, it will be &quot;</span>
+            <span class="s5">&quot;interpreted as a base JPEG file&quot;</span>
+        <span class="s3">)</span>
+    <span class="s2">return </span><span class="s1">im</span>
+
+
+<span class="s0"># ---------------------------------------------------------------------</span>
+<span class="s0"># Registry stuff</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_open</span><span class="s3">(</span><span class="s1">JpegImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">jpeg_factory</span><span class="s3">, </span><span class="s1">_accept</span><span class="s3">)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_save</span><span class="s3">(</span><span class="s1">JpegImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">_save</span><span class="s3">)</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_extensions</span><span class="s3">(</span><span class="s1">JpegImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, [</span><span class="s5">&quot;.jfif&quot;</span><span class="s3">, </span><span class="s5">&quot;.jpe&quot;</span><span class="s3">, </span><span class="s5">&quot;.jpg&quot;</span><span class="s3">, </span><span class="s5">&quot;.jpeg&quot;</span><span class="s3">])</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_mime</span><span class="s3">(</span><span class="s1">JpegImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s5">&quot;image/jpeg&quot;</span><span class="s3">)</span>
+</pre>
+</body>
+</html>

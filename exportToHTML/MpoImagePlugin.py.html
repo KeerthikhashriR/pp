@@ -1,0 +1,214 @@
+<html>
+<head>
+<title>MpoImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #2aacb8;}
+.s6 { color: #a5c261;}
+.s7 { color: #5f826b; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+MpoImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># MPO file handling</span>
+<span class="s0">#</span>
+<span class="s0"># See &quot;Multi-Picture Format&quot; (CIPA DC-007-Translation 2009, Standard of the</span>
+<span class="s0"># Camera &amp; Imaging Products Association)</span>
+<span class="s0">#</span>
+<span class="s0"># The multi-picture object combines multiple JPEG images (with a modified EXIF</span>
+<span class="s0"># data format) into a single file. While it can theoretically be used much like</span>
+<span class="s0"># a GIF animation, it is commonly used to represent 3D photographs and is (as</span>
+<span class="s0"># of this writing) the most commonly used format by 3D cameras.</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 2014-03-13 Feneric   Created</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">itertools</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">struct</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">IO</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">cast</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s3">(</span>
+    <span class="s1">Image</span><span class="s3">,</span>
+    <span class="s1">ImageFile</span><span class="s3">,</span>
+    <span class="s1">ImageSequence</span><span class="s3">,</span>
+    <span class="s1">JpegImagePlugin</span><span class="s3">,</span>
+    <span class="s1">TiffImagePlugin</span><span class="s3">,</span>
+<span class="s3">)</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">o32le</span>
+
+
+<span class="s2">def </span><span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s1">JpegImagePlugin</span><span class="s3">.</span><span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">, </span><span class="s1">filename</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_save_all</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s1">append_images </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">&quot;append_images&quot;</span><span class="s3">, [])</span>
+    <span class="s2">if not </span><span class="s1">append_images </span><span class="s2">and not </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s4">&quot;is_animated&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s3">):</span>
+        <span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">, </span><span class="s1">filename</span><span class="s3">)</span>
+        <span class="s2">return</span>
+
+    <span class="s1">mpf_offset </span><span class="s3">= </span><span class="s5">28</span>
+    <span class="s1">offsets</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">int</span><span class="s3">] = []</span>
+    <span class="s2">for </span><span class="s1">imSequence </span><span class="s2">in </span><span class="s1">itertools</span><span class="s3">.</span><span class="s1">chain</span><span class="s3">([</span><span class="s1">im</span><span class="s3">], </span><span class="s1">append_images</span><span class="s3">):</span>
+        <span class="s2">for </span><span class="s1">im_frame </span><span class="s2">in </span><span class="s1">ImageSequence</span><span class="s3">.</span><span class="s1">Iterator</span><span class="s3">(</span><span class="s1">imSequence</span><span class="s3">):</span>
+            <span class="s2">if not </span><span class="s1">offsets</span><span class="s3">:</span>
+                <span class="s0"># APP2 marker</span>
+                <span class="s1">im_frame</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">[</span><span class="s4">&quot;extra&quot;</span><span class="s3">] = (</span>
+                    <span class="s6">b&quot;</span><span class="s2">\xFF\xE2</span><span class="s6">&quot; </span><span class="s3">+ </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">pack</span><span class="s3">(</span><span class="s4">&quot;&gt;H&quot;</span><span class="s3">, </span><span class="s5">6 </span><span class="s3">+ </span><span class="s5">82</span><span class="s3">) + </span><span class="s6">b&quot;MPF</span><span class="s2">\0</span><span class="s6">&quot; </span><span class="s3">+ </span><span class="s6">b&quot; &quot; </span><span class="s3">* </span><span class="s5">82</span>
+                <span class="s3">)</span>
+                <span class="s1">exif </span><span class="s3">= </span><span class="s1">im_frame</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">&quot;exif&quot;</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">exif</span><span class="s3">, </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Exif</span><span class="s3">):</span>
+                    <span class="s1">exif </span><span class="s3">= </span><span class="s1">exif</span><span class="s3">.</span><span class="s1">tobytes</span><span class="s3">()</span>
+                    <span class="s1">im_frame</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">[</span><span class="s4">&quot;exif&quot;</span><span class="s3">] = </span><span class="s1">exif</span>
+                <span class="s2">if </span><span class="s1">exif</span><span class="s3">:</span>
+                    <span class="s1">mpf_offset </span><span class="s3">+= </span><span class="s5">4 </span><span class="s3">+ </span><span class="s1">len</span><span class="s3">(</span><span class="s1">exif</span><span class="s3">)</span>
+
+                <span class="s1">JpegImagePlugin</span><span class="s3">.</span><span class="s1">_save</span><span class="s3">(</span><span class="s1">im_frame</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">, </span><span class="s1">filename</span><span class="s3">)</span>
+                <span class="s1">offsets</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">())</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">im_frame</span><span class="s3">.</span><span class="s1">save</span><span class="s3">(</span><span class="s1">fp</span><span class="s3">, </span><span class="s4">&quot;JPEG&quot;</span><span class="s3">)</span>
+                <span class="s1">offsets</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">() - </span><span class="s1">offsets</span><span class="s3">[-</span><span class="s5">1</span><span class="s3">])</span>
+
+    <span class="s1">ifd </span><span class="s3">= </span><span class="s1">TiffImagePlugin</span><span class="s3">.</span><span class="s1">ImageFileDirectory_v2</span><span class="s3">()</span>
+    <span class="s1">ifd</span><span class="s3">[</span><span class="s5">0xB000</span><span class="s3">] = </span><span class="s6">b&quot;0100&quot;</span>
+    <span class="s1">ifd</span><span class="s3">[</span><span class="s5">0xB001</span><span class="s3">] = </span><span class="s1">len</span><span class="s3">(</span><span class="s1">offsets</span><span class="s3">)</span>
+
+    <span class="s1">mpentries </span><span class="s3">= </span><span class="s6">b&quot;&quot;</span>
+    <span class="s1">data_offset </span><span class="s3">= </span><span class="s5">0</span>
+    <span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">size </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">offsets</span><span class="s3">):</span>
+        <span class="s2">if </span><span class="s1">i </span><span class="s3">== </span><span class="s5">0</span><span class="s3">:</span>
+            <span class="s1">mptype </span><span class="s3">= </span><span class="s5">0x030000  </span><span class="s0"># Baseline MP Primary Image</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">mptype </span><span class="s3">= </span><span class="s5">0x000000  </span><span class="s0"># Undefined</span>
+        <span class="s1">mpentries </span><span class="s3">+= </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">pack</span><span class="s3">(</span><span class="s4">&quot;&lt;LLLHH&quot;</span><span class="s3">, </span><span class="s1">mptype</span><span class="s3">, </span><span class="s1">size</span><span class="s3">, </span><span class="s1">data_offset</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">i </span><span class="s3">== </span><span class="s5">0</span><span class="s3">:</span>
+            <span class="s1">data_offset </span><span class="s3">-= </span><span class="s1">mpf_offset</span>
+        <span class="s1">data_offset </span><span class="s3">+= </span><span class="s1">size</span>
+    <span class="s1">ifd</span><span class="s3">[</span><span class="s5">0xB002</span><span class="s3">] = </span><span class="s1">mpentries</span>
+
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">mpf_offset</span><span class="s3">)</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s6">b&quot;II</span><span class="s2">\x2A\x00</span><span class="s6">&quot; </span><span class="s3">+ </span><span class="s1">o32le</span><span class="s3">(</span><span class="s5">8</span><span class="s3">) + </span><span class="s1">ifd</span><span class="s3">.</span><span class="s1">tobytes</span><span class="s3">(</span><span class="s5">8</span><span class="s3">))</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s5">0</span><span class="s3">, </span><span class="s1">os</span><span class="s3">.</span><span class="s1">SEEK_END</span><span class="s3">)</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for MPO images.</span>
+
+
+<span class="s2">class </span><span class="s1">MpoImageFile</span><span class="s3">(</span><span class="s1">JpegImagePlugin</span><span class="s3">.</span><span class="s1">JpegImageFile</span><span class="s3">):</span>
+    <span class="s1">format </span><span class="s3">= </span><span class="s4">&quot;MPO&quot;</span>
+    <span class="s1">format_description </span><span class="s3">= </span><span class="s4">&quot;MPO (CIPA DC-007)&quot;</span>
+    <span class="s1">_close_exclusive_fp_after_loading </span><span class="s3">= </span><span class="s2">False</span>
+
+    <span class="s2">def </span><span class="s1">_open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s5">0</span><span class="s3">)  </span><span class="s0"># prep the fp in order to pass the JPEG test</span>
+        <span class="s1">JpegImagePlugin</span><span class="s3">.</span><span class="s1">JpegImageFile</span><span class="s3">.</span><span class="s1">_open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_after_jpeg_open</span><span class="s3">()</span>
+
+    <span class="s2">def </span><span class="s1">_after_jpeg_open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">mpheader</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">mpinfo </span><span class="s3">= </span><span class="s1">mpheader </span><span class="s2">if </span><span class="s1">mpheader </span><span class="s2">is not None else </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_getmp</span><span class="s3">()</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mpinfo </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;Image appears to be a malformed MPO file&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">n_frames </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mpinfo</span><span class="s3">[</span><span class="s5">0xB001</span><span class="s3">]</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__mpoffsets </span><span class="s3">= [</span>
+            <span class="s1">mpent</span><span class="s3">[</span><span class="s4">&quot;DataOffset&quot;</span><span class="s3">] + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s4">&quot;mpoffset&quot;</span><span class="s3">] </span><span class="s2">for </span><span class="s1">mpent </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mpinfo</span><span class="s3">[</span><span class="s5">0xB002</span><span class="s3">]</span>
+        <span class="s3">]</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__mpoffsets</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] = </span><span class="s5">0</span>
+        <span class="s0"># Note that the following assertion will only be invalid if something</span>
+        <span class="s0"># gets broken within JpegImagePlugin.</span>
+        <span class="s2">assert </span><span class="s1">self</span><span class="s3">.</span><span class="s1">n_frames </span><span class="s3">== </span><span class="s1">len</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__mpoffsets</span><span class="s3">)</span>
+        <span class="s2">del </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s4">&quot;mpoffset&quot;</span><span class="s3">]  </span><span class="s0"># no longer needed</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">is_animated </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">n_frames </span><span class="s3">&gt; </span><span class="s5">1</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_fp </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp  </span><span class="s0"># FIXME: hack</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__mpoffsets</span><span class="s3">[</span><span class="s5">0</span><span class="s3">])  </span><span class="s0"># get ready to read first frame</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__frame </span><span class="s3">= </span><span class="s5">0</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">offset </span><span class="s3">= </span><span class="s5">0</span>
+        <span class="s0"># for now we can only handle reading and individual frame extraction</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">readonly </span><span class="s3">= </span><span class="s5">1</span>
+
+    <span class="s2">def </span><span class="s1">load_seek</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">pos</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">pos</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">seek</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">frame</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if not </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_seek_check</span><span class="s3">(</span><span class="s1">frame</span><span class="s3">):</span>
+            <span class="s2">return</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">fp </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_fp</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">offset </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__mpoffsets</span><span class="s3">[</span><span class="s1">frame</span><span class="s3">]</span>
+
+        <span class="s1">original_exif </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">&quot;exif&quot;</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s4">&quot;exif&quot; </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+            <span class="s2">del </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s4">&quot;exif&quot;</span><span class="s3">]</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">offset </span><span class="s3">+ </span><span class="s5">2</span><span class="s3">)  </span><span class="s0"># skip SOI marker</span>
+        <span class="s2">if not </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">2</span><span class="s3">):</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;No data found for frame&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">offset</span><span class="s3">)</span>
+        <span class="s1">JpegImagePlugin</span><span class="s3">.</span><span class="s1">JpegImageFile</span><span class="s3">.</span><span class="s1">_open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">&quot;exif&quot;</span><span class="s3">) != </span><span class="s1">original_exif</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_reload_exif</span><span class="s3">()</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= [</span>
+            <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s4">&quot;jpeg&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">offset</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">tile</span><span class="s3">[</span><span class="s5">0</span><span class="s3">][-</span><span class="s5">1</span><span class="s3">])</span>
+        <span class="s3">]</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__frame </span><span class="s3">= </span><span class="s1">frame</span>
+
+    <span class="s2">def </span><span class="s1">tell</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__frame</span>
+
+    <span class="s3">@</span><span class="s1">staticmethod</span>
+    <span class="s2">def </span><span class="s1">adopt</span><span class="s3">(</span>
+        <span class="s1">jpeg_instance</span><span class="s3">: </span><span class="s1">JpegImagePlugin</span><span class="s3">.</span><span class="s1">JpegImageFile</span><span class="s3">,</span>
+        <span class="s1">mpheader</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; MpoImageFile</span><span class="s3">:</span>
+        <span class="s7">&quot;&quot;&quot; 
+        Transform the instance of JpegImageFile into 
+        an instance of MpoImageFile. 
+        After the call, the JpegImageFile is extended 
+        to be an MpoImageFile. 
+ 
+        This is essentially useful when opening a JPEG 
+        file that reveals itself as an MPO, to avoid 
+        double call to _open. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">jpeg_instance</span><span class="s3">.</span><span class="s1">__class__ </span><span class="s3">= </span><span class="s1">MpoImageFile</span>
+        <span class="s1">mpo_instance </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">MpoImageFile</span><span class="s3">, </span><span class="s1">jpeg_instance</span><span class="s3">)</span>
+        <span class="s1">mpo_instance</span><span class="s3">.</span><span class="s1">_after_jpeg_open</span><span class="s3">(</span><span class="s1">mpheader</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">mpo_instance</span>
+
+
+<span class="s0"># ---------------------------------------------------------------------</span>
+<span class="s0"># Registry stuff</span>
+
+<span class="s0"># Note that since MPO shares a factory with JPEG, we do not need to do a</span>
+<span class="s0"># separate registration for it here.</span>
+<span class="s0"># Image.register_open(MpoImageFile.format,</span>
+<span class="s0">#                     JpegImagePlugin.jpeg_factory, _accept)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_save</span><span class="s3">(</span><span class="s1">MpoImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">_save</span><span class="s3">)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_save_all</span><span class="s3">(</span><span class="s1">MpoImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">_save_all</span><span class="s3">)</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_extension</span><span class="s3">(</span><span class="s1">MpoImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s4">&quot;.mpo&quot;</span><span class="s3">)</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_mime</span><span class="s3">(</span><span class="s1">MpoImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s4">&quot;image/mpo&quot;</span><span class="s3">)</span>
+</pre>
+</body>
+</html>

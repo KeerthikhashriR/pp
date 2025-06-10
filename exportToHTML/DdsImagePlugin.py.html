@@ -1,0 +1,597 @@
+<html>
+<head>
+<title>DdsImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #7a7e85;}
+.s5 { color: #2aacb8;}
+.s6 { color: #a5c261;}
+.s7 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+DdsImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot; 
+A Pillow loader for .dds files (S3TC-compressed aka DXTC) 
+Jerome Leclanche &lt;jerome@leclan.ch&gt; 
+ 
+Documentation: 
+https://web.archive.org/web/20170802060935/http://oss.sgi.com/projects/ogl-sample/registry/EXT/texture_compression_s3tc.txt 
+ 
+The contents of this file are hereby released in the public domain (CC0) 
+Full text of the CC0 license: 
+https://creativecommons.org/publicdomain/zero/1.0/ 
+&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">io</span>
+<span class="s2">import </span><span class="s1">struct</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">from </span><span class="s1">enum </span><span class="s2">import </span><span class="s1">IntEnum</span><span class="s3">, </span><span class="s1">IntFlag</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">IO</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">ImageFile</span><span class="s3">, </span><span class="s1">ImagePalette</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">i32le </span><span class="s2">as </span><span class="s1">i32</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">o8</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">o32le </span><span class="s2">as </span><span class="s1">o32</span>
+
+<span class="s4"># Magic (&quot;DDS &quot;)</span>
+<span class="s1">DDS_MAGIC </span><span class="s3">= </span><span class="s5">0x20534444</span>
+
+
+<span class="s4"># DDS flags</span>
+<span class="s2">class </span><span class="s1">DDSD</span><span class="s3">(</span><span class="s1">IntFlag</span><span class="s3">):</span>
+    <span class="s1">CAPS </span><span class="s3">= </span><span class="s5">0x1</span>
+    <span class="s1">HEIGHT </span><span class="s3">= </span><span class="s5">0x2</span>
+    <span class="s1">WIDTH </span><span class="s3">= </span><span class="s5">0x4</span>
+    <span class="s1">PITCH </span><span class="s3">= </span><span class="s5">0x8</span>
+    <span class="s1">PIXELFORMAT </span><span class="s3">= </span><span class="s5">0x1000</span>
+    <span class="s1">MIPMAPCOUNT </span><span class="s3">= </span><span class="s5">0x20000</span>
+    <span class="s1">LINEARSIZE </span><span class="s3">= </span><span class="s5">0x80000</span>
+    <span class="s1">DEPTH </span><span class="s3">= </span><span class="s5">0x800000</span>
+
+
+<span class="s4"># DDS caps</span>
+<span class="s2">class </span><span class="s1">DDSCAPS</span><span class="s3">(</span><span class="s1">IntFlag</span><span class="s3">):</span>
+    <span class="s1">COMPLEX </span><span class="s3">= </span><span class="s5">0x8</span>
+    <span class="s1">TEXTURE </span><span class="s3">= </span><span class="s5">0x1000</span>
+    <span class="s1">MIPMAP </span><span class="s3">= </span><span class="s5">0x400000</span>
+
+
+<span class="s2">class </span><span class="s1">DDSCAPS2</span><span class="s3">(</span><span class="s1">IntFlag</span><span class="s3">):</span>
+    <span class="s1">CUBEMAP </span><span class="s3">= </span><span class="s5">0x200</span>
+    <span class="s1">CUBEMAP_POSITIVEX </span><span class="s3">= </span><span class="s5">0x400</span>
+    <span class="s1">CUBEMAP_NEGATIVEX </span><span class="s3">= </span><span class="s5">0x800</span>
+    <span class="s1">CUBEMAP_POSITIVEY </span><span class="s3">= </span><span class="s5">0x1000</span>
+    <span class="s1">CUBEMAP_NEGATIVEY </span><span class="s3">= </span><span class="s5">0x2000</span>
+    <span class="s1">CUBEMAP_POSITIVEZ </span><span class="s3">= </span><span class="s5">0x4000</span>
+    <span class="s1">CUBEMAP_NEGATIVEZ </span><span class="s3">= </span><span class="s5">0x8000</span>
+    <span class="s1">VOLUME </span><span class="s3">= </span><span class="s5">0x200000</span>
+
+
+<span class="s4"># Pixel Format</span>
+<span class="s2">class </span><span class="s1">DDPF</span><span class="s3">(</span><span class="s1">IntFlag</span><span class="s3">):</span>
+    <span class="s1">ALPHAPIXELS </span><span class="s3">= </span><span class="s5">0x1</span>
+    <span class="s1">ALPHA </span><span class="s3">= </span><span class="s5">0x2</span>
+    <span class="s1">FOURCC </span><span class="s3">= </span><span class="s5">0x4</span>
+    <span class="s1">PALETTEINDEXED8 </span><span class="s3">= </span><span class="s5">0x20</span>
+    <span class="s1">RGB </span><span class="s3">= </span><span class="s5">0x40</span>
+    <span class="s1">LUMINANCE </span><span class="s3">= </span><span class="s5">0x20000</span>
+
+
+<span class="s4"># dxgiformat.h</span>
+<span class="s2">class </span><span class="s1">DXGI_FORMAT</span><span class="s3">(</span><span class="s1">IntEnum</span><span class="s3">):</span>
+    <span class="s1">UNKNOWN </span><span class="s3">= </span><span class="s5">0</span>
+    <span class="s1">R32G32B32A32_TYPELESS </span><span class="s3">= </span><span class="s5">1</span>
+    <span class="s1">R32G32B32A32_FLOAT </span><span class="s3">= </span><span class="s5">2</span>
+    <span class="s1">R32G32B32A32_UINT </span><span class="s3">= </span><span class="s5">3</span>
+    <span class="s1">R32G32B32A32_SINT </span><span class="s3">= </span><span class="s5">4</span>
+    <span class="s1">R32G32B32_TYPELESS </span><span class="s3">= </span><span class="s5">5</span>
+    <span class="s1">R32G32B32_FLOAT </span><span class="s3">= </span><span class="s5">6</span>
+    <span class="s1">R32G32B32_UINT </span><span class="s3">= </span><span class="s5">7</span>
+    <span class="s1">R32G32B32_SINT </span><span class="s3">= </span><span class="s5">8</span>
+    <span class="s1">R16G16B16A16_TYPELESS </span><span class="s3">= </span><span class="s5">9</span>
+    <span class="s1">R16G16B16A16_FLOAT </span><span class="s3">= </span><span class="s5">10</span>
+    <span class="s1">R16G16B16A16_UNORM </span><span class="s3">= </span><span class="s5">11</span>
+    <span class="s1">R16G16B16A16_UINT </span><span class="s3">= </span><span class="s5">12</span>
+    <span class="s1">R16G16B16A16_SNORM </span><span class="s3">= </span><span class="s5">13</span>
+    <span class="s1">R16G16B16A16_SINT </span><span class="s3">= </span><span class="s5">14</span>
+    <span class="s1">R32G32_TYPELESS </span><span class="s3">= </span><span class="s5">15</span>
+    <span class="s1">R32G32_FLOAT </span><span class="s3">= </span><span class="s5">16</span>
+    <span class="s1">R32G32_UINT </span><span class="s3">= </span><span class="s5">17</span>
+    <span class="s1">R32G32_SINT </span><span class="s3">= </span><span class="s5">18</span>
+    <span class="s1">R32G8X24_TYPELESS </span><span class="s3">= </span><span class="s5">19</span>
+    <span class="s1">D32_FLOAT_S8X24_UINT </span><span class="s3">= </span><span class="s5">20</span>
+    <span class="s1">R32_FLOAT_X8X24_TYPELESS </span><span class="s3">= </span><span class="s5">21</span>
+    <span class="s1">X32_TYPELESS_G8X24_UINT </span><span class="s3">= </span><span class="s5">22</span>
+    <span class="s1">R10G10B10A2_TYPELESS </span><span class="s3">= </span><span class="s5">23</span>
+    <span class="s1">R10G10B10A2_UNORM </span><span class="s3">= </span><span class="s5">24</span>
+    <span class="s1">R10G10B10A2_UINT </span><span class="s3">= </span><span class="s5">25</span>
+    <span class="s1">R11G11B10_FLOAT </span><span class="s3">= </span><span class="s5">26</span>
+    <span class="s1">R8G8B8A8_TYPELESS </span><span class="s3">= </span><span class="s5">27</span>
+    <span class="s1">R8G8B8A8_UNORM </span><span class="s3">= </span><span class="s5">28</span>
+    <span class="s1">R8G8B8A8_UNORM_SRGB </span><span class="s3">= </span><span class="s5">29</span>
+    <span class="s1">R8G8B8A8_UINT </span><span class="s3">= </span><span class="s5">30</span>
+    <span class="s1">R8G8B8A8_SNORM </span><span class="s3">= </span><span class="s5">31</span>
+    <span class="s1">R8G8B8A8_SINT </span><span class="s3">= </span><span class="s5">32</span>
+    <span class="s1">R16G16_TYPELESS </span><span class="s3">= </span><span class="s5">33</span>
+    <span class="s1">R16G16_FLOAT </span><span class="s3">= </span><span class="s5">34</span>
+    <span class="s1">R16G16_UNORM </span><span class="s3">= </span><span class="s5">35</span>
+    <span class="s1">R16G16_UINT </span><span class="s3">= </span><span class="s5">36</span>
+    <span class="s1">R16G16_SNORM </span><span class="s3">= </span><span class="s5">37</span>
+    <span class="s1">R16G16_SINT </span><span class="s3">= </span><span class="s5">38</span>
+    <span class="s1">R32_TYPELESS </span><span class="s3">= </span><span class="s5">39</span>
+    <span class="s1">D32_FLOAT </span><span class="s3">= </span><span class="s5">40</span>
+    <span class="s1">R32_FLOAT </span><span class="s3">= </span><span class="s5">41</span>
+    <span class="s1">R32_UINT </span><span class="s3">= </span><span class="s5">42</span>
+    <span class="s1">R32_SINT </span><span class="s3">= </span><span class="s5">43</span>
+    <span class="s1">R24G8_TYPELESS </span><span class="s3">= </span><span class="s5">44</span>
+    <span class="s1">D24_UNORM_S8_UINT </span><span class="s3">= </span><span class="s5">45</span>
+    <span class="s1">R24_UNORM_X8_TYPELESS </span><span class="s3">= </span><span class="s5">46</span>
+    <span class="s1">X24_TYPELESS_G8_UINT </span><span class="s3">= </span><span class="s5">47</span>
+    <span class="s1">R8G8_TYPELESS </span><span class="s3">= </span><span class="s5">48</span>
+    <span class="s1">R8G8_UNORM </span><span class="s3">= </span><span class="s5">49</span>
+    <span class="s1">R8G8_UINT </span><span class="s3">= </span><span class="s5">50</span>
+    <span class="s1">R8G8_SNORM </span><span class="s3">= </span><span class="s5">51</span>
+    <span class="s1">R8G8_SINT </span><span class="s3">= </span><span class="s5">52</span>
+    <span class="s1">R16_TYPELESS </span><span class="s3">= </span><span class="s5">53</span>
+    <span class="s1">R16_FLOAT </span><span class="s3">= </span><span class="s5">54</span>
+    <span class="s1">D16_UNORM </span><span class="s3">= </span><span class="s5">55</span>
+    <span class="s1">R16_UNORM </span><span class="s3">= </span><span class="s5">56</span>
+    <span class="s1">R16_UINT </span><span class="s3">= </span><span class="s5">57</span>
+    <span class="s1">R16_SNORM </span><span class="s3">= </span><span class="s5">58</span>
+    <span class="s1">R16_SINT </span><span class="s3">= </span><span class="s5">59</span>
+    <span class="s1">R8_TYPELESS </span><span class="s3">= </span><span class="s5">60</span>
+    <span class="s1">R8_UNORM </span><span class="s3">= </span><span class="s5">61</span>
+    <span class="s1">R8_UINT </span><span class="s3">= </span><span class="s5">62</span>
+    <span class="s1">R8_SNORM </span><span class="s3">= </span><span class="s5">63</span>
+    <span class="s1">R8_SINT </span><span class="s3">= </span><span class="s5">64</span>
+    <span class="s1">A8_UNORM </span><span class="s3">= </span><span class="s5">65</span>
+    <span class="s1">R1_UNORM </span><span class="s3">= </span><span class="s5">66</span>
+    <span class="s1">R9G9B9E5_SHAREDEXP </span><span class="s3">= </span><span class="s5">67</span>
+    <span class="s1">R8G8_B8G8_UNORM </span><span class="s3">= </span><span class="s5">68</span>
+    <span class="s1">G8R8_G8B8_UNORM </span><span class="s3">= </span><span class="s5">69</span>
+    <span class="s1">BC1_TYPELESS </span><span class="s3">= </span><span class="s5">70</span>
+    <span class="s1">BC1_UNORM </span><span class="s3">= </span><span class="s5">71</span>
+    <span class="s1">BC1_UNORM_SRGB </span><span class="s3">= </span><span class="s5">72</span>
+    <span class="s1">BC2_TYPELESS </span><span class="s3">= </span><span class="s5">73</span>
+    <span class="s1">BC2_UNORM </span><span class="s3">= </span><span class="s5">74</span>
+    <span class="s1">BC2_UNORM_SRGB </span><span class="s3">= </span><span class="s5">75</span>
+    <span class="s1">BC3_TYPELESS </span><span class="s3">= </span><span class="s5">76</span>
+    <span class="s1">BC3_UNORM </span><span class="s3">= </span><span class="s5">77</span>
+    <span class="s1">BC3_UNORM_SRGB </span><span class="s3">= </span><span class="s5">78</span>
+    <span class="s1">BC4_TYPELESS </span><span class="s3">= </span><span class="s5">79</span>
+    <span class="s1">BC4_UNORM </span><span class="s3">= </span><span class="s5">80</span>
+    <span class="s1">BC4_SNORM </span><span class="s3">= </span><span class="s5">81</span>
+    <span class="s1">BC5_TYPELESS </span><span class="s3">= </span><span class="s5">82</span>
+    <span class="s1">BC5_UNORM </span><span class="s3">= </span><span class="s5">83</span>
+    <span class="s1">BC5_SNORM </span><span class="s3">= </span><span class="s5">84</span>
+    <span class="s1">B5G6R5_UNORM </span><span class="s3">= </span><span class="s5">85</span>
+    <span class="s1">B5G5R5A1_UNORM </span><span class="s3">= </span><span class="s5">86</span>
+    <span class="s1">B8G8R8A8_UNORM </span><span class="s3">= </span><span class="s5">87</span>
+    <span class="s1">B8G8R8X8_UNORM </span><span class="s3">= </span><span class="s5">88</span>
+    <span class="s1">R10G10B10_XR_BIAS_A2_UNORM </span><span class="s3">= </span><span class="s5">89</span>
+    <span class="s1">B8G8R8A8_TYPELESS </span><span class="s3">= </span><span class="s5">90</span>
+    <span class="s1">B8G8R8A8_UNORM_SRGB </span><span class="s3">= </span><span class="s5">91</span>
+    <span class="s1">B8G8R8X8_TYPELESS </span><span class="s3">= </span><span class="s5">92</span>
+    <span class="s1">B8G8R8X8_UNORM_SRGB </span><span class="s3">= </span><span class="s5">93</span>
+    <span class="s1">BC6H_TYPELESS </span><span class="s3">= </span><span class="s5">94</span>
+    <span class="s1">BC6H_UF16 </span><span class="s3">= </span><span class="s5">95</span>
+    <span class="s1">BC6H_SF16 </span><span class="s3">= </span><span class="s5">96</span>
+    <span class="s1">BC7_TYPELESS </span><span class="s3">= </span><span class="s5">97</span>
+    <span class="s1">BC7_UNORM </span><span class="s3">= </span><span class="s5">98</span>
+    <span class="s1">BC7_UNORM_SRGB </span><span class="s3">= </span><span class="s5">99</span>
+    <span class="s1">AYUV </span><span class="s3">= </span><span class="s5">100</span>
+    <span class="s1">Y410 </span><span class="s3">= </span><span class="s5">101</span>
+    <span class="s1">Y416 </span><span class="s3">= </span><span class="s5">102</span>
+    <span class="s1">NV12 </span><span class="s3">= </span><span class="s5">103</span>
+    <span class="s1">P010 </span><span class="s3">= </span><span class="s5">104</span>
+    <span class="s1">P016 </span><span class="s3">= </span><span class="s5">105</span>
+    <span class="s1">OPAQUE_420 </span><span class="s3">= </span><span class="s5">106</span>
+    <span class="s1">YUY2 </span><span class="s3">= </span><span class="s5">107</span>
+    <span class="s1">Y210 </span><span class="s3">= </span><span class="s5">108</span>
+    <span class="s1">Y216 </span><span class="s3">= </span><span class="s5">109</span>
+    <span class="s1">NV11 </span><span class="s3">= </span><span class="s5">110</span>
+    <span class="s1">AI44 </span><span class="s3">= </span><span class="s5">111</span>
+    <span class="s1">IA44 </span><span class="s3">= </span><span class="s5">112</span>
+    <span class="s1">P8 </span><span class="s3">= </span><span class="s5">113</span>
+    <span class="s1">A8P8 </span><span class="s3">= </span><span class="s5">114</span>
+    <span class="s1">B4G4R4A4_UNORM </span><span class="s3">= </span><span class="s5">115</span>
+    <span class="s1">P208 </span><span class="s3">= </span><span class="s5">130</span>
+    <span class="s1">V208 </span><span class="s3">= </span><span class="s5">131</span>
+    <span class="s1">V408 </span><span class="s3">= </span><span class="s5">132</span>
+    <span class="s1">SAMPLER_FEEDBACK_MIN_MIP_OPAQUE </span><span class="s3">= </span><span class="s5">189</span>
+    <span class="s1">SAMPLER_FEEDBACK_MIP_REGION_USED_OPAQUE </span><span class="s3">= </span><span class="s5">190</span>
+
+
+<span class="s2">class </span><span class="s1">D3DFMT</span><span class="s3">(</span><span class="s1">IntEnum</span><span class="s3">):</span>
+    <span class="s1">UNKNOWN </span><span class="s3">= </span><span class="s5">0</span>
+    <span class="s1">R8G8B8 </span><span class="s3">= </span><span class="s5">20</span>
+    <span class="s1">A8R8G8B8 </span><span class="s3">= </span><span class="s5">21</span>
+    <span class="s1">X8R8G8B8 </span><span class="s3">= </span><span class="s5">22</span>
+    <span class="s1">R5G6B5 </span><span class="s3">= </span><span class="s5">23</span>
+    <span class="s1">X1R5G5B5 </span><span class="s3">= </span><span class="s5">24</span>
+    <span class="s1">A1R5G5B5 </span><span class="s3">= </span><span class="s5">25</span>
+    <span class="s1">A4R4G4B4 </span><span class="s3">= </span><span class="s5">26</span>
+    <span class="s1">R3G3B2 </span><span class="s3">= </span><span class="s5">27</span>
+    <span class="s1">A8 </span><span class="s3">= </span><span class="s5">28</span>
+    <span class="s1">A8R3G3B2 </span><span class="s3">= </span><span class="s5">29</span>
+    <span class="s1">X4R4G4B4 </span><span class="s3">= </span><span class="s5">30</span>
+    <span class="s1">A2B10G10R10 </span><span class="s3">= </span><span class="s5">31</span>
+    <span class="s1">A8B8G8R8 </span><span class="s3">= </span><span class="s5">32</span>
+    <span class="s1">X8B8G8R8 </span><span class="s3">= </span><span class="s5">33</span>
+    <span class="s1">G16R16 </span><span class="s3">= </span><span class="s5">34</span>
+    <span class="s1">A2R10G10B10 </span><span class="s3">= </span><span class="s5">35</span>
+    <span class="s1">A16B16G16R16 </span><span class="s3">= </span><span class="s5">36</span>
+    <span class="s1">A8P8 </span><span class="s3">= </span><span class="s5">40</span>
+    <span class="s1">P8 </span><span class="s3">= </span><span class="s5">41</span>
+    <span class="s1">L8 </span><span class="s3">= </span><span class="s5">50</span>
+    <span class="s1">A8L8 </span><span class="s3">= </span><span class="s5">51</span>
+    <span class="s1">A4L4 </span><span class="s3">= </span><span class="s5">52</span>
+    <span class="s1">V8U8 </span><span class="s3">= </span><span class="s5">60</span>
+    <span class="s1">L6V5U5 </span><span class="s3">= </span><span class="s5">61</span>
+    <span class="s1">X8L8V8U8 </span><span class="s3">= </span><span class="s5">62</span>
+    <span class="s1">Q8W8V8U8 </span><span class="s3">= </span><span class="s5">63</span>
+    <span class="s1">V16U16 </span><span class="s3">= </span><span class="s5">64</span>
+    <span class="s1">A2W10V10U10 </span><span class="s3">= </span><span class="s5">67</span>
+    <span class="s1">D16_LOCKABLE </span><span class="s3">= </span><span class="s5">70</span>
+    <span class="s1">D32 </span><span class="s3">= </span><span class="s5">71</span>
+    <span class="s1">D15S1 </span><span class="s3">= </span><span class="s5">73</span>
+    <span class="s1">D24S8 </span><span class="s3">= </span><span class="s5">75</span>
+    <span class="s1">D24X8 </span><span class="s3">= </span><span class="s5">77</span>
+    <span class="s1">D24X4S4 </span><span class="s3">= </span><span class="s5">79</span>
+    <span class="s1">D16 </span><span class="s3">= </span><span class="s5">80</span>
+    <span class="s1">D32F_LOCKABLE </span><span class="s3">= </span><span class="s5">82</span>
+    <span class="s1">D24FS8 </span><span class="s3">= </span><span class="s5">83</span>
+    <span class="s1">D32_LOCKABLE </span><span class="s3">= </span><span class="s5">84</span>
+    <span class="s1">S8_LOCKABLE </span><span class="s3">= </span><span class="s5">85</span>
+    <span class="s1">L16 </span><span class="s3">= </span><span class="s5">81</span>
+    <span class="s1">VERTEXDATA </span><span class="s3">= </span><span class="s5">100</span>
+    <span class="s1">INDEX16 </span><span class="s3">= </span><span class="s5">101</span>
+    <span class="s1">INDEX32 </span><span class="s3">= </span><span class="s5">102</span>
+    <span class="s1">Q16W16V16U16 </span><span class="s3">= </span><span class="s5">110</span>
+    <span class="s1">R16F </span><span class="s3">= </span><span class="s5">111</span>
+    <span class="s1">G16R16F </span><span class="s3">= </span><span class="s5">112</span>
+    <span class="s1">A16B16G16R16F </span><span class="s3">= </span><span class="s5">113</span>
+    <span class="s1">R32F </span><span class="s3">= </span><span class="s5">114</span>
+    <span class="s1">G32R32F </span><span class="s3">= </span><span class="s5">115</span>
+    <span class="s1">A32B32G32R32F </span><span class="s3">= </span><span class="s5">116</span>
+    <span class="s1">CxV8U8 </span><span class="s3">= </span><span class="s5">117</span>
+    <span class="s1">A1 </span><span class="s3">= </span><span class="s5">118</span>
+    <span class="s1">A2B10G10R10_XR_BIAS </span><span class="s3">= </span><span class="s5">119</span>
+    <span class="s1">BINARYBUFFER </span><span class="s3">= </span><span class="s5">199</span>
+
+    <span class="s1">UYVY </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s6">b&quot;UYVY&quot;</span><span class="s3">)</span>
+    <span class="s1">R8G8_B8G8 </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s6">b&quot;RGBG&quot;</span><span class="s3">)</span>
+    <span class="s1">YUY2 </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s6">b&quot;YUY2&quot;</span><span class="s3">)</span>
+    <span class="s1">G8R8_G8B8 </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s6">b&quot;GRGB&quot;</span><span class="s3">)</span>
+    <span class="s1">DXT1 </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s6">b&quot;DXT1&quot;</span><span class="s3">)</span>
+    <span class="s1">DXT2 </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s6">b&quot;DXT2&quot;</span><span class="s3">)</span>
+    <span class="s1">DXT3 </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s6">b&quot;DXT3&quot;</span><span class="s3">)</span>
+    <span class="s1">DXT4 </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s6">b&quot;DXT4&quot;</span><span class="s3">)</span>
+    <span class="s1">DXT5 </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s6">b&quot;DXT5&quot;</span><span class="s3">)</span>
+    <span class="s1">DX10 </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s6">b&quot;DX10&quot;</span><span class="s3">)</span>
+    <span class="s1">BC4S </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s6">b&quot;BC4S&quot;</span><span class="s3">)</span>
+    <span class="s1">BC4U </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s6">b&quot;BC4U&quot;</span><span class="s3">)</span>
+    <span class="s1">BC5S </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s6">b&quot;BC5S&quot;</span><span class="s3">)</span>
+    <span class="s1">BC5U </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s6">b&quot;BC5U&quot;</span><span class="s3">)</span>
+    <span class="s1">ATI1 </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s6">b&quot;ATI1&quot;</span><span class="s3">)</span>
+    <span class="s1">ATI2 </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s6">b&quot;ATI2&quot;</span><span class="s3">)</span>
+    <span class="s1">MULTI2_ARGB8 </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s6">b&quot;MET1&quot;</span><span class="s3">)</span>
+
+
+<span class="s4"># Backward compatibility layer</span>
+<span class="s1">module </span><span class="s3">= </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">modules</span><span class="s3">[</span><span class="s1">__name__</span><span class="s3">]</span>
+<span class="s2">for </span><span class="s1">item </span><span class="s2">in </span><span class="s1">DDSD</span><span class="s3">:</span>
+    <span class="s2">assert </span><span class="s1">item</span><span class="s3">.</span><span class="s1">name </span><span class="s2">is not None</span>
+    <span class="s1">setattr</span><span class="s3">(</span><span class="s1">module</span><span class="s3">, </span><span class="s7">f&quot;DDSD_</span><span class="s2">{</span><span class="s1">item</span><span class="s3">.</span><span class="s1">name</span><span class="s2">}</span><span class="s7">&quot;</span><span class="s3">, </span><span class="s1">item</span><span class="s3">.</span><span class="s1">value</span><span class="s3">)</span>
+<span class="s2">for </span><span class="s1">item1 </span><span class="s2">in </span><span class="s1">DDSCAPS</span><span class="s3">:</span>
+    <span class="s2">assert </span><span class="s1">item1</span><span class="s3">.</span><span class="s1">name </span><span class="s2">is not None</span>
+    <span class="s1">setattr</span><span class="s3">(</span><span class="s1">module</span><span class="s3">, </span><span class="s7">f&quot;DDSCAPS_</span><span class="s2">{</span><span class="s1">item1</span><span class="s3">.</span><span class="s1">name</span><span class="s2">}</span><span class="s7">&quot;</span><span class="s3">, </span><span class="s1">item1</span><span class="s3">.</span><span class="s1">value</span><span class="s3">)</span>
+<span class="s2">for </span><span class="s1">item2 </span><span class="s2">in </span><span class="s1">DDSCAPS2</span><span class="s3">:</span>
+    <span class="s2">assert </span><span class="s1">item2</span><span class="s3">.</span><span class="s1">name </span><span class="s2">is not None</span>
+    <span class="s1">setattr</span><span class="s3">(</span><span class="s1">module</span><span class="s3">, </span><span class="s7">f&quot;DDSCAPS2_</span><span class="s2">{</span><span class="s1">item2</span><span class="s3">.</span><span class="s1">name</span><span class="s2">}</span><span class="s7">&quot;</span><span class="s3">, </span><span class="s1">item2</span><span class="s3">.</span><span class="s1">value</span><span class="s3">)</span>
+<span class="s2">for </span><span class="s1">item3 </span><span class="s2">in </span><span class="s1">DDPF</span><span class="s3">:</span>
+    <span class="s2">assert </span><span class="s1">item3</span><span class="s3">.</span><span class="s1">name </span><span class="s2">is not None</span>
+    <span class="s1">setattr</span><span class="s3">(</span><span class="s1">module</span><span class="s3">, </span><span class="s7">f&quot;DDPF_</span><span class="s2">{</span><span class="s1">item3</span><span class="s3">.</span><span class="s1">name</span><span class="s2">}</span><span class="s7">&quot;</span><span class="s3">, </span><span class="s1">item3</span><span class="s3">.</span><span class="s1">value</span><span class="s3">)</span>
+
+<span class="s1">DDS_FOURCC </span><span class="s3">= </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">FOURCC</span>
+<span class="s1">DDS_RGB </span><span class="s3">= </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">RGB</span>
+<span class="s1">DDS_RGBA </span><span class="s3">= </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">RGB </span><span class="s3">| </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">ALPHAPIXELS</span>
+<span class="s1">DDS_LUMINANCE </span><span class="s3">= </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">LUMINANCE</span>
+<span class="s1">DDS_LUMINANCEA </span><span class="s3">= </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">LUMINANCE </span><span class="s3">| </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">ALPHAPIXELS</span>
+<span class="s1">DDS_ALPHA </span><span class="s3">= </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">ALPHA</span>
+<span class="s1">DDS_PAL8 </span><span class="s3">= </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">PALETTEINDEXED8</span>
+
+<span class="s1">DDS_HEADER_FLAGS_TEXTURE </span><span class="s3">= </span><span class="s1">DDSD</span><span class="s3">.</span><span class="s1">CAPS </span><span class="s3">| </span><span class="s1">DDSD</span><span class="s3">.</span><span class="s1">HEIGHT </span><span class="s3">| </span><span class="s1">DDSD</span><span class="s3">.</span><span class="s1">WIDTH </span><span class="s3">| </span><span class="s1">DDSD</span><span class="s3">.</span><span class="s1">PIXELFORMAT</span>
+<span class="s1">DDS_HEADER_FLAGS_MIPMAP </span><span class="s3">= </span><span class="s1">DDSD</span><span class="s3">.</span><span class="s1">MIPMAPCOUNT</span>
+<span class="s1">DDS_HEADER_FLAGS_VOLUME </span><span class="s3">= </span><span class="s1">DDSD</span><span class="s3">.</span><span class="s1">DEPTH</span>
+<span class="s1">DDS_HEADER_FLAGS_PITCH </span><span class="s3">= </span><span class="s1">DDSD</span><span class="s3">.</span><span class="s1">PITCH</span>
+<span class="s1">DDS_HEADER_FLAGS_LINEARSIZE </span><span class="s3">= </span><span class="s1">DDSD</span><span class="s3">.</span><span class="s1">LINEARSIZE</span>
+
+<span class="s1">DDS_HEIGHT </span><span class="s3">= </span><span class="s1">DDSD</span><span class="s3">.</span><span class="s1">HEIGHT</span>
+<span class="s1">DDS_WIDTH </span><span class="s3">= </span><span class="s1">DDSD</span><span class="s3">.</span><span class="s1">WIDTH</span>
+
+<span class="s1">DDS_SURFACE_FLAGS_TEXTURE </span><span class="s3">= </span><span class="s1">DDSCAPS</span><span class="s3">.</span><span class="s1">TEXTURE</span>
+<span class="s1">DDS_SURFACE_FLAGS_MIPMAP </span><span class="s3">= </span><span class="s1">DDSCAPS</span><span class="s3">.</span><span class="s1">COMPLEX </span><span class="s3">| </span><span class="s1">DDSCAPS</span><span class="s3">.</span><span class="s1">MIPMAP</span>
+<span class="s1">DDS_SURFACE_FLAGS_CUBEMAP </span><span class="s3">= </span><span class="s1">DDSCAPS</span><span class="s3">.</span><span class="s1">COMPLEX</span>
+
+<span class="s1">DDS_CUBEMAP_POSITIVEX </span><span class="s3">= </span><span class="s1">DDSCAPS2</span><span class="s3">.</span><span class="s1">CUBEMAP </span><span class="s3">| </span><span class="s1">DDSCAPS2</span><span class="s3">.</span><span class="s1">CUBEMAP_POSITIVEX</span>
+<span class="s1">DDS_CUBEMAP_NEGATIVEX </span><span class="s3">= </span><span class="s1">DDSCAPS2</span><span class="s3">.</span><span class="s1">CUBEMAP </span><span class="s3">| </span><span class="s1">DDSCAPS2</span><span class="s3">.</span><span class="s1">CUBEMAP_NEGATIVEX</span>
+<span class="s1">DDS_CUBEMAP_POSITIVEY </span><span class="s3">= </span><span class="s1">DDSCAPS2</span><span class="s3">.</span><span class="s1">CUBEMAP </span><span class="s3">| </span><span class="s1">DDSCAPS2</span><span class="s3">.</span><span class="s1">CUBEMAP_POSITIVEY</span>
+<span class="s1">DDS_CUBEMAP_NEGATIVEY </span><span class="s3">= </span><span class="s1">DDSCAPS2</span><span class="s3">.</span><span class="s1">CUBEMAP </span><span class="s3">| </span><span class="s1">DDSCAPS2</span><span class="s3">.</span><span class="s1">CUBEMAP_NEGATIVEY</span>
+<span class="s1">DDS_CUBEMAP_POSITIVEZ </span><span class="s3">= </span><span class="s1">DDSCAPS2</span><span class="s3">.</span><span class="s1">CUBEMAP </span><span class="s3">| </span><span class="s1">DDSCAPS2</span><span class="s3">.</span><span class="s1">CUBEMAP_POSITIVEZ</span>
+<span class="s1">DDS_CUBEMAP_NEGATIVEZ </span><span class="s3">= </span><span class="s1">DDSCAPS2</span><span class="s3">.</span><span class="s1">CUBEMAP </span><span class="s3">| </span><span class="s1">DDSCAPS2</span><span class="s3">.</span><span class="s1">CUBEMAP_NEGATIVEZ</span>
+
+<span class="s1">DXT1_FOURCC </span><span class="s3">= </span><span class="s1">D3DFMT</span><span class="s3">.</span><span class="s1">DXT1</span>
+<span class="s1">DXT3_FOURCC </span><span class="s3">= </span><span class="s1">D3DFMT</span><span class="s3">.</span><span class="s1">DXT3</span>
+<span class="s1">DXT5_FOURCC </span><span class="s3">= </span><span class="s1">D3DFMT</span><span class="s3">.</span><span class="s1">DXT5</span>
+
+<span class="s1">DXGI_FORMAT_R8G8B8A8_TYPELESS </span><span class="s3">= </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">R8G8B8A8_TYPELESS</span>
+<span class="s1">DXGI_FORMAT_R8G8B8A8_UNORM </span><span class="s3">= </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">R8G8B8A8_UNORM</span>
+<span class="s1">DXGI_FORMAT_R8G8B8A8_UNORM_SRGB </span><span class="s3">= </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">R8G8B8A8_UNORM_SRGB</span>
+<span class="s1">DXGI_FORMAT_BC5_TYPELESS </span><span class="s3">= </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC5_TYPELESS</span>
+<span class="s1">DXGI_FORMAT_BC5_UNORM </span><span class="s3">= </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC5_UNORM</span>
+<span class="s1">DXGI_FORMAT_BC5_SNORM </span><span class="s3">= </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC5_SNORM</span>
+<span class="s1">DXGI_FORMAT_BC6H_UF16 </span><span class="s3">= </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC6H_UF16</span>
+<span class="s1">DXGI_FORMAT_BC6H_SF16 </span><span class="s3">= </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC6H_SF16</span>
+<span class="s1">DXGI_FORMAT_BC7_TYPELESS </span><span class="s3">= </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC7_TYPELESS</span>
+<span class="s1">DXGI_FORMAT_BC7_UNORM </span><span class="s3">= </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC7_UNORM</span>
+<span class="s1">DXGI_FORMAT_BC7_UNORM_SRGB </span><span class="s3">= </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC7_UNORM_SRGB</span>
+
+
+<span class="s2">class </span><span class="s1">DdsImageFile</span><span class="s3">(</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">ImageFile</span><span class="s3">):</span>
+    <span class="s1">format </span><span class="s3">= </span><span class="s7">&quot;DDS&quot;</span>
+    <span class="s1">format_description </span><span class="s3">= </span><span class="s7">&quot;DirectDraw Surface&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if not </span><span class="s1">_accept</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">4</span><span class="s3">)):</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s7">&quot;not a DDS file&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s3">(</span><span class="s1">header_size</span><span class="s3">,) = </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">unpack</span><span class="s3">(</span><span class="s7">&quot;&lt;I&quot;</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">4</span><span class="s3">))</span>
+        <span class="s2">if </span><span class="s1">header_size </span><span class="s3">!= </span><span class="s5">124</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s7">f&quot;Unsupported header size </span><span class="s2">{</span><span class="s1">repr</span><span class="s3">(</span><span class="s1">header_size</span><span class="s3">)</span><span class="s2">}</span><span class="s7">&quot;</span>
+            <span class="s2">raise </span><span class="s1">OSError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">header_bytes </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s1">header_size </span><span class="s3">- </span><span class="s5">4</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">header_bytes</span><span class="s3">) != </span><span class="s5">120</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s7">f&quot;Incomplete header: </span><span class="s2">{</span><span class="s1">len</span><span class="s3">(</span><span class="s1">header_bytes</span><span class="s3">)</span><span class="s2">} </span><span class="s7">bytes&quot;</span>
+            <span class="s2">raise </span><span class="s1">OSError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">header </span><span class="s3">= </span><span class="s1">io</span><span class="s3">.</span><span class="s1">BytesIO</span><span class="s3">(</span><span class="s1">header_bytes</span><span class="s3">)</span>
+
+        <span class="s1">flags</span><span class="s3">, </span><span class="s1">height</span><span class="s3">, </span><span class="s1">width </span><span class="s3">= </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">unpack</span><span class="s3">(</span><span class="s7">&quot;&lt;3I&quot;</span><span class="s3">, </span><span class="s1">header</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">12</span><span class="s3">))</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= (</span><span class="s1">width</span><span class="s3">, </span><span class="s1">height</span><span class="s3">)</span>
+        <span class="s1">extents </span><span class="s3">= (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span>
+
+        <span class="s1">pitch</span><span class="s3">, </span><span class="s1">depth</span><span class="s3">, </span><span class="s1">mipmaps </span><span class="s3">= </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">unpack</span><span class="s3">(</span><span class="s7">&quot;&lt;3I&quot;</span><span class="s3">, </span><span class="s1">header</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">12</span><span class="s3">))</span>
+        <span class="s1">struct</span><span class="s3">.</span><span class="s1">unpack</span><span class="s3">(</span><span class="s7">&quot;&lt;11I&quot;</span><span class="s3">, </span><span class="s1">header</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">44</span><span class="s3">))  </span><span class="s4"># reserved</span>
+
+        <span class="s4"># pixel format</span>
+        <span class="s1">pfsize</span><span class="s3">, </span><span class="s1">pfflags</span><span class="s3">, </span><span class="s1">fourcc</span><span class="s3">, </span><span class="s1">bitcount </span><span class="s3">= </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">unpack</span><span class="s3">(</span><span class="s7">&quot;&lt;4I&quot;</span><span class="s3">, </span><span class="s1">header</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">16</span><span class="s3">))</span>
+        <span class="s1">n </span><span class="s3">= </span><span class="s5">0</span>
+        <span class="s1">rawmode </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s2">if </span><span class="s1">pfflags </span><span class="s3">&amp; </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">RGB</span><span class="s3">:</span>
+            <span class="s4"># Texture contains uncompressed RGB data</span>
+            <span class="s2">if </span><span class="s1">pfflags </span><span class="s3">&amp; </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">ALPHAPIXELS</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGBA&quot;</span>
+                <span class="s1">mask_count </span><span class="s3">= </span><span class="s5">4</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGB&quot;</span>
+                <span class="s1">mask_count </span><span class="s3">= </span><span class="s5">3</span>
+
+            <span class="s1">masks </span><span class="s3">= </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">unpack</span><span class="s3">(</span><span class="s7">f&quot;&lt;</span><span class="s2">{</span><span class="s1">mask_count</span><span class="s2">}</span><span class="s7">I&quot;</span><span class="s3">, </span><span class="s1">header</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s1">mask_count </span><span class="s3">* </span><span class="s5">4</span><span class="s3">))</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= [</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s7">&quot;dds_rgb&quot;</span><span class="s3">, </span><span class="s1">extents</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, (</span><span class="s1">bitcount</span><span class="s3">, </span><span class="s1">masks</span><span class="s3">))]</span>
+            <span class="s2">return</span>
+        <span class="s2">elif </span><span class="s1">pfflags </span><span class="s3">&amp; </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">LUMINANCE</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">bitcount </span><span class="s3">== </span><span class="s5">8</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;L&quot;</span>
+            <span class="s2">elif </span><span class="s1">bitcount </span><span class="s3">== </span><span class="s5">16 </span><span class="s2">and </span><span class="s1">pfflags </span><span class="s3">&amp; </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">ALPHAPIXELS</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;LA&quot;</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s7">f&quot;Unsupported bitcount </span><span class="s2">{</span><span class="s1">bitcount</span><span class="s2">} </span><span class="s7">for </span><span class="s2">{</span><span class="s1">pfflags</span><span class="s2">}</span><span class="s7">&quot;</span>
+                <span class="s2">raise </span><span class="s1">OSError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s2">elif </span><span class="s1">pfflags </span><span class="s3">&amp; </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">PALETTEINDEXED8</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;P&quot;</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">palette </span><span class="s3">= </span><span class="s1">ImagePalette</span><span class="s3">.</span><span class="s1">raw</span><span class="s3">(</span><span class="s7">&quot;RGBA&quot;</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">1024</span><span class="s3">))</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">= </span><span class="s7">&quot;RGBA&quot;</span>
+        <span class="s2">elif </span><span class="s1">pfflags </span><span class="s3">&amp; </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">FOURCC</span><span class="s3">:</span>
+            <span class="s1">offset </span><span class="s3">= </span><span class="s1">header_size </span><span class="s3">+ </span><span class="s5">4</span>
+            <span class="s2">if </span><span class="s1">fourcc </span><span class="s3">== </span><span class="s1">D3DFMT</span><span class="s3">.</span><span class="s1">DXT1</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGBA&quot;</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">pixel_format </span><span class="s3">= </span><span class="s7">&quot;DXT1&quot;</span>
+                <span class="s1">n </span><span class="s3">= </span><span class="s5">1</span>
+            <span class="s2">elif </span><span class="s1">fourcc </span><span class="s3">== </span><span class="s1">D3DFMT</span><span class="s3">.</span><span class="s1">DXT3</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGBA&quot;</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">pixel_format </span><span class="s3">= </span><span class="s7">&quot;DXT3&quot;</span>
+                <span class="s1">n </span><span class="s3">= </span><span class="s5">2</span>
+            <span class="s2">elif </span><span class="s1">fourcc </span><span class="s3">== </span><span class="s1">D3DFMT</span><span class="s3">.</span><span class="s1">DXT5</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGBA&quot;</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">pixel_format </span><span class="s3">= </span><span class="s7">&quot;DXT5&quot;</span>
+                <span class="s1">n </span><span class="s3">= </span><span class="s5">3</span>
+            <span class="s2">elif </span><span class="s1">fourcc </span><span class="s2">in </span><span class="s3">(</span><span class="s1">D3DFMT</span><span class="s3">.</span><span class="s1">BC4U</span><span class="s3">, </span><span class="s1">D3DFMT</span><span class="s3">.</span><span class="s1">ATI1</span><span class="s3">):</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;L&quot;</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">pixel_format </span><span class="s3">= </span><span class="s7">&quot;BC4&quot;</span>
+                <span class="s1">n </span><span class="s3">= </span><span class="s5">4</span>
+            <span class="s2">elif </span><span class="s1">fourcc </span><span class="s3">== </span><span class="s1">D3DFMT</span><span class="s3">.</span><span class="s1">BC5S</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGB&quot;</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">pixel_format </span><span class="s3">= </span><span class="s7">&quot;BC5S&quot;</span>
+                <span class="s1">n </span><span class="s3">= </span><span class="s5">5</span>
+            <span class="s2">elif </span><span class="s1">fourcc </span><span class="s2">in </span><span class="s3">(</span><span class="s1">D3DFMT</span><span class="s3">.</span><span class="s1">BC5U</span><span class="s3">, </span><span class="s1">D3DFMT</span><span class="s3">.</span><span class="s1">ATI2</span><span class="s3">):</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGB&quot;</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">pixel_format </span><span class="s3">= </span><span class="s7">&quot;BC5&quot;</span>
+                <span class="s1">n </span><span class="s3">= </span><span class="s5">5</span>
+            <span class="s2">elif </span><span class="s1">fourcc </span><span class="s3">== </span><span class="s1">D3DFMT</span><span class="s3">.</span><span class="s1">DX10</span><span class="s3">:</span>
+                <span class="s1">offset </span><span class="s3">+= </span><span class="s5">20</span>
+                <span class="s4"># ignoring flags which pertain to volume textures and cubemaps</span>
+                <span class="s3">(</span><span class="s1">dxgi_format</span><span class="s3">,) = </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">unpack</span><span class="s3">(</span><span class="s7">&quot;&lt;I&quot;</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">4</span><span class="s3">))</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">16</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">dxgi_format </span><span class="s2">in </span><span class="s3">(</span>
+                    <span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC1_UNORM</span><span class="s3">,</span>
+                    <span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC1_TYPELESS</span><span class="s3">,</span>
+                <span class="s3">):</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGBA&quot;</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">pixel_format </span><span class="s3">= </span><span class="s7">&quot;BC1&quot;</span>
+                    <span class="s1">n </span><span class="s3">= </span><span class="s5">1</span>
+                <span class="s2">elif </span><span class="s1">dxgi_format </span><span class="s2">in </span><span class="s3">(</span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC4_TYPELESS</span><span class="s3">, </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC4_UNORM</span><span class="s3">):</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;L&quot;</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">pixel_format </span><span class="s3">= </span><span class="s7">&quot;BC4&quot;</span>
+                    <span class="s1">n </span><span class="s3">= </span><span class="s5">4</span>
+                <span class="s2">elif </span><span class="s1">dxgi_format </span><span class="s2">in </span><span class="s3">(</span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC5_TYPELESS</span><span class="s3">, </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC5_UNORM</span><span class="s3">):</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGB&quot;</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">pixel_format </span><span class="s3">= </span><span class="s7">&quot;BC5&quot;</span>
+                    <span class="s1">n </span><span class="s3">= </span><span class="s5">5</span>
+                <span class="s2">elif </span><span class="s1">dxgi_format </span><span class="s3">== </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC5_SNORM</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGB&quot;</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">pixel_format </span><span class="s3">= </span><span class="s7">&quot;BC5S&quot;</span>
+                    <span class="s1">n </span><span class="s3">= </span><span class="s5">5</span>
+                <span class="s2">elif </span><span class="s1">dxgi_format </span><span class="s3">== </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC6H_UF16</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGB&quot;</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">pixel_format </span><span class="s3">= </span><span class="s7">&quot;BC6H&quot;</span>
+                    <span class="s1">n </span><span class="s3">= </span><span class="s5">6</span>
+                <span class="s2">elif </span><span class="s1">dxgi_format </span><span class="s3">== </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC6H_SF16</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGB&quot;</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">pixel_format </span><span class="s3">= </span><span class="s7">&quot;BC6HS&quot;</span>
+                    <span class="s1">n </span><span class="s3">= </span><span class="s5">6</span>
+                <span class="s2">elif </span><span class="s1">dxgi_format </span><span class="s2">in </span><span class="s3">(</span>
+                    <span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC7_TYPELESS</span><span class="s3">,</span>
+                    <span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC7_UNORM</span><span class="s3">,</span>
+                    <span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC7_UNORM_SRGB</span><span class="s3">,</span>
+                <span class="s3">):</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGBA&quot;</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">pixel_format </span><span class="s3">= </span><span class="s7">&quot;BC7&quot;</span>
+                    <span class="s1">n </span><span class="s3">= </span><span class="s5">7</span>
+                    <span class="s2">if </span><span class="s1">dxgi_format </span><span class="s3">== </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">BC7_UNORM_SRGB</span><span class="s3">:</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;gamma&quot;</span><span class="s3">] = </span><span class="s5">1 </span><span class="s3">/ </span><span class="s5">2.2</span>
+                <span class="s2">elif </span><span class="s1">dxgi_format </span><span class="s2">in </span><span class="s3">(</span>
+                    <span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">R8G8B8A8_TYPELESS</span><span class="s3">,</span>
+                    <span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">R8G8B8A8_UNORM</span><span class="s3">,</span>
+                    <span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">R8G8B8A8_UNORM_SRGB</span><span class="s3">,</span>
+                <span class="s3">):</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGBA&quot;</span>
+                    <span class="s2">if </span><span class="s1">dxgi_format </span><span class="s3">== </span><span class="s1">DXGI_FORMAT</span><span class="s3">.</span><span class="s1">R8G8B8A8_UNORM_SRGB</span><span class="s3">:</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;gamma&quot;</span><span class="s3">] = </span><span class="s5">1 </span><span class="s3">/ </span><span class="s5">2.2</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">msg </span><span class="s3">= </span><span class="s7">f&quot;Unimplemented DXGI format </span><span class="s2">{</span><span class="s1">dxgi_format</span><span class="s2">}</span><span class="s7">&quot;</span>
+                    <span class="s2">raise </span><span class="s1">NotImplementedError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s7">f&quot;Unimplemented pixel format </span><span class="s2">{</span><span class="s1">repr</span><span class="s3">(</span><span class="s1">fourcc</span><span class="s3">)</span><span class="s2">}</span><span class="s7">&quot;</span>
+                <span class="s2">raise </span><span class="s1">NotImplementedError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s7">f&quot;Unknown pixel format flags </span><span class="s2">{</span><span class="s1">pfflags</span><span class="s2">}</span><span class="s7">&quot;</span>
+            <span class="s2">raise </span><span class="s1">NotImplementedError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s1">n</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= [</span>
+                <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s7">&quot;bcn&quot;</span><span class="s3">, </span><span class="s1">extents</span><span class="s3">, </span><span class="s1">offset</span><span class="s3">, (</span><span class="s1">n</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">pixel_format</span><span class="s3">))</span>
+            <span class="s3">]</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= [</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s7">&quot;raw&quot;</span><span class="s3">, </span><span class="s1">extents</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s1">rawmode </span><span class="s2">or </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">)]</span>
+
+    <span class="s2">def </span><span class="s1">load_seek</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">pos</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">pass</span>
+
+
+<span class="s2">class </span><span class="s1">DdsRgbDecoder</span><span class="s3">(</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">PyDecoder</span><span class="s3">):</span>
+    <span class="s1">_pulls_fd </span><span class="s3">= </span><span class="s2">True</span>
+
+    <span class="s2">def </span><span class="s1">decode</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">buffer</span><span class="s3">: </span><span class="s1">bytes </span><span class="s3">| </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">SupportsArrayInterface</span><span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]:</span>
+        <span class="s2">assert </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fd </span><span class="s2">is not None</span>
+        <span class="s1">bitcount</span><span class="s3">, </span><span class="s1">masks </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">args</span>
+
+        <span class="s4"># Some masks will be padded with zeros, e.g. R 0b11 G 0b1100</span>
+        <span class="s4"># Calculate how many zeros each mask is padded with</span>
+        <span class="s1">mask_offsets </span><span class="s3">= []</span>
+        <span class="s4"># And the maximum value of each channel without the padding</span>
+        <span class="s1">mask_totals </span><span class="s3">= []</span>
+        <span class="s2">for </span><span class="s1">mask </span><span class="s2">in </span><span class="s1">masks</span><span class="s3">:</span>
+            <span class="s1">offset </span><span class="s3">= </span><span class="s5">0</span>
+            <span class="s2">if </span><span class="s1">mask </span><span class="s3">!= </span><span class="s5">0</span><span class="s3">:</span>
+                <span class="s2">while </span><span class="s1">mask </span><span class="s3">&gt;&gt; (</span><span class="s1">offset </span><span class="s3">+ </span><span class="s5">1</span><span class="s3">) &lt;&lt; (</span><span class="s1">offset </span><span class="s3">+ </span><span class="s5">1</span><span class="s3">) == </span><span class="s1">mask</span><span class="s3">:</span>
+                    <span class="s1">offset </span><span class="s3">+= </span><span class="s5">1</span>
+            <span class="s1">mask_offsets</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">offset</span><span class="s3">)</span>
+            <span class="s1">mask_totals</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">mask </span><span class="s3">&gt;&gt; </span><span class="s1">offset</span><span class="s3">)</span>
+
+        <span class="s1">data </span><span class="s3">= </span><span class="s1">bytearray</span><span class="s3">()</span>
+        <span class="s1">bytecount </span><span class="s3">= </span><span class="s1">bitcount </span><span class="s3">// </span><span class="s5">8</span>
+        <span class="s1">dest_length </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">state</span><span class="s3">.</span><span class="s1">xsize </span><span class="s3">* </span><span class="s1">self</span><span class="s3">.</span><span class="s1">state</span><span class="s3">.</span><span class="s1">ysize </span><span class="s3">* </span><span class="s1">len</span><span class="s3">(</span><span class="s1">masks</span><span class="s3">)</span>
+        <span class="s2">while </span><span class="s1">len</span><span class="s3">(</span><span class="s1">data</span><span class="s3">) &lt; </span><span class="s1">dest_length</span><span class="s3">:</span>
+            <span class="s1">value </span><span class="s3">= </span><span class="s1">int</span><span class="s3">.</span><span class="s1">from_bytes</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fd</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s1">bytecount</span><span class="s3">), </span><span class="s7">&quot;little&quot;</span><span class="s3">)</span>
+            <span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">mask </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">masks</span><span class="s3">):</span>
+                <span class="s1">masked_value </span><span class="s3">= </span><span class="s1">value </span><span class="s3">&amp; </span><span class="s1">mask</span>
+                <span class="s4"># Remove the zero padding, and scale it to 8 bits</span>
+                <span class="s1">data </span><span class="s3">+= </span><span class="s1">o8</span><span class="s3">(</span>
+                    <span class="s1">int</span><span class="s3">(((</span><span class="s1">masked_value </span><span class="s3">&gt;&gt; </span><span class="s1">mask_offsets</span><span class="s3">[</span><span class="s1">i</span><span class="s3">]) / </span><span class="s1">mask_totals</span><span class="s3">[</span><span class="s1">i</span><span class="s3">]) * </span><span class="s5">255</span><span class="s3">)</span>
+                <span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">set_as_raw</span><span class="s3">(</span><span class="s1">data</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s3">-</span><span class="s5">1</span><span class="s3">, </span><span class="s5">0</span>
+
+
+<span class="s2">def </span><span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">not in </span><span class="s3">(</span><span class="s7">&quot;RGB&quot;</span><span class="s3">, </span><span class="s7">&quot;RGBA&quot;</span><span class="s3">, </span><span class="s7">&quot;L&quot;</span><span class="s3">, </span><span class="s7">&quot;LA&quot;</span><span class="s3">):</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s7">f&quot;cannot write mode </span><span class="s2">{</span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span><span class="s2">} </span><span class="s7">as DDS&quot;</span>
+        <span class="s2">raise </span><span class="s1">OSError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+    <span class="s1">alpha </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">[-</span><span class="s5">1</span><span class="s3">] == </span><span class="s7">&quot;A&quot;</span>
+    <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] == </span><span class="s7">&quot;L&quot;</span><span class="s3">:</span>
+        <span class="s1">pixel_flags </span><span class="s3">= </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">LUMINANCE</span>
+        <span class="s1">rawmode </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span>
+        <span class="s2">if </span><span class="s1">alpha</span><span class="s3">:</span>
+            <span class="s1">rgba_mask </span><span class="s3">= [</span><span class="s5">0x000000FF</span><span class="s3">, </span><span class="s5">0x000000FF</span><span class="s3">, </span><span class="s5">0x000000FF</span><span class="s3">]</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">rgba_mask </span><span class="s3">= [</span><span class="s5">0xFF000000</span><span class="s3">, </span><span class="s5">0xFF000000</span><span class="s3">, </span><span class="s5">0xFF000000</span><span class="s3">]</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">pixel_flags </span><span class="s3">= </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">RGB</span>
+        <span class="s1">rawmode </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">[::-</span><span class="s5">1</span><span class="s3">]</span>
+        <span class="s1">rgba_mask </span><span class="s3">= [</span><span class="s5">0x00FF0000</span><span class="s3">, </span><span class="s5">0x0000FF00</span><span class="s3">, </span><span class="s5">0x000000FF</span><span class="s3">]</span>
+
+        <span class="s2">if </span><span class="s1">alpha</span><span class="s3">:</span>
+            <span class="s1">r</span><span class="s3">, </span><span class="s1">g</span><span class="s3">, </span><span class="s1">b</span><span class="s3">, </span><span class="s1">a </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">split</span><span class="s3">()</span>
+            <span class="s1">im </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">merge</span><span class="s3">(</span><span class="s7">&quot;RGBA&quot;</span><span class="s3">, (</span><span class="s1">a</span><span class="s3">, </span><span class="s1">r</span><span class="s3">, </span><span class="s1">g</span><span class="s3">, </span><span class="s1">b</span><span class="s3">))</span>
+    <span class="s2">if </span><span class="s1">alpha</span><span class="s3">:</span>
+        <span class="s1">pixel_flags </span><span class="s3">|= </span><span class="s1">DDPF</span><span class="s3">.</span><span class="s1">ALPHAPIXELS</span>
+    <span class="s1">rgba_mask</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s5">0xFF000000 </span><span class="s2">if </span><span class="s1">alpha </span><span class="s2">else </span><span class="s5">0</span><span class="s3">)</span>
+
+    <span class="s1">flags </span><span class="s3">= </span><span class="s1">DDSD</span><span class="s3">.</span><span class="s1">CAPS </span><span class="s3">| </span><span class="s1">DDSD</span><span class="s3">.</span><span class="s1">HEIGHT </span><span class="s3">| </span><span class="s1">DDSD</span><span class="s3">.</span><span class="s1">WIDTH </span><span class="s3">| </span><span class="s1">DDSD</span><span class="s3">.</span><span class="s1">PITCH </span><span class="s3">| </span><span class="s1">DDSD</span><span class="s3">.</span><span class="s1">PIXELFORMAT</span>
+    <span class="s1">bitcount </span><span class="s3">= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">getbands</span><span class="s3">()) * </span><span class="s5">8</span>
+    <span class="s1">pitch </span><span class="s3">= (</span><span class="s1">im</span><span class="s3">.</span><span class="s1">width </span><span class="s3">* </span><span class="s1">bitcount </span><span class="s3">+ </span><span class="s5">7</span><span class="s3">) // </span><span class="s5">8</span>
+
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span>
+        <span class="s1">o32</span><span class="s3">(</span><span class="s1">DDS_MAGIC</span><span class="s3">)</span>
+        <span class="s3">+ </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">pack</span><span class="s3">(</span>
+            <span class="s7">&quot;&lt;7I&quot;</span><span class="s3">,</span>
+            <span class="s5">124</span><span class="s3">,  </span><span class="s4"># header size</span>
+            <span class="s1">flags</span><span class="s3">,  </span><span class="s4"># flags</span>
+            <span class="s1">im</span><span class="s3">.</span><span class="s1">height</span><span class="s3">,</span>
+            <span class="s1">im</span><span class="s3">.</span><span class="s1">width</span><span class="s3">,</span>
+            <span class="s1">pitch</span><span class="s3">,</span>
+            <span class="s5">0</span><span class="s3">,  </span><span class="s4"># depth</span>
+            <span class="s5">0</span><span class="s3">,  </span><span class="s4"># mipmaps</span>
+        <span class="s3">)</span>
+        <span class="s3">+ </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">pack</span><span class="s3">(</span><span class="s7">&quot;11I&quot;</span><span class="s3">, *((</span><span class="s5">0</span><span class="s3">,) * </span><span class="s5">11</span><span class="s3">))  </span><span class="s4"># reserved</span>
+        <span class="s4"># pfsize, pfflags, fourcc, bitcount</span>
+        <span class="s3">+ </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">pack</span><span class="s3">(</span><span class="s7">&quot;&lt;4I&quot;</span><span class="s3">, </span><span class="s5">32</span><span class="s3">, </span><span class="s1">pixel_flags</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s1">bitcount</span><span class="s3">)</span>
+        <span class="s3">+ </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">pack</span><span class="s3">(</span><span class="s7">&quot;&lt;4I&quot;</span><span class="s3">, *</span><span class="s1">rgba_mask</span><span class="s3">)  </span><span class="s4"># dwRGBABitMask</span>
+        <span class="s3">+ </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">pack</span><span class="s3">(</span><span class="s7">&quot;&lt;5I&quot;</span><span class="s3">, </span><span class="s1">DDSCAPS</span><span class="s3">.</span><span class="s1">TEXTURE</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">)</span>
+    <span class="s3">)</span>
+    <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">, [</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s7">&quot;raw&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s1">rawmode</span><span class="s3">)])</span>
+
+
+<span class="s2">def </span><span class="s1">_accept</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">: </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s2">return </span><span class="s1">prefix</span><span class="s3">[:</span><span class="s5">4</span><span class="s3">] == </span><span class="s6">b&quot;DDS &quot;</span>
+
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_open</span><span class="s3">(</span><span class="s1">DdsImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">DdsImageFile</span><span class="s3">, </span><span class="s1">_accept</span><span class="s3">)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_decoder</span><span class="s3">(</span><span class="s7">&quot;dds_rgb&quot;</span><span class="s3">, </span><span class="s1">DdsRgbDecoder</span><span class="s3">)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_save</span><span class="s3">(</span><span class="s1">DdsImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">_save</span><span class="s3">)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_extension</span><span class="s3">(</span><span class="s1">DdsImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s7">&quot;.dds&quot;</span><span class="s3">)</span>
+</pre>
+</body>
+</html>

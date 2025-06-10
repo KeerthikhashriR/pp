@@ -1,0 +1,481 @@
+<html>
+<head>
+<title>_fields.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #7a7e85;}
+.s5 { color: #6aab73;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_fields.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;Private logic related to fields (the `Field()` function and `FieldInfo` class), and arguments to `Annotated`.&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations </span><span class="s2">as </span><span class="s1">_annotations</span>
+
+<span class="s2">import </span><span class="s1">dataclasses</span>
+<span class="s2">import </span><span class="s1">warnings</span>
+<span class="s2">from </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">abc </span><span class="s2">import </span><span class="s1">Mapping</span>
+<span class="s2">from </span><span class="s1">copy </span><span class="s2">import </span><span class="s1">copy</span>
+<span class="s2">from </span><span class="s1">functools </span><span class="s2">import </span><span class="s1">cache</span>
+<span class="s2">from </span><span class="s1">inspect </span><span class="s2">import </span><span class="s1">Parameter</span><span class="s3">, </span><span class="s1">ismethoddescriptor</span><span class="s3">, </span><span class="s1">signature</span>
+<span class="s2">from </span><span class="s1">re </span><span class="s2">import </span><span class="s1">Pattern</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Callable</span><span class="s3">, </span><span class="s1">TypeVar</span>
+
+<span class="s2">from </span><span class="s1">pydantic_core </span><span class="s2">import </span><span class="s1">PydanticUndefined</span>
+<span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">TypeIs</span><span class="s3">, </span><span class="s1">get_origin</span>
+<span class="s2">from </span><span class="s1">typing_inspection </span><span class="s2">import </span><span class="s1">typing_objects</span>
+<span class="s2">from </span><span class="s1">typing_inspection</span><span class="s3">.</span><span class="s1">introspection </span><span class="s2">import </span><span class="s1">AnnotationSource</span>
+
+<span class="s2">from </span><span class="s1">pydantic </span><span class="s2">import </span><span class="s1">PydanticDeprecatedSince211</span>
+<span class="s2">from </span><span class="s1">pydantic</span><span class="s3">.</span><span class="s1">errors </span><span class="s2">import </span><span class="s1">PydanticUserError</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">_generics</span><span class="s3">, </span><span class="s1">_typing_extra</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_config </span><span class="s2">import </span><span class="s1">ConfigWrapper</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_docs_extraction </span><span class="s2">import </span><span class="s1">extract_docstrings_from_cls</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_import_utils </span><span class="s2">import </span><span class="s1">import_cached_base_model</span><span class="s3">, </span><span class="s1">import_cached_field_info</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_namespace_utils </span><span class="s2">import </span><span class="s1">NsResolver</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_repr </span><span class="s2">import </span><span class="s1">Representation</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_utils </span><span class="s2">import </span><span class="s1">can_be_positional</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s1">annotated_types </span><span class="s2">import </span><span class="s1">BaseMetadata</span>
+
+    <span class="s2">from </span><span class="s3">..</span><span class="s1">fields </span><span class="s2">import </span><span class="s1">FieldInfo</span>
+    <span class="s2">from </span><span class="s3">..</span><span class="s1">main </span><span class="s2">import </span><span class="s1">BaseModel</span>
+    <span class="s2">from </span><span class="s3">.</span><span class="s1">_dataclasses </span><span class="s2">import </span><span class="s1">StandardDataclass</span>
+    <span class="s2">from </span><span class="s3">.</span><span class="s1">_decorators </span><span class="s2">import </span><span class="s1">DecoratorInfos</span>
+
+
+<span class="s2">class </span><span class="s1">PydanticMetadata</span><span class="s3">(</span><span class="s1">Representation</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;Base class for annotation markers like `Strict`.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ </span><span class="s3">= ()</span>
+
+
+<span class="s2">def </span><span class="s1">pydantic_general_metadata</span><span class="s3">(**</span><span class="s1">metadata</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; BaseMetadata</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Create a new `_PydanticGeneralMetadata` class with the given metadata. 
+ 
+    Args: 
+        **metadata: The metadata to add. 
+ 
+    Returns: 
+        The new `_PydanticGeneralMetadata` class. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">_general_metadata_cls</span><span class="s3">()(</span><span class="s1">metadata</span><span class="s3">)  </span><span class="s4"># type: ignore</span>
+
+
+<span class="s3">@</span><span class="s1">cache</span>
+<span class="s2">def </span><span class="s1">_general_metadata_cls</span><span class="s3">() </span><span class="s1">-&gt; type</span><span class="s3">[</span><span class="s1">BaseMetadata</span><span class="s3">]:</span>
+    <span class="s0">&quot;&quot;&quot;Do it this way to avoid importing `annotated_types` at import time.&quot;&quot;&quot;</span>
+    <span class="s2">from </span><span class="s1">annotated_types </span><span class="s2">import </span><span class="s1">BaseMetadata</span>
+
+    <span class="s2">class </span><span class="s1">_PydanticGeneralMetadata</span><span class="s3">(</span><span class="s1">PydanticMetadata</span><span class="s3">, </span><span class="s1">BaseMetadata</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot;Pydantic general metadata like `max_digits`.&quot;&quot;&quot;</span>
+
+        <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">metadata</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">):</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">__dict__ </span><span class="s3">= </span><span class="s1">metadata</span>
+
+    <span class="s2">return </span><span class="s1">_PydanticGeneralMetadata  </span><span class="s4"># type: ignore</span>
+
+
+<span class="s2">def </span><span class="s1">_update_fields_from_docstrings</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">], </span><span class="s1">fields</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">FieldInfo</span><span class="s3">], </span><span class="s1">use_inspect</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s1">fields_docs </span><span class="s3">= </span><span class="s1">extract_docstrings_from_cls</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">use_inspect</span><span class="s3">=</span><span class="s1">use_inspect</span><span class="s3">)</span>
+    <span class="s2">for </span><span class="s1">ann_name</span><span class="s3">, </span><span class="s1">field_info </span><span class="s2">in </span><span class="s1">fields</span><span class="s3">.</span><span class="s1">items</span><span class="s3">():</span>
+        <span class="s2">if </span><span class="s1">field_info</span><span class="s3">.</span><span class="s1">description </span><span class="s2">is None and </span><span class="s1">ann_name </span><span class="s2">in </span><span class="s1">fields_docs</span><span class="s3">:</span>
+            <span class="s1">field_info</span><span class="s3">.</span><span class="s1">description </span><span class="s3">= </span><span class="s1">fields_docs</span><span class="s3">[</span><span class="s1">ann_name</span><span class="s3">]</span>
+
+
+<span class="s2">def </span><span class="s1">collect_model_fields</span><span class="s3">(  </span><span class="s4"># noqa: C901</span>
+    <span class="s1">cls</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">BaseModel</span><span class="s3">],</span>
+    <span class="s1">config_wrapper</span><span class="s3">: </span><span class="s1">ConfigWrapper</span><span class="s3">,</span>
+    <span class="s1">ns_resolver</span><span class="s3">: </span><span class="s1">NsResolver </span><span class="s3">| </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s3">*,</span>
+    <span class="s1">typevars_map</span><span class="s3">: </span><span class="s1">Mapping</span><span class="s3">[</span><span class="s1">TypeVar</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">FieldInfo</span><span class="s3">], </span><span class="s1">set</span><span class="s3">[</span><span class="s1">str</span><span class="s3">]]:</span>
+    <span class="s0">&quot;&quot;&quot;Collect the fields and class variables names of a nascent Pydantic model. 
+ 
+    The fields collection process is *lenient*, meaning it won't error if string annotations 
+    fail to evaluate. If this happens, the original annotation (and assigned value, if any) 
+    is stored on the created `FieldInfo` instance. 
+ 
+    The `rebuild_model_fields()` should be called at a later point (e.g. when rebuilding the model), 
+    and will make use of these stored attributes. 
+ 
+    Args: 
+        cls: BaseModel or dataclass. 
+        config_wrapper: The config wrapper instance. 
+        ns_resolver: Namespace resolver to use when getting model annotations. 
+        typevars_map: A dictionary mapping type variables to their concrete types. 
+ 
+    Returns: 
+        A two-tuple containing model fields and class variables names. 
+ 
+    Raises: 
+        NameError: 
+            - If there is a conflict between a field name and protected namespaces. 
+            - If there is a field other than `root` in `RootModel`. 
+            - If a field shadows an attribute in the parent model. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">BaseModel </span><span class="s3">= </span><span class="s1">import_cached_base_model</span><span class="s3">()</span>
+    <span class="s1">FieldInfo_ </span><span class="s3">= </span><span class="s1">import_cached_field_info</span><span class="s3">()</span>
+
+    <span class="s1">bases </span><span class="s3">= </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__bases__</span>
+    <span class="s1">parent_fields_lookup</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">FieldInfo</span><span class="s3">] = {}</span>
+    <span class="s2">for </span><span class="s1">base </span><span class="s2">in </span><span class="s1">reversed</span><span class="s3">(</span><span class="s1">bases</span><span class="s3">):</span>
+        <span class="s2">if </span><span class="s1">model_fields </span><span class="s3">:= </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">base</span><span class="s3">, </span><span class="s5">'__pydantic_fields__'</span><span class="s3">, </span><span class="s2">None</span><span class="s3">):</span>
+            <span class="s1">parent_fields_lookup</span><span class="s3">.</span><span class="s1">update</span><span class="s3">(</span><span class="s1">model_fields</span><span class="s3">)</span>
+
+    <span class="s1">type_hints </span><span class="s3">= </span><span class="s1">_typing_extra</span><span class="s3">.</span><span class="s1">get_model_type_hints</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">ns_resolver</span><span class="s3">=</span><span class="s1">ns_resolver</span><span class="s3">)</span>
+
+    <span class="s4"># https://docs.python.org/3/howto/annotations.html#accessing-the-annotations-dict-of-an-object-in-python-3-9-and-older</span>
+    <span class="s4"># annotations is only used for finding fields in parent classes</span>
+    <span class="s1">annotations </span><span class="s3">= </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__dict__</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">'__annotations__'</span><span class="s3">, {})</span>
+    <span class="s1">fields</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">FieldInfo</span><span class="s3">] = {}</span>
+
+    <span class="s1">class_vars</span><span class="s3">: </span><span class="s1">set</span><span class="s3">[</span><span class="s1">str</span><span class="s3">] = </span><span class="s1">set</span><span class="s3">()</span>
+    <span class="s2">for </span><span class="s1">ann_name</span><span class="s3">, (</span><span class="s1">ann_type</span><span class="s3">, </span><span class="s1">evaluated</span><span class="s3">) </span><span class="s2">in </span><span class="s1">type_hints</span><span class="s3">.</span><span class="s1">items</span><span class="s3">():</span>
+        <span class="s2">if </span><span class="s1">ann_name </span><span class="s3">== </span><span class="s5">'model_config'</span><span class="s3">:</span>
+            <span class="s4"># We never want to treat `model_config` as a field</span>
+            <span class="s4"># Note: we may need to change this logic if/when we introduce a `BareModel` class with no</span>
+            <span class="s4"># protected namespaces (where `model_config` might be allowed as a field name)</span>
+            <span class="s2">continue</span>
+
+        <span class="s2">for </span><span class="s1">protected_namespace </span><span class="s2">in </span><span class="s1">config_wrapper</span><span class="s3">.</span><span class="s1">protected_namespaces</span><span class="s3">:</span>
+            <span class="s1">ns_violation</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span>
+            <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">protected_namespace</span><span class="s3">, </span><span class="s1">Pattern</span><span class="s3">):</span>
+                <span class="s1">ns_violation </span><span class="s3">= </span><span class="s1">protected_namespace</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s1">ann_name</span><span class="s3">) </span><span class="s2">is not None</span>
+            <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">protected_namespace</span><span class="s3">, </span><span class="s1">str</span><span class="s3">):</span>
+                <span class="s1">ns_violation </span><span class="s3">= </span><span class="s1">ann_name</span><span class="s3">.</span><span class="s1">startswith</span><span class="s3">(</span><span class="s1">protected_namespace</span><span class="s3">)</span>
+
+            <span class="s2">if </span><span class="s1">ns_violation</span><span class="s3">:</span>
+                <span class="s2">for </span><span class="s1">b </span><span class="s2">in </span><span class="s1">bases</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">b</span><span class="s3">, </span><span class="s1">ann_name</span><span class="s3">):</span>
+                        <span class="s2">if not </span><span class="s3">(</span><span class="s1">issubclass</span><span class="s3">(</span><span class="s1">b</span><span class="s3">, </span><span class="s1">BaseModel</span><span class="s3">) </span><span class="s2">and </span><span class="s1">ann_name </span><span class="s2">in </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">b</span><span class="s3">, </span><span class="s5">'__pydantic_fields__'</span><span class="s3">, {})):</span>
+                            <span class="s2">raise </span><span class="s1">NameError</span><span class="s3">(</span>
+                                <span class="s5">f'Field &quot;</span><span class="s2">{</span><span class="s1">ann_name</span><span class="s2">}</span><span class="s5">&quot; conflicts with member </span><span class="s2">{</span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">b</span><span class="s3">, </span><span class="s1">ann_name</span><span class="s3">)</span><span class="s2">}</span><span class="s5">'</span>
+                                <span class="s5">f' of protected namespace &quot;</span><span class="s2">{</span><span class="s1">protected_namespace</span><span class="s2">}</span><span class="s5">&quot;.'</span>
+                            <span class="s3">)</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">valid_namespaces </span><span class="s3">= ()</span>
+                    <span class="s2">for </span><span class="s1">pn </span><span class="s2">in </span><span class="s1">config_wrapper</span><span class="s3">.</span><span class="s1">protected_namespaces</span><span class="s3">:</span>
+                        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">pn</span><span class="s3">, </span><span class="s1">Pattern</span><span class="s3">):</span>
+                            <span class="s2">if not </span><span class="s1">pn</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s1">ann_name</span><span class="s3">):</span>
+                                <span class="s1">valid_namespaces </span><span class="s3">+= (</span><span class="s5">f're.compile(</span><span class="s2">{</span><span class="s1">pn</span><span class="s3">.</span><span class="s1">pattern</span><span class="s2">}</span><span class="s5">)'</span><span class="s3">,)</span>
+                        <span class="s2">else</span><span class="s3">:</span>
+                            <span class="s2">if not </span><span class="s1">ann_name</span><span class="s3">.</span><span class="s1">startswith</span><span class="s3">(</span><span class="s1">pn</span><span class="s3">):</span>
+                                <span class="s1">valid_namespaces </span><span class="s3">+= (</span><span class="s1">pn</span><span class="s3">,)</span>
+
+                    <span class="s1">warnings</span><span class="s3">.</span><span class="s1">warn</span><span class="s3">(</span>
+                        <span class="s5">f'Field &quot;</span><span class="s2">{</span><span class="s1">ann_name</span><span class="s2">}</span><span class="s5">&quot; in </span><span class="s2">{</span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__name__</span><span class="s2">} </span><span class="s5">has conflict with protected namespace &quot;</span><span class="s2">{</span><span class="s1">protected_namespace</span><span class="s2">}</span><span class="s5">&quot;.'</span>
+                        <span class="s5">'</span><span class="s2">\n\n</span><span class="s5">You may be able to resolve this warning by setting'</span>
+                        <span class="s5">f&quot; `model_config['protected_namespaces'] = </span><span class="s2">{</span><span class="s1">valid_namespaces</span><span class="s2">}</span><span class="s5">`.&quot;</span><span class="s3">,</span>
+                        <span class="s1">UserWarning</span><span class="s3">,</span>
+                    <span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">_typing_extra</span><span class="s3">.</span><span class="s1">is_classvar_annotation</span><span class="s3">(</span><span class="s1">ann_type</span><span class="s3">):</span>
+            <span class="s1">class_vars</span><span class="s3">.</span><span class="s1">add</span><span class="s3">(</span><span class="s1">ann_name</span><span class="s3">)</span>
+            <span class="s2">continue</span>
+
+        <span class="s1">assigned_value </span><span class="s3">= </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">ann_name</span><span class="s3">, </span><span class="s1">PydanticUndefined</span><span class="s3">)</span>
+
+        <span class="s2">if not </span><span class="s1">is_valid_field_name</span><span class="s3">(</span><span class="s1">ann_name</span><span class="s3">):</span>
+            <span class="s2">continue</span>
+        <span class="s2">if </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__pydantic_root_model__ </span><span class="s2">and </span><span class="s1">ann_name </span><span class="s3">!= </span><span class="s5">'root'</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">NameError</span><span class="s3">(</span>
+                <span class="s5">f&quot;Unexpected field with name </span><span class="s2">{</span><span class="s1">ann_name</span><span class="s2">!r}</span><span class="s5">; only 'root' is allowed as a field of a `RootModel`&quot;</span>
+            <span class="s3">)</span>
+
+        <span class="s4"># when building a generic model with `MyModel[int]`, the generic_origin check makes sure we don't get</span>
+        <span class="s4"># &quot;... shadows an attribute&quot; warnings</span>
+        <span class="s1">generic_origin </span><span class="s3">= </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s5">'__pydantic_generic_metadata__'</span><span class="s3">, {}).</span><span class="s1">get</span><span class="s3">(</span><span class="s5">'origin'</span><span class="s3">)</span>
+        <span class="s2">for </span><span class="s1">base </span><span class="s2">in </span><span class="s1">bases</span><span class="s3">:</span>
+            <span class="s1">dataclass_fields </span><span class="s3">= {</span>
+                <span class="s1">field</span><span class="s3">.</span><span class="s1">name </span><span class="s2">for </span><span class="s1">field </span><span class="s2">in </span><span class="s3">(</span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">fields</span><span class="s3">(</span><span class="s1">base</span><span class="s3">) </span><span class="s2">if </span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">is_dataclass</span><span class="s3">(</span><span class="s1">base</span><span class="s3">) </span><span class="s2">else </span><span class="s3">())</span>
+            <span class="s3">}</span>
+            <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">base</span><span class="s3">, </span><span class="s1">ann_name</span><span class="s3">):</span>
+                <span class="s2">if </span><span class="s1">base </span><span class="s2">is </span><span class="s1">generic_origin</span><span class="s3">:</span>
+                    <span class="s4"># Don't warn when &quot;shadowing&quot; of attributes in parametrized generics</span>
+                    <span class="s2">continue</span>
+
+                <span class="s2">if </span><span class="s1">ann_name </span><span class="s2">in </span><span class="s1">dataclass_fields</span><span class="s3">:</span>
+                    <span class="s4"># Don't warn when inheriting stdlib dataclasses whose fields are &quot;shadowed&quot; by defaults being set</span>
+                    <span class="s4"># on the class instance.</span>
+                    <span class="s2">continue</span>
+
+                <span class="s2">if </span><span class="s1">ann_name </span><span class="s2">not in </span><span class="s1">annotations</span><span class="s3">:</span>
+                    <span class="s4"># Don't warn when a field exists in a parent class but has not been defined in the current class</span>
+                    <span class="s2">continue</span>
+
+                <span class="s1">warnings</span><span class="s3">.</span><span class="s1">warn</span><span class="s3">(</span>
+                    <span class="s5">f'Field name &quot;</span><span class="s2">{</span><span class="s1">ann_name</span><span class="s2">}</span><span class="s5">&quot; in &quot;</span><span class="s2">{</span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__qualname__</span><span class="s2">}</span><span class="s5">&quot; shadows an attribute in parent '</span>
+                    <span class="s5">f'&quot;</span><span class="s2">{</span><span class="s1">base</span><span class="s3">.</span><span class="s1">__qualname__</span><span class="s2">}</span><span class="s5">&quot;'</span><span class="s3">,</span>
+                    <span class="s1">UserWarning</span><span class="s3">,</span>
+                <span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s1">assigned_value </span><span class="s2">is </span><span class="s1">PydanticUndefined</span><span class="s3">:  </span><span class="s4"># no assignment, just a plain annotation</span>
+            <span class="s2">if </span><span class="s1">ann_name </span><span class="s2">in </span><span class="s1">annotations </span><span class="s2">or </span><span class="s1">ann_name </span><span class="s2">not in </span><span class="s1">parent_fields_lookup</span><span class="s3">:</span>
+                <span class="s4"># field is either:</span>
+                <span class="s4"># - present in the current model's annotations (and *not* from parent classes)</span>
+                <span class="s4"># - not found on any base classes; this seems to be caused by fields bot getting</span>
+                <span class="s4">#   generated due to models not being fully defined while initializing recursive models.</span>
+                <span class="s4">#   Nothing stops us from just creating a `FieldInfo` for this type hint, so we do this.</span>
+                <span class="s1">field_info </span><span class="s3">= </span><span class="s1">FieldInfo_</span><span class="s3">.</span><span class="s1">from_annotation</span><span class="s3">(</span><span class="s1">ann_type</span><span class="s3">, </span><span class="s1">_source</span><span class="s3">=</span><span class="s1">AnnotationSource</span><span class="s3">.</span><span class="s1">CLASS</span><span class="s3">)</span>
+                <span class="s2">if not </span><span class="s1">evaluated</span><span class="s3">:</span>
+                    <span class="s1">field_info</span><span class="s3">.</span><span class="s1">_complete </span><span class="s3">= </span><span class="s2">False</span>
+                    <span class="s4"># Store the original annotation that should be used to rebuild</span>
+                    <span class="s4"># the field info later:</span>
+                    <span class="s1">field_info</span><span class="s3">.</span><span class="s1">_original_annotation </span><span class="s3">= </span><span class="s1">ann_type</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s4"># The field was present on one of the (possibly multiple) base classes</span>
+                <span class="s4"># copy the field to make sure typevar substitutions don't cause issues with the base classes</span>
+                <span class="s1">field_info </span><span class="s3">= </span><span class="s1">copy</span><span class="s3">(</span><span class="s1">parent_fields_lookup</span><span class="s3">[</span><span class="s1">ann_name</span><span class="s3">])</span>
+
+        <span class="s2">else</span><span class="s3">:  </span><span class="s4"># An assigned value is present (either the default value, or a `Field()` function)</span>
+            <span class="s1">_warn_on_nested_alias_in_annotation</span><span class="s3">(</span><span class="s1">ann_type</span><span class="s3">, </span><span class="s1">ann_name</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">assigned_value</span><span class="s3">, </span><span class="s1">FieldInfo_</span><span class="s3">) </span><span class="s2">and </span><span class="s1">ismethoddescriptor</span><span class="s3">(</span><span class="s1">assigned_value</span><span class="s3">.</span><span class="s1">default</span><span class="s3">):</span>
+                <span class="s4"># `assigned_value` was fetched using `getattr`, which triggers a call to `__get__`</span>
+                <span class="s4"># for descriptors, so we do the same if the `= field(default=...)` form is used.</span>
+                <span class="s4"># Note that we only do this for method descriptors for now, we might want to</span>
+                <span class="s4"># extend this to any descriptor in the future (by simply checking for</span>
+                <span class="s4"># `hasattr(assigned_value.default, '__get__')`).</span>
+                <span class="s1">assigned_value</span><span class="s3">.</span><span class="s1">default </span><span class="s3">= </span><span class="s1">assigned_value</span><span class="s3">.</span><span class="s1">default</span><span class="s3">.</span><span class="s1">__get__</span><span class="s3">(</span><span class="s2">None</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">)</span>
+
+            <span class="s4"># The `from_annotated_attribute()` call below mutates the assigned `Field()`, so make a copy:</span>
+            <span class="s1">original_assignment </span><span class="s3">= (</span>
+                <span class="s1">copy</span><span class="s3">(</span><span class="s1">assigned_value</span><span class="s3">) </span><span class="s2">if not </span><span class="s1">evaluated </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">assigned_value</span><span class="s3">, </span><span class="s1">FieldInfo_</span><span class="s3">) </span><span class="s2">else </span><span class="s1">assigned_value</span>
+            <span class="s3">)</span>
+
+            <span class="s1">field_info </span><span class="s3">= </span><span class="s1">FieldInfo_</span><span class="s3">.</span><span class="s1">from_annotated_attribute</span><span class="s3">(</span><span class="s1">ann_type</span><span class="s3">, </span><span class="s1">assigned_value</span><span class="s3">, </span><span class="s1">_source</span><span class="s3">=</span><span class="s1">AnnotationSource</span><span class="s3">.</span><span class="s1">CLASS</span><span class="s3">)</span>
+            <span class="s2">if not </span><span class="s1">evaluated</span><span class="s3">:</span>
+                <span class="s1">field_info</span><span class="s3">.</span><span class="s1">_complete </span><span class="s3">= </span><span class="s2">False</span>
+                <span class="s4"># Store the original annotation and assignment value that should be used to rebuild</span>
+                <span class="s4"># the field info later:</span>
+                <span class="s1">field_info</span><span class="s3">.</span><span class="s1">_original_annotation </span><span class="s3">= </span><span class="s1">ann_type</span>
+                <span class="s1">field_info</span><span class="s3">.</span><span class="s1">_original_assignment </span><span class="s3">= </span><span class="s1">original_assignment</span>
+            <span class="s2">elif </span><span class="s5">'final' </span><span class="s2">in </span><span class="s1">field_info</span><span class="s3">.</span><span class="s1">_qualifiers </span><span class="s2">and not </span><span class="s1">field_info</span><span class="s3">.</span><span class="s1">is_required</span><span class="s3">():</span>
+                <span class="s1">warnings</span><span class="s3">.</span><span class="s1">warn</span><span class="s3">(</span>
+                    <span class="s5">f'Annotation </span><span class="s2">{</span><span class="s1">ann_name</span><span class="s2">!r} </span><span class="s5">is marked as final and has a default value. Pydantic treats </span><span class="s2">{</span><span class="s1">ann_name</span><span class="s2">!r} </span><span class="s5">as a '</span>
+                    <span class="s5">'class variable, but it will be considered as a normal field in V3 to be aligned with dataclasses. If you '</span>
+                    <span class="s5">f'still want </span><span class="s2">{</span><span class="s1">ann_name</span><span class="s2">!r} </span><span class="s5">to be considered as a class variable, annotate it as: `ClassVar[&lt;type&gt;] = &lt;default&gt;.`'</span><span class="s3">,</span>
+                    <span class="s1">category</span><span class="s3">=</span><span class="s1">PydanticDeprecatedSince211</span><span class="s3">,</span>
+                    <span class="s4"># Incorrect when `create_model` is used, but the chance that final with a default is used is low in that case:</span>
+                    <span class="s1">stacklevel</span><span class="s3">=</span><span class="s6">4</span><span class="s3">,</span>
+                <span class="s3">)</span>
+                <span class="s1">class_vars</span><span class="s3">.</span><span class="s1">add</span><span class="s3">(</span><span class="s1">ann_name</span><span class="s3">)</span>
+                <span class="s2">continue</span>
+
+            <span class="s4"># attributes which are fields are removed from the class namespace:</span>
+            <span class="s4"># 1. To match the behaviour of annotation-only fields</span>
+            <span class="s4"># 2. To avoid false positives in the NameError check above</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">delattr</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">ann_name</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">AttributeError</span><span class="s3">:</span>
+                <span class="s2">pass  </span><span class="s4"># indicates the attribute was on a parent class</span>
+
+        <span class="s4"># Use cls.__dict__['__pydantic_decorators__'] instead of cls.__pydantic_decorators__</span>
+        <span class="s4"># to make sure the decorators have already been built for this exact class</span>
+        <span class="s1">decorators</span><span class="s3">: </span><span class="s1">DecoratorInfos </span><span class="s3">= </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__dict__</span><span class="s3">[</span><span class="s5">'__pydantic_decorators__'</span><span class="s3">]</span>
+        <span class="s2">if </span><span class="s1">ann_name </span><span class="s2">in </span><span class="s1">decorators</span><span class="s3">.</span><span class="s1">computed_fields</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">TypeError</span><span class="s3">(</span>
+                <span class="s5">f'Field </span><span class="s2">{</span><span class="s1">ann_name</span><span class="s2">!r} </span><span class="s5">of class </span><span class="s2">{</span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__name__</span><span class="s2">!r} </span><span class="s5">overrides symbol of same name in a parent class. '</span>
+                <span class="s5">'This override with a computed_field is incompatible.'</span>
+            <span class="s3">)</span>
+        <span class="s1">fields</span><span class="s3">[</span><span class="s1">ann_name</span><span class="s3">] = </span><span class="s1">field_info</span>
+
+    <span class="s2">if </span><span class="s1">typevars_map</span><span class="s3">:</span>
+        <span class="s2">for </span><span class="s1">field </span><span class="s2">in </span><span class="s1">fields</span><span class="s3">.</span><span class="s1">values</span><span class="s3">():</span>
+            <span class="s2">if </span><span class="s1">field</span><span class="s3">.</span><span class="s1">_complete</span><span class="s3">:</span>
+                <span class="s1">field</span><span class="s3">.</span><span class="s1">apply_typevars_map</span><span class="s3">(</span><span class="s1">typevars_map</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">config_wrapper</span><span class="s3">.</span><span class="s1">use_attribute_docstrings</span><span class="s3">:</span>
+        <span class="s1">_update_fields_from_docstrings</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">fields</span><span class="s3">)</span>
+    <span class="s2">return </span><span class="s1">fields</span><span class="s3">, </span><span class="s1">class_vars</span>
+
+
+<span class="s2">def </span><span class="s1">_warn_on_nested_alias_in_annotation</span><span class="s3">(</span><span class="s1">ann_type</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">], </span><span class="s1">ann_name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s1">FieldInfo </span><span class="s3">= </span><span class="s1">import_cached_field_info</span><span class="s3">()</span>
+
+    <span class="s1">args </span><span class="s3">= </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">ann_type</span><span class="s3">, </span><span class="s5">'__args__'</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">args</span><span class="s3">:</span>
+        <span class="s2">for </span><span class="s1">anno_arg </span><span class="s2">in </span><span class="s1">args</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">typing_objects</span><span class="s3">.</span><span class="s1">is_annotated</span><span class="s3">(</span><span class="s1">get_origin</span><span class="s3">(</span><span class="s1">anno_arg</span><span class="s3">)):</span>
+                <span class="s2">for </span><span class="s1">anno_type_arg </span><span class="s2">in </span><span class="s1">_typing_extra</span><span class="s3">.</span><span class="s1">get_args</span><span class="s3">(</span><span class="s1">anno_arg</span><span class="s3">):</span>
+                    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">anno_type_arg</span><span class="s3">, </span><span class="s1">FieldInfo</span><span class="s3">) </span><span class="s2">and </span><span class="s1">anno_type_arg</span><span class="s3">.</span><span class="s1">alias </span><span class="s2">is not None</span><span class="s3">:</span>
+                        <span class="s1">warnings</span><span class="s3">.</span><span class="s1">warn</span><span class="s3">(</span>
+                            <span class="s5">f'`alias` specification on field &quot;</span><span class="s2">{</span><span class="s1">ann_name</span><span class="s2">}</span><span class="s5">&quot; must be set on outermost annotation to take effect.'</span><span class="s3">,</span>
+                            <span class="s1">UserWarning</span><span class="s3">,</span>
+                        <span class="s3">)</span>
+                        <span class="s2">return</span>
+
+
+<span class="s2">def </span><span class="s1">rebuild_model_fields</span><span class="s3">(</span>
+    <span class="s1">cls</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">BaseModel</span><span class="s3">],</span>
+    <span class="s3">*,</span>
+    <span class="s1">ns_resolver</span><span class="s3">: </span><span class="s1">NsResolver</span><span class="s3">,</span>
+    <span class="s1">typevars_map</span><span class="s3">: </span><span class="s1">Mapping</span><span class="s3">[</span><span class="s1">TypeVar</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">],</span>
+<span class="s3">) </span><span class="s1">-&gt; dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">FieldInfo</span><span class="s3">]:</span>
+    <span class="s0">&quot;&quot;&quot;Rebuild the (already present) model fields by trying to reevaluate annotations. 
+ 
+    This function should be called whenever a model with incomplete fields is encountered. 
+ 
+    Note: 
+        This function *doesn't* mutate the model fields in place, as it can be called during 
+        schema generation, where you don't want to mutate other model's fields. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">FieldInfo_ </span><span class="s3">= </span><span class="s1">import_cached_field_info</span><span class="s3">()</span>
+
+    <span class="s1">rebuilt_fields</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">FieldInfo</span><span class="s3">] = {}</span>
+    <span class="s2">with </span><span class="s1">ns_resolver</span><span class="s3">.</span><span class="s1">push</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">):</span>
+        <span class="s2">for </span><span class="s1">f_name</span><span class="s3">, </span><span class="s1">field_info </span><span class="s2">in </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__pydantic_fields__</span><span class="s3">.</span><span class="s1">items</span><span class="s3">():</span>
+            <span class="s2">if </span><span class="s1">field_info</span><span class="s3">.</span><span class="s1">_complete</span><span class="s3">:</span>
+                <span class="s1">rebuilt_fields</span><span class="s3">[</span><span class="s1">f_name</span><span class="s3">] = </span><span class="s1">field_info</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">ann </span><span class="s3">= </span><span class="s1">_typing_extra</span><span class="s3">.</span><span class="s1">eval_type</span><span class="s3">(</span>
+                    <span class="s1">field_info</span><span class="s3">.</span><span class="s1">_original_annotation</span><span class="s3">,</span>
+                    <span class="s3">*</span><span class="s1">ns_resolver</span><span class="s3">.</span><span class="s1">types_namespace</span><span class="s3">,</span>
+                <span class="s3">)</span>
+                <span class="s1">ann </span><span class="s3">= </span><span class="s1">_generics</span><span class="s3">.</span><span class="s1">replace_types</span><span class="s3">(</span><span class="s1">ann</span><span class="s3">, </span><span class="s1">typevars_map</span><span class="s3">)</span>
+
+                <span class="s2">if </span><span class="s3">(</span><span class="s1">assign </span><span class="s3">:= </span><span class="s1">field_info</span><span class="s3">.</span><span class="s1">_original_assignment</span><span class="s3">) </span><span class="s2">is </span><span class="s1">PydanticUndefined</span><span class="s3">:</span>
+                    <span class="s1">rebuilt_fields</span><span class="s3">[</span><span class="s1">f_name</span><span class="s3">] = </span><span class="s1">FieldInfo_</span><span class="s3">.</span><span class="s1">from_annotation</span><span class="s3">(</span><span class="s1">ann</span><span class="s3">, </span><span class="s1">_source</span><span class="s3">=</span><span class="s1">AnnotationSource</span><span class="s3">.</span><span class="s1">CLASS</span><span class="s3">)</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">rebuilt_fields</span><span class="s3">[</span><span class="s1">f_name</span><span class="s3">] = </span><span class="s1">FieldInfo_</span><span class="s3">.</span><span class="s1">from_annotated_attribute</span><span class="s3">(</span>
+                        <span class="s1">ann</span><span class="s3">, </span><span class="s1">assign</span><span class="s3">, </span><span class="s1">_source</span><span class="s3">=</span><span class="s1">AnnotationSource</span><span class="s3">.</span><span class="s1">CLASS</span>
+                    <span class="s3">)</span>
+
+    <span class="s2">return </span><span class="s1">rebuilt_fields</span>
+
+
+<span class="s2">def </span><span class="s1">collect_dataclass_fields</span><span class="s3">(</span>
+    <span class="s1">cls</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">StandardDataclass</span><span class="s3">],</span>
+    <span class="s3">*,</span>
+    <span class="s1">ns_resolver</span><span class="s3">: </span><span class="s1">NsResolver </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">typevars_map</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">config_wrapper</span><span class="s3">: </span><span class="s1">ConfigWrapper </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">FieldInfo</span><span class="s3">]:</span>
+    <span class="s0">&quot;&quot;&quot;Collect the fields of a dataclass. 
+ 
+    Args: 
+        cls: dataclass. 
+        ns_resolver: Namespace resolver to use when getting dataclass annotations. 
+            Defaults to an empty instance. 
+        typevars_map: A dictionary mapping type variables to their concrete types. 
+        config_wrapper: The config wrapper instance. 
+ 
+    Returns: 
+        The dataclass fields. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">FieldInfo_ </span><span class="s3">= </span><span class="s1">import_cached_field_info</span><span class="s3">()</span>
+
+    <span class="s1">fields</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">FieldInfo</span><span class="s3">] = {}</span>
+    <span class="s1">ns_resolver </span><span class="s3">= </span><span class="s1">ns_resolver </span><span class="s2">or </span><span class="s1">NsResolver</span><span class="s3">()</span>
+    <span class="s1">dataclass_fields </span><span class="s3">= </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__dataclass_fields__</span>
+
+    <span class="s4"># The logic here is similar to `_typing_extra.get_cls_type_hints`,</span>
+    <span class="s4"># although we do it manually as stdlib dataclasses already have annotations</span>
+    <span class="s4"># collected in each class:</span>
+    <span class="s2">for </span><span class="s1">base </span><span class="s2">in </span><span class="s1">reversed</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__mro__</span><span class="s3">):</span>
+        <span class="s2">if not </span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">is_dataclass</span><span class="s3">(</span><span class="s1">base</span><span class="s3">):</span>
+            <span class="s2">continue</span>
+
+        <span class="s2">with </span><span class="s1">ns_resolver</span><span class="s3">.</span><span class="s1">push</span><span class="s3">(</span><span class="s1">base</span><span class="s3">):</span>
+            <span class="s2">for </span><span class="s1">ann_name</span><span class="s3">, </span><span class="s1">dataclass_field </span><span class="s2">in </span><span class="s1">dataclass_fields</span><span class="s3">.</span><span class="s1">items</span><span class="s3">():</span>
+                <span class="s2">if </span><span class="s1">ann_name </span><span class="s2">not in </span><span class="s1">base</span><span class="s3">.</span><span class="s1">__dict__</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">'__annotations__'</span><span class="s3">, {}):</span>
+                    <span class="s4"># `__dataclass_fields__`contains every field, even the ones from base classes.</span>
+                    <span class="s4"># Only collect the ones defined on `base`.</span>
+                    <span class="s2">continue</span>
+
+                <span class="s1">globalns</span><span class="s3">, </span><span class="s1">localns </span><span class="s3">= </span><span class="s1">ns_resolver</span><span class="s3">.</span><span class="s1">types_namespace</span>
+                <span class="s1">ann_type</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">_typing_extra</span><span class="s3">.</span><span class="s1">try_eval_type</span><span class="s3">(</span><span class="s1">dataclass_field</span><span class="s3">.</span><span class="s1">type</span><span class="s3">, </span><span class="s1">globalns</span><span class="s3">, </span><span class="s1">localns</span><span class="s3">)</span>
+
+                <span class="s2">if </span><span class="s1">_typing_extra</span><span class="s3">.</span><span class="s1">is_classvar_annotation</span><span class="s3">(</span><span class="s1">ann_type</span><span class="s3">):</span>
+                    <span class="s2">continue</span>
+
+                <span class="s2">if </span><span class="s3">(</span>
+                    <span class="s2">not </span><span class="s1">dataclass_field</span><span class="s3">.</span><span class="s1">init</span>
+                    <span class="s2">and </span><span class="s1">dataclass_field</span><span class="s3">.</span><span class="s1">default </span><span class="s2">is </span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">MISSING</span>
+                    <span class="s2">and </span><span class="s1">dataclass_field</span><span class="s3">.</span><span class="s1">default_factory </span><span class="s2">is </span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">MISSING</span>
+                <span class="s3">):</span>
+                    <span class="s4"># TODO: We should probably do something with this so that validate_assignment behaves properly</span>
+                    <span class="s4">#   Issue: https://github.com/pydantic/pydantic/issues/5470</span>
+                    <span class="s2">continue</span>
+
+                <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">dataclass_field</span><span class="s3">.</span><span class="s1">default</span><span class="s3">, </span><span class="s1">FieldInfo_</span><span class="s3">):</span>
+                    <span class="s2">if </span><span class="s1">dataclass_field</span><span class="s3">.</span><span class="s1">default</span><span class="s3">.</span><span class="s1">init_var</span><span class="s3">:</span>
+                        <span class="s2">if </span><span class="s1">dataclass_field</span><span class="s3">.</span><span class="s1">default</span><span class="s3">.</span><span class="s1">init </span><span class="s2">is False</span><span class="s3">:</span>
+                            <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+                                <span class="s5">f'Dataclass field </span><span class="s2">{</span><span class="s1">ann_name</span><span class="s2">} </span><span class="s5">has init=False and init_var=True, but these are mutually exclusive.'</span><span class="s3">,</span>
+                                <span class="s1">code</span><span class="s3">=</span><span class="s5">'clashing-init-and-init-var'</span><span class="s3">,</span>
+                            <span class="s3">)</span>
+
+                        <span class="s4"># TODO: same note as above re validate_assignment</span>
+                        <span class="s2">continue</span>
+                    <span class="s1">field_info </span><span class="s3">= </span><span class="s1">FieldInfo_</span><span class="s3">.</span><span class="s1">from_annotated_attribute</span><span class="s3">(</span>
+                        <span class="s1">ann_type</span><span class="s3">, </span><span class="s1">dataclass_field</span><span class="s3">.</span><span class="s1">default</span><span class="s3">, </span><span class="s1">_source</span><span class="s3">=</span><span class="s1">AnnotationSource</span><span class="s3">.</span><span class="s1">DATACLASS</span>
+                    <span class="s3">)</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">field_info </span><span class="s3">= </span><span class="s1">FieldInfo_</span><span class="s3">.</span><span class="s1">from_annotated_attribute</span><span class="s3">(</span>
+                        <span class="s1">ann_type</span><span class="s3">, </span><span class="s1">dataclass_field</span><span class="s3">, </span><span class="s1">_source</span><span class="s3">=</span><span class="s1">AnnotationSource</span><span class="s3">.</span><span class="s1">DATACLASS</span>
+                    <span class="s3">)</span>
+
+                <span class="s1">fields</span><span class="s3">[</span><span class="s1">ann_name</span><span class="s3">] = </span><span class="s1">field_info</span>
+
+                <span class="s2">if </span><span class="s1">field_info</span><span class="s3">.</span><span class="s1">default </span><span class="s2">is not </span><span class="s1">PydanticUndefined </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span>
+                    <span class="s1">getattr</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">ann_name</span><span class="s3">, </span><span class="s1">field_info</span><span class="s3">), </span><span class="s1">FieldInfo_</span>
+                <span class="s3">):</span>
+                    <span class="s4"># We need this to fix the default when the &quot;default&quot; from __dataclass_fields__ is a pydantic.FieldInfo</span>
+                    <span class="s1">setattr</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">ann_name</span><span class="s3">, </span><span class="s1">field_info</span><span class="s3">.</span><span class="s1">default</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">typevars_map</span><span class="s3">:</span>
+        <span class="s2">for </span><span class="s1">field </span><span class="s2">in </span><span class="s1">fields</span><span class="s3">.</span><span class="s1">values</span><span class="s3">():</span>
+            <span class="s4"># We don't pass any ns, as `field.annotation`</span>
+            <span class="s4"># was already evaluated. TODO: is this method relevant?</span>
+            <span class="s4"># Can't we juste use `_generics.replace_types`?</span>
+            <span class="s1">field</span><span class="s3">.</span><span class="s1">apply_typevars_map</span><span class="s3">(</span><span class="s1">typevars_map</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">config_wrapper </span><span class="s2">is not None and </span><span class="s1">config_wrapper</span><span class="s3">.</span><span class="s1">use_attribute_docstrings</span><span class="s3">:</span>
+        <span class="s1">_update_fields_from_docstrings</span><span class="s3">(</span>
+            <span class="s1">cls</span><span class="s3">,</span>
+            <span class="s1">fields</span><span class="s3">,</span>
+            <span class="s4"># We can't rely on the (more reliable) frame inspection method</span>
+            <span class="s4"># for stdlib dataclasses:</span>
+            <span class="s1">use_inspect</span><span class="s3">=</span><span class="s2">not </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s5">'__is_pydantic_dataclass__'</span><span class="s3">),</span>
+        <span class="s3">)</span>
+
+    <span class="s2">return </span><span class="s1">fields</span>
+
+
+<span class="s2">def </span><span class="s1">is_valid_field_name</span><span class="s3">(</span><span class="s1">name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s2">return not </span><span class="s1">name</span><span class="s3">.</span><span class="s1">startswith</span><span class="s3">(</span><span class="s5">'_'</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">is_valid_privateattr_name</span><span class="s3">(</span><span class="s1">name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s2">return </span><span class="s1">name</span><span class="s3">.</span><span class="s1">startswith</span><span class="s3">(</span><span class="s5">'_'</span><span class="s3">) </span><span class="s2">and not </span><span class="s1">name</span><span class="s3">.</span><span class="s1">startswith</span><span class="s3">(</span><span class="s5">'__'</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">takes_validated_data_argument</span><span class="s3">(</span>
+    <span class="s1">default_factory</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[], </span><span class="s1">Any</span><span class="s3">] | </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]], </span><span class="s1">Any</span><span class="s3">],</span>
+<span class="s3">) </span><span class="s1">-&gt; TypeIs</span><span class="s3">[</span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]], </span><span class="s1">Any</span><span class="s3">]]:</span>
+    <span class="s0">&quot;&quot;&quot;Whether the provided default factory callable has a validated data parameter.&quot;&quot;&quot;</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">sig </span><span class="s3">= </span><span class="s1">signature</span><span class="s3">(</span><span class="s1">default_factory</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s3">(</span><span class="s1">ValueError</span><span class="s3">, </span><span class="s1">TypeError</span><span class="s3">):</span>
+        <span class="s4"># `inspect.signature` might not be able to infer a signature, e.g. with C objects.</span>
+        <span class="s4"># In this case, we assume no data argument is present:</span>
+        <span class="s2">return False</span>
+
+    <span class="s1">parameters </span><span class="s3">= </span><span class="s1">list</span><span class="s3">(</span><span class="s1">sig</span><span class="s3">.</span><span class="s1">parameters</span><span class="s3">.</span><span class="s1">values</span><span class="s3">())</span>
+
+    <span class="s2">return </span><span class="s1">len</span><span class="s3">(</span><span class="s1">parameters</span><span class="s3">) == </span><span class="s6">1 </span><span class="s2">and </span><span class="s1">can_be_positional</span><span class="s3">(</span><span class="s1">parameters</span><span class="s3">[</span><span class="s6">0</span><span class="s3">]) </span><span class="s2">and </span><span class="s1">parameters</span><span class="s3">[</span><span class="s6">0</span><span class="s3">].</span><span class="s1">default </span><span class="s2">is </span><span class="s1">Parameter</span><span class="s3">.</span><span class="s1">empty</span>
+</pre>
+</body>
+</html>

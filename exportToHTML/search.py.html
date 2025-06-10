@@ -1,0 +1,197 @@
+<html>
+<head>
+<title>search.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #5f826b; font-style: italic;}
+.s4 { color: #6aab73;}
+.s5 { color: #2aacb8;}
+.s6 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+search.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">logging</span>
+<span class="s0">import </span><span class="s1">shutil</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">import </span><span class="s1">textwrap</span>
+<span class="s0">import </span><span class="s1">xmlrpc</span><span class="s2">.</span><span class="s1">client</span>
+<span class="s0">from </span><span class="s1">collections </span><span class="s0">import </span><span class="s1">OrderedDict</span>
+<span class="s0">from </span><span class="s1">optparse </span><span class="s0">import </span><span class="s1">Values</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">TYPE_CHECKING</span><span class="s2">, </span><span class="s1">Dict</span><span class="s2">, </span><span class="s1">List</span><span class="s2">, </span><span class="s1">Optional</span>
+
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_vendor</span><span class="s2">.</span><span class="s1">packaging</span><span class="s2">.</span><span class="s1">version </span><span class="s0">import </span><span class="s1">parse </span><span class="s0">as </span><span class="s1">parse_version</span>
+
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">cli</span><span class="s2">.</span><span class="s1">base_command </span><span class="s0">import </span><span class="s1">Command</span>
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">cli</span><span class="s2">.</span><span class="s1">req_command </span><span class="s0">import </span><span class="s1">SessionCommandMixin</span>
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">cli</span><span class="s2">.</span><span class="s1">status_codes </span><span class="s0">import </span><span class="s1">NO_MATCHES_FOUND</span><span class="s2">, </span><span class="s1">SUCCESS</span>
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">CommandError</span>
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">metadata </span><span class="s0">import </span><span class="s1">get_default_environment</span>
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">models</span><span class="s2">.</span><span class="s1">index </span><span class="s0">import </span><span class="s1">PyPI</span>
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">network</span><span class="s2">.</span><span class="s1">xmlrpc </span><span class="s0">import </span><span class="s1">PipXmlrpcTransport</span>
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">utils</span><span class="s2">.</span><span class="s1">logging </span><span class="s0">import </span><span class="s1">indent_log</span>
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">utils</span><span class="s2">.</span><span class="s1">misc </span><span class="s0">import </span><span class="s1">write_output</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+    <span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">TypedDict</span>
+
+    <span class="s0">class </span><span class="s1">TransformedHit</span><span class="s2">(</span><span class="s1">TypedDict</span><span class="s2">):</span>
+        <span class="s1">name</span><span class="s2">: </span><span class="s1">str</span>
+        <span class="s1">summary</span><span class="s2">: </span><span class="s1">str</span>
+        <span class="s1">versions</span><span class="s2">: </span><span class="s1">List</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]</span>
+
+
+<span class="s1">logger </span><span class="s2">= </span><span class="s1">logging</span><span class="s2">.</span><span class="s1">getLogger</span><span class="s2">(</span><span class="s1">__name__</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">SearchCommand</span><span class="s2">(</span><span class="s1">Command</span><span class="s2">, </span><span class="s1">SessionCommandMixin</span><span class="s2">):</span>
+    <span class="s3">&quot;&quot;&quot;Search for PyPI packages whose name or summary contains &lt;query&gt;.&quot;&quot;&quot;</span>
+
+    <span class="s1">usage </span><span class="s2">= </span><span class="s4">&quot;&quot;&quot; 
+      %prog [options] &lt;query&gt;&quot;&quot;&quot;</span>
+    <span class="s1">ignore_require_venv </span><span class="s2">= </span><span class="s0">True</span>
+
+    <span class="s0">def </span><span class="s1">add_options</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">cmd_opts</span><span class="s2">.</span><span class="s1">add_option</span><span class="s2">(</span>
+            <span class="s4">&quot;-i&quot;</span><span class="s2">,</span>
+            <span class="s4">&quot;--index&quot;</span><span class="s2">,</span>
+            <span class="s1">dest</span><span class="s2">=</span><span class="s4">&quot;index&quot;</span><span class="s2">,</span>
+            <span class="s1">metavar</span><span class="s2">=</span><span class="s4">&quot;URL&quot;</span><span class="s2">,</span>
+            <span class="s1">default</span><span class="s2">=</span><span class="s1">PyPI</span><span class="s2">.</span><span class="s1">pypi_url</span><span class="s2">,</span>
+            <span class="s1">help</span><span class="s2">=</span><span class="s4">&quot;Base URL of Python Package Index (default %default)&quot;</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">parser</span><span class="s2">.</span><span class="s1">insert_option_group</span><span class="s2">(</span><span class="s5">0</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cmd_opts</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">run</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">options</span><span class="s2">: </span><span class="s1">Values</span><span class="s2">, </span><span class="s1">args</span><span class="s2">: </span><span class="s1">List</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]) </span><span class="s1">-&gt; int</span><span class="s2">:</span>
+        <span class="s0">if not </span><span class="s1">args</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">CommandError</span><span class="s2">(</span><span class="s4">&quot;Missing required argument (search query).&quot;</span><span class="s2">)</span>
+        <span class="s1">query </span><span class="s2">= </span><span class="s1">args</span>
+        <span class="s1">pypi_hits </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">search</span><span class="s2">(</span><span class="s1">query</span><span class="s2">, </span><span class="s1">options</span><span class="s2">)</span>
+        <span class="s1">hits </span><span class="s2">= </span><span class="s1">transform_hits</span><span class="s2">(</span><span class="s1">pypi_hits</span><span class="s2">)</span>
+
+        <span class="s1">terminal_width </span><span class="s2">= </span><span class="s0">None</span>
+        <span class="s0">if </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">stdout</span><span class="s2">.</span><span class="s1">isatty</span><span class="s2">():</span>
+            <span class="s1">terminal_width </span><span class="s2">= </span><span class="s1">shutil</span><span class="s2">.</span><span class="s1">get_terminal_size</span><span class="s2">()[</span><span class="s5">0</span><span class="s2">]</span>
+
+        <span class="s1">print_results</span><span class="s2">(</span><span class="s1">hits</span><span class="s2">, </span><span class="s1">terminal_width</span><span class="s2">=</span><span class="s1">terminal_width</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">pypi_hits</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">SUCCESS</span>
+        <span class="s0">return </span><span class="s1">NO_MATCHES_FOUND</span>
+
+    <span class="s0">def </span><span class="s1">search</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">query</span><span class="s2">: </span><span class="s1">List</span><span class="s2">[</span><span class="s1">str</span><span class="s2">], </span><span class="s1">options</span><span class="s2">: </span><span class="s1">Values</span><span class="s2">) </span><span class="s1">-&gt; List</span><span class="s2">[</span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]]:</span>
+        <span class="s1">index_url </span><span class="s2">= </span><span class="s1">options</span><span class="s2">.</span><span class="s1">index</span>
+
+        <span class="s1">session </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">get_default_session</span><span class="s2">(</span><span class="s1">options</span><span class="s2">)</span>
+
+        <span class="s1">transport </span><span class="s2">= </span><span class="s1">PipXmlrpcTransport</span><span class="s2">(</span><span class="s1">index_url</span><span class="s2">, </span><span class="s1">session</span><span class="s2">)</span>
+        <span class="s1">pypi </span><span class="s2">= </span><span class="s1">xmlrpc</span><span class="s2">.</span><span class="s1">client</span><span class="s2">.</span><span class="s1">ServerProxy</span><span class="s2">(</span><span class="s1">index_url</span><span class="s2">, </span><span class="s1">transport</span><span class="s2">)</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">hits </span><span class="s2">= </span><span class="s1">pypi</span><span class="s2">.</span><span class="s1">search</span><span class="s2">({</span><span class="s4">&quot;name&quot;</span><span class="s2">: </span><span class="s1">query</span><span class="s2">, </span><span class="s4">&quot;summary&quot;</span><span class="s2">: </span><span class="s1">query</span><span class="s2">}, </span><span class="s4">&quot;or&quot;</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">xmlrpc</span><span class="s2">.</span><span class="s1">client</span><span class="s2">.</span><span class="s1">Fault </span><span class="s0">as </span><span class="s1">fault</span><span class="s2">:</span>
+            <span class="s1">message </span><span class="s2">= </span><span class="s4">&quot;XMLRPC request failed [code: {code}]</span><span class="s0">\n</span><span class="s4">{string}&quot;</span><span class="s2">.</span><span class="s1">format</span><span class="s2">(</span>
+                <span class="s1">code</span><span class="s2">=</span><span class="s1">fault</span><span class="s2">.</span><span class="s1">faultCode</span><span class="s2">,</span>
+                <span class="s1">string</span><span class="s2">=</span><span class="s1">fault</span><span class="s2">.</span><span class="s1">faultString</span><span class="s2">,</span>
+            <span class="s2">)</span>
+            <span class="s0">raise </span><span class="s1">CommandError</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+        <span class="s0">assert </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">hits</span><span class="s2">, </span><span class="s1">list</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">hits</span>
+
+
+<span class="s0">def </span><span class="s1">transform_hits</span><span class="s2">(</span><span class="s1">hits</span><span class="s2">: </span><span class="s1">List</span><span class="s2">[</span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]]) </span><span class="s1">-&gt; List</span><span class="s2">[</span><span class="s4">&quot;TransformedHit&quot;</span><span class="s2">]:</span>
+    <span class="s3">&quot;&quot;&quot; 
+    The list from pypi is really a list of versions. We want a list of 
+    packages with the list of versions stored inline. This converts the 
+    list from pypi into one we can use. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">packages</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s4">&quot;TransformedHit&quot;</span><span class="s2">] = </span><span class="s1">OrderedDict</span><span class="s2">()</span>
+    <span class="s0">for </span><span class="s1">hit </span><span class="s0">in </span><span class="s1">hits</span><span class="s2">:</span>
+        <span class="s1">name </span><span class="s2">= </span><span class="s1">hit</span><span class="s2">[</span><span class="s4">&quot;name&quot;</span><span class="s2">]</span>
+        <span class="s1">summary </span><span class="s2">= </span><span class="s1">hit</span><span class="s2">[</span><span class="s4">&quot;summary&quot;</span><span class="s2">]</span>
+        <span class="s1">version </span><span class="s2">= </span><span class="s1">hit</span><span class="s2">[</span><span class="s4">&quot;version&quot;</span><span class="s2">]</span>
+
+        <span class="s0">if </span><span class="s1">name </span><span class="s0">not in </span><span class="s1">packages</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">():</span>
+            <span class="s1">packages</span><span class="s2">[</span><span class="s1">name</span><span class="s2">] = {</span>
+                <span class="s4">&quot;name&quot;</span><span class="s2">: </span><span class="s1">name</span><span class="s2">,</span>
+                <span class="s4">&quot;summary&quot;</span><span class="s2">: </span><span class="s1">summary</span><span class="s2">,</span>
+                <span class="s4">&quot;versions&quot;</span><span class="s2">: [</span><span class="s1">version</span><span class="s2">],</span>
+            <span class="s2">}</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">packages</span><span class="s2">[</span><span class="s1">name</span><span class="s2">][</span><span class="s4">&quot;versions&quot;</span><span class="s2">].</span><span class="s1">append</span><span class="s2">(</span><span class="s1">version</span><span class="s2">)</span>
+
+            <span class="s6"># if this is the highest version, replace summary and score</span>
+            <span class="s0">if </span><span class="s1">version </span><span class="s2">== </span><span class="s1">highest_version</span><span class="s2">(</span><span class="s1">packages</span><span class="s2">[</span><span class="s1">name</span><span class="s2">][</span><span class="s4">&quot;versions&quot;</span><span class="s2">]):</span>
+                <span class="s1">packages</span><span class="s2">[</span><span class="s1">name</span><span class="s2">][</span><span class="s4">&quot;summary&quot;</span><span class="s2">] = </span><span class="s1">summary</span>
+
+    <span class="s0">return </span><span class="s1">list</span><span class="s2">(</span><span class="s1">packages</span><span class="s2">.</span><span class="s1">values</span><span class="s2">())</span>
+
+
+<span class="s0">def </span><span class="s1">print_dist_installation_info</span><span class="s2">(</span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">latest</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s1">env </span><span class="s2">= </span><span class="s1">get_default_environment</span><span class="s2">()</span>
+    <span class="s1">dist </span><span class="s2">= </span><span class="s1">env</span><span class="s2">.</span><span class="s1">get_distribution</span><span class="s2">(</span><span class="s1">name</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">dist </span><span class="s0">is not None</span><span class="s2">:</span>
+        <span class="s0">with </span><span class="s1">indent_log</span><span class="s2">():</span>
+            <span class="s0">if </span><span class="s1">dist</span><span class="s2">.</span><span class="s1">version </span><span class="s2">== </span><span class="s1">latest</span><span class="s2">:</span>
+                <span class="s1">write_output</span><span class="s2">(</span><span class="s4">&quot;INSTALLED: %s (latest)&quot;</span><span class="s2">, </span><span class="s1">dist</span><span class="s2">.</span><span class="s1">version</span><span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">write_output</span><span class="s2">(</span><span class="s4">&quot;INSTALLED: %s&quot;</span><span class="s2">, </span><span class="s1">dist</span><span class="s2">.</span><span class="s1">version</span><span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">parse_version</span><span class="s2">(</span><span class="s1">latest</span><span class="s2">).</span><span class="s1">pre</span><span class="s2">:</span>
+                    <span class="s1">write_output</span><span class="s2">(</span>
+                        <span class="s4">&quot;LATEST:    %s (pre-release; install&quot;</span>
+                        <span class="s4">&quot; with `pip install --pre`)&quot;</span><span class="s2">,</span>
+                        <span class="s1">latest</span><span class="s2">,</span>
+                    <span class="s2">)</span>
+                <span class="s0">else</span><span class="s2">:</span>
+                    <span class="s1">write_output</span><span class="s2">(</span><span class="s4">&quot;LATEST:    %s&quot;</span><span class="s2">, </span><span class="s1">latest</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">print_results</span><span class="s2">(</span>
+    <span class="s1">hits</span><span class="s2">: </span><span class="s1">List</span><span class="s2">[</span><span class="s4">&quot;TransformedHit&quot;</span><span class="s2">],</span>
+    <span class="s1">name_column_width</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">int</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">terminal_width</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">int</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+<span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s0">if not </span><span class="s1">hits</span><span class="s2">:</span>
+        <span class="s0">return</span>
+    <span class="s0">if </span><span class="s1">name_column_width </span><span class="s0">is None</span><span class="s2">:</span>
+        <span class="s1">name_column_width </span><span class="s2">= (</span>
+            <span class="s1">max</span><span class="s2">(</span>
+                <span class="s2">[</span>
+                    <span class="s1">len</span><span class="s2">(</span><span class="s1">hit</span><span class="s2">[</span><span class="s4">&quot;name&quot;</span><span class="s2">]) + </span><span class="s1">len</span><span class="s2">(</span><span class="s1">highest_version</span><span class="s2">(</span><span class="s1">hit</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;versions&quot;</span><span class="s2">, [</span><span class="s4">&quot;-&quot;</span><span class="s2">])))</span>
+                    <span class="s0">for </span><span class="s1">hit </span><span class="s0">in </span><span class="s1">hits</span>
+                <span class="s2">]</span>
+            <span class="s2">)</span>
+            <span class="s2">+ </span><span class="s5">4</span>
+        <span class="s2">)</span>
+
+    <span class="s0">for </span><span class="s1">hit </span><span class="s0">in </span><span class="s1">hits</span><span class="s2">:</span>
+        <span class="s1">name </span><span class="s2">= </span><span class="s1">hit</span><span class="s2">[</span><span class="s4">&quot;name&quot;</span><span class="s2">]</span>
+        <span class="s1">summary </span><span class="s2">= </span><span class="s1">hit</span><span class="s2">[</span><span class="s4">&quot;summary&quot;</span><span class="s2">] </span><span class="s0">or </span><span class="s4">&quot;&quot;</span>
+        <span class="s1">latest </span><span class="s2">= </span><span class="s1">highest_version</span><span class="s2">(</span><span class="s1">hit</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;versions&quot;</span><span class="s2">, [</span><span class="s4">&quot;-&quot;</span><span class="s2">]))</span>
+        <span class="s0">if </span><span class="s1">terminal_width </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">target_width </span><span class="s2">= </span><span class="s1">terminal_width </span><span class="s2">- </span><span class="s1">name_column_width </span><span class="s2">- </span><span class="s5">5</span>
+            <span class="s0">if </span><span class="s1">target_width </span><span class="s2">&gt; </span><span class="s5">10</span><span class="s2">:</span>
+                <span class="s6"># wrap and indent summary to fit terminal</span>
+                <span class="s1">summary_lines </span><span class="s2">= </span><span class="s1">textwrap</span><span class="s2">.</span><span class="s1">wrap</span><span class="s2">(</span><span class="s1">summary</span><span class="s2">, </span><span class="s1">target_width</span><span class="s2">)</span>
+                <span class="s1">summary </span><span class="s2">= (</span><span class="s4">&quot;</span><span class="s0">\n</span><span class="s4">&quot; </span><span class="s2">+ </span><span class="s4">&quot; &quot; </span><span class="s2">* (</span><span class="s1">name_column_width </span><span class="s2">+ </span><span class="s5">3</span><span class="s2">)).</span><span class="s1">join</span><span class="s2">(</span><span class="s1">summary_lines</span><span class="s2">)</span>
+
+        <span class="s1">name_latest </span><span class="s2">= </span><span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">name</span><span class="s0">} </span><span class="s4">(</span><span class="s0">{</span><span class="s1">latest</span><span class="s0">}</span><span class="s4">)&quot;</span>
+        <span class="s1">line </span><span class="s2">= </span><span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">name_latest</span><span class="s0">:{</span><span class="s1">name_column_width</span><span class="s0">}} </span><span class="s4">- </span><span class="s0">{</span><span class="s1">summary</span><span class="s0">}</span><span class="s4">&quot;</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">write_output</span><span class="s2">(</span><span class="s1">line</span><span class="s2">)</span>
+            <span class="s1">print_dist_installation_info</span><span class="s2">(</span><span class="s1">name</span><span class="s2">, </span><span class="s1">latest</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">UnicodeEncodeError</span><span class="s2">:</span>
+            <span class="s0">pass</span>
+
+
+<span class="s0">def </span><span class="s1">highest_version</span><span class="s2">(</span><span class="s1">versions</span><span class="s2">: </span><span class="s1">List</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+    <span class="s0">return </span><span class="s1">max</span><span class="s2">(</span><span class="s1">versions</span><span class="s2">, </span><span class="s1">key</span><span class="s2">=</span><span class="s1">parse_version</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

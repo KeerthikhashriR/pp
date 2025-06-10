@@ -1,0 +1,134 @@
+<html>
+<head>
+<title>chardetect.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+chardetect.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot; 
+Script which takes one or more file paths and reports on their detected 
+encodings 
+ 
+Example:: 
+ 
+    % chardetect somefile someotherfile 
+    somefile: windows-1252 with confidence 0.5 
+    someotherfile: ascii with confidence 1.0 
+ 
+If no paths are provided, it takes its input from stdin. 
+ 
+&quot;&quot;&quot;</span>
+
+
+<span class="s2">import </span><span class="s1">argparse</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Iterable</span><span class="s3">, </span><span class="s1">List</span><span class="s3">, </span><span class="s1">Optional</span>
+
+<span class="s2">from </span><span class="s3">.. </span><span class="s2">import </span><span class="s1">__version__</span>
+<span class="s2">from </span><span class="s3">..</span><span class="s1">universaldetector </span><span class="s2">import </span><span class="s1">UniversalDetector</span>
+
+
+<span class="s2">def </span><span class="s1">description_of</span><span class="s3">(</span>
+    <span class="s1">lines</span><span class="s3">: </span><span class="s1">Iterable</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">],</span>
+    <span class="s1">name</span><span class="s3">: </span><span class="s1">str </span><span class="s3">= </span><span class="s4">&quot;stdin&quot;</span><span class="s3">,</span>
+    <span class="s1">minimal</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+    <span class="s1">should_rename_legacy</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; Optional</span><span class="s3">[</span><span class="s1">str</span><span class="s3">]:</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Return a string describing the probable encoding of a file or 
+    list of strings. 
+ 
+    :param lines: The lines to get the encoding of. 
+    :type lines: Iterable of bytes 
+    :param name: Name of file or collection of lines 
+    :type name: str 
+    :param should_rename_legacy:  Should we rename legacy encodings to 
+                                  their more modern equivalents? 
+    :type should_rename_legacy:   ``bool`` 
+    &quot;&quot;&quot;</span>
+    <span class="s1">u </span><span class="s3">= </span><span class="s1">UniversalDetector</span><span class="s3">(</span><span class="s1">should_rename_legacy</span><span class="s3">=</span><span class="s1">should_rename_legacy</span><span class="s3">)</span>
+    <span class="s2">for </span><span class="s1">line </span><span class="s2">in </span><span class="s1">lines</span><span class="s3">:</span>
+        <span class="s1">line </span><span class="s3">= </span><span class="s1">bytearray</span><span class="s3">(</span><span class="s1">line</span><span class="s3">)</span>
+        <span class="s1">u</span><span class="s3">.</span><span class="s1">feed</span><span class="s3">(</span><span class="s1">line</span><span class="s3">)</span>
+        <span class="s5"># shortcut out of the loop to save reading further - particularly useful if we read a BOM.</span>
+        <span class="s2">if </span><span class="s1">u</span><span class="s3">.</span><span class="s1">done</span><span class="s3">:</span>
+            <span class="s2">break</span>
+    <span class="s1">u</span><span class="s3">.</span><span class="s1">close</span><span class="s3">()</span>
+    <span class="s1">result </span><span class="s3">= </span><span class="s1">u</span><span class="s3">.</span><span class="s1">result</span>
+    <span class="s2">if </span><span class="s1">minimal</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">result</span><span class="s3">[</span><span class="s4">&quot;encoding&quot;</span><span class="s3">]</span>
+    <span class="s2">if </span><span class="s1">result</span><span class="s3">[</span><span class="s4">&quot;encoding&quot;</span><span class="s3">]:</span>
+        <span class="s2">return </span><span class="s4">f'</span><span class="s2">{</span><span class="s1">name</span><span class="s2">}</span><span class="s4">: </span><span class="s2">{</span><span class="s1">result</span><span class="s3">[</span><span class="s4">&quot;encoding&quot;</span><span class="s3">]</span><span class="s2">} </span><span class="s4">with confidence </span><span class="s2">{</span><span class="s1">result</span><span class="s3">[</span><span class="s4">&quot;confidence&quot;</span><span class="s3">]</span><span class="s2">}</span><span class="s4">'</span>
+    <span class="s2">return </span><span class="s4">f&quot;</span><span class="s2">{</span><span class="s1">name</span><span class="s2">}</span><span class="s4">: no result&quot;</span>
+
+
+<span class="s2">def </span><span class="s1">main</span><span class="s3">(</span><span class="s1">argv</span><span class="s3">: </span><span class="s1">Optional</span><span class="s3">[</span><span class="s1">List</span><span class="s3">[</span><span class="s1">str</span><span class="s3">]] = </span><span class="s2">None</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Handles command line arguments and gets things started. 
+ 
+    :param argv: List of arguments, as if specified on the command-line. 
+                 If None, ``sys.argv[1:]`` is used instead. 
+    :type argv: list of str 
+    &quot;&quot;&quot;</span>
+    <span class="s5"># Get command line arguments</span>
+    <span class="s1">parser </span><span class="s3">= </span><span class="s1">argparse</span><span class="s3">.</span><span class="s1">ArgumentParser</span><span class="s3">(</span>
+        <span class="s1">description</span><span class="s3">=(</span>
+            <span class="s4">&quot;Takes one or more file paths and reports their detected encodings&quot;</span>
+        <span class="s3">)</span>
+    <span class="s3">)</span>
+    <span class="s1">parser</span><span class="s3">.</span><span class="s1">add_argument</span><span class="s3">(</span>
+        <span class="s4">&quot;input&quot;</span><span class="s3">,</span>
+        <span class="s1">help</span><span class="s3">=</span><span class="s4">&quot;File whose encoding we would like to determine. (default: stdin)&quot;</span><span class="s3">,</span>
+        <span class="s1">type</span><span class="s3">=</span><span class="s1">argparse</span><span class="s3">.</span><span class="s1">FileType</span><span class="s3">(</span><span class="s4">&quot;rb&quot;</span><span class="s3">),</span>
+        <span class="s1">nargs</span><span class="s3">=</span><span class="s4">&quot;*&quot;</span><span class="s3">,</span>
+        <span class="s1">default</span><span class="s3">=[</span><span class="s1">sys</span><span class="s3">.</span><span class="s1">stdin</span><span class="s3">.</span><span class="s1">buffer</span><span class="s3">],</span>
+    <span class="s3">)</span>
+    <span class="s1">parser</span><span class="s3">.</span><span class="s1">add_argument</span><span class="s3">(</span>
+        <span class="s4">&quot;--minimal&quot;</span><span class="s3">,</span>
+        <span class="s1">help</span><span class="s3">=</span><span class="s4">&quot;Print only the encoding to standard output&quot;</span><span class="s3">,</span>
+        <span class="s1">action</span><span class="s3">=</span><span class="s4">&quot;store_true&quot;</span><span class="s3">,</span>
+    <span class="s3">)</span>
+    <span class="s1">parser</span><span class="s3">.</span><span class="s1">add_argument</span><span class="s3">(</span>
+        <span class="s4">&quot;-l&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;--legacy&quot;</span><span class="s3">,</span>
+        <span class="s1">help</span><span class="s3">=</span><span class="s4">&quot;Rename legacy encodings to more modern ones.&quot;</span><span class="s3">,</span>
+        <span class="s1">action</span><span class="s3">=</span><span class="s4">&quot;store_true&quot;</span><span class="s3">,</span>
+    <span class="s3">)</span>
+    <span class="s1">parser</span><span class="s3">.</span><span class="s1">add_argument</span><span class="s3">(</span>
+        <span class="s4">&quot;--version&quot;</span><span class="s3">, </span><span class="s1">action</span><span class="s3">=</span><span class="s4">&quot;version&quot;</span><span class="s3">, </span><span class="s1">version</span><span class="s3">=</span><span class="s4">f&quot;%(prog)s </span><span class="s2">{</span><span class="s1">__version__</span><span class="s2">}</span><span class="s4">&quot;</span>
+    <span class="s3">)</span>
+    <span class="s1">args </span><span class="s3">= </span><span class="s1">parser</span><span class="s3">.</span><span class="s1">parse_args</span><span class="s3">(</span><span class="s1">argv</span><span class="s3">)</span>
+
+    <span class="s2">for </span><span class="s1">f </span><span class="s2">in </span><span class="s1">args</span><span class="s3">.</span><span class="s1">input</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">f</span><span class="s3">.</span><span class="s1">isatty</span><span class="s3">():</span>
+            <span class="s1">print</span><span class="s3">(</span>
+                <span class="s4">&quot;You are running chardetect interactively. Press &quot;</span>
+                <span class="s4">&quot;CTRL-D twice at the start of a blank line to signal the &quot;</span>
+                <span class="s4">&quot;end of your input. If you want help, run chardetect &quot;</span>
+                <span class="s4">&quot;--help</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s3">,</span>
+                <span class="s1">file</span><span class="s3">=</span><span class="s1">sys</span><span class="s3">.</span><span class="s1">stderr</span><span class="s3">,</span>
+            <span class="s3">)</span>
+        <span class="s1">print</span><span class="s3">(</span>
+            <span class="s1">description_of</span><span class="s3">(</span>
+                <span class="s1">f</span><span class="s3">, </span><span class="s1">f</span><span class="s3">.</span><span class="s1">name</span><span class="s3">, </span><span class="s1">minimal</span><span class="s3">=</span><span class="s1">args</span><span class="s3">.</span><span class="s1">minimal</span><span class="s3">, </span><span class="s1">should_rename_legacy</span><span class="s3">=</span><span class="s1">args</span><span class="s3">.</span><span class="s1">legacy</span>
+            <span class="s3">)</span>
+        <span class="s3">)</span>
+
+
+<span class="s2">if </span><span class="s1">__name__ </span><span class="s3">== </span><span class="s4">&quot;__main__&quot;</span><span class="s3">:</span>
+    <span class="s1">main</span><span class="s3">()</span>
+</pre>
+</body>
+</html>

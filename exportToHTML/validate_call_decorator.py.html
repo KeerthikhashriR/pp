@@ -1,0 +1,138 @@
+<html>
+<head>
+<title>validate_call_decorator.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+validate_call_decorator.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;Decorator for validating function calls.&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations </span><span class="s2">as </span><span class="s1">_annotations</span>
+
+<span class="s2">import </span><span class="s1">inspect</span>
+<span class="s2">from </span><span class="s1">functools </span><span class="s2">import </span><span class="s1">partial</span>
+<span class="s2">from </span><span class="s1">types </span><span class="s2">import </span><span class="s1">BuiltinFunctionType</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Callable</span><span class="s3">, </span><span class="s1">TypeVar</span><span class="s3">, </span><span class="s1">cast</span><span class="s3">, </span><span class="s1">overload</span>
+
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_internal </span><span class="s2">import </span><span class="s1">_generate_schema</span><span class="s3">, </span><span class="s1">_typing_extra</span><span class="s3">, </span><span class="s1">_validate_call</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">errors </span><span class="s2">import </span><span class="s1">PydanticUserError</span>
+
+<span class="s1">__all__ </span><span class="s3">= (</span><span class="s4">'validate_call'</span><span class="s3">,)</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s3">.</span><span class="s1">config </span><span class="s2">import </span><span class="s1">ConfigDict</span>
+
+    <span class="s1">AnyCallableT </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s4">'AnyCallableT'</span><span class="s3">, </span><span class="s1">bound</span><span class="s3">=</span><span class="s1">Callable</span><span class="s3">[..., </span><span class="s1">Any</span><span class="s3">])</span>
+
+
+<span class="s1">_INVALID_TYPE_ERROR_CODE </span><span class="s3">= </span><span class="s4">'validate-call-type'</span>
+
+
+<span class="s2">def </span><span class="s1">_check_function_type</span><span class="s3">(</span><span class="s1">function</span><span class="s3">: </span><span class="s1">object</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Check if the input function is a supported type for `validate_call`.&quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">function</span><span class="s3">, </span><span class="s1">_generate_schema</span><span class="s3">.</span><span class="s1">VALIDATE_CALL_SUPPORTED_TYPES</span><span class="s3">):</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">inspect</span><span class="s3">.</span><span class="s1">signature</span><span class="s3">(</span><span class="s1">cast</span><span class="s3">(</span><span class="s1">_generate_schema</span><span class="s3">.</span><span class="s1">ValidateCallSupportedTypes</span><span class="s3">, </span><span class="s1">function</span><span class="s3">))</span>
+        <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+                <span class="s4">f&quot;Input function `</span><span class="s2">{</span><span class="s1">function</span><span class="s2">}</span><span class="s4">` doesn't have a valid signature&quot;</span><span class="s3">, </span><span class="s1">code</span><span class="s3">=</span><span class="s1">_INVALID_TYPE_ERROR_CODE</span>
+            <span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">function</span><span class="s3">, </span><span class="s1">partial</span><span class="s3">):</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s2">assert not </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">partial</span><span class="s3">.</span><span class="s1">func</span><span class="s3">, </span><span class="s1">partial</span><span class="s3">), </span><span class="s4">'Partial of partial'</span>
+                <span class="s1">_check_function_type</span><span class="s3">(</span><span class="s1">function</span><span class="s3">.</span><span class="s1">func</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">PydanticUserError </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+                <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+                    <span class="s4">f'Partial of `</span><span class="s2">{</span><span class="s1">function</span><span class="s3">.</span><span class="s1">func</span><span class="s2">}</span><span class="s4">` is invalid because the type of `</span><span class="s2">{</span><span class="s1">function</span><span class="s3">.</span><span class="s1">func</span><span class="s2">}</span><span class="s4">` is not supported by `validate_call`'</span><span class="s3">,</span>
+                    <span class="s1">code</span><span class="s3">=</span><span class="s1">_INVALID_TYPE_ERROR_CODE</span><span class="s3">,</span>
+                <span class="s3">) </span><span class="s2">from </span><span class="s1">e</span>
+
+        <span class="s2">return</span>
+
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">function</span><span class="s3">, </span><span class="s1">BuiltinFunctionType</span><span class="s3">):</span>
+        <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span><span class="s4">f'Input built-in function `</span><span class="s2">{</span><span class="s1">function</span><span class="s2">}</span><span class="s4">` is not supported'</span><span class="s3">, </span><span class="s1">code</span><span class="s3">=</span><span class="s1">_INVALID_TYPE_ERROR_CODE</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">function</span><span class="s3">, (</span><span class="s1">classmethod</span><span class="s3">, </span><span class="s1">staticmethod</span><span class="s3">, </span><span class="s1">property</span><span class="s3">)):</span>
+        <span class="s1">name </span><span class="s3">= </span><span class="s1">type</span><span class="s3">(</span><span class="s1">function</span><span class="s3">).</span><span class="s1">__name__</span>
+        <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+            <span class="s4">f'The `@</span><span class="s2">{</span><span class="s1">name</span><span class="s2">}</span><span class="s4">` decorator should be applied after `@validate_call` (put `@</span><span class="s2">{</span><span class="s1">name</span><span class="s2">}</span><span class="s4">` on top)'</span><span class="s3">,</span>
+            <span class="s1">code</span><span class="s3">=</span><span class="s1">_INVALID_TYPE_ERROR_CODE</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">inspect</span><span class="s3">.</span><span class="s1">isclass</span><span class="s3">(</span><span class="s1">function</span><span class="s3">):</span>
+        <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+            <span class="s4">f'Unable to validate </span><span class="s2">{</span><span class="s1">function</span><span class="s2">}</span><span class="s4">: `validate_call` should be applied to functions, not classes (put `@validate_call` on top of `__init__` or `__new__` instead)'</span><span class="s3">,</span>
+            <span class="s1">code</span><span class="s3">=</span><span class="s1">_INVALID_TYPE_ERROR_CODE</span><span class="s3">,</span>
+        <span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">callable</span><span class="s3">(</span><span class="s1">function</span><span class="s3">):</span>
+        <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+            <span class="s4">f'Unable to validate </span><span class="s2">{</span><span class="s1">function</span><span class="s2">}</span><span class="s4">: `validate_call` should be applied to functions, not instances or other callables. Use `validate_call` explicitly on `__call__` instead.'</span><span class="s3">,</span>
+            <span class="s1">code</span><span class="s3">=</span><span class="s1">_INVALID_TYPE_ERROR_CODE</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+    <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+        <span class="s4">f'Unable to validate </span><span class="s2">{</span><span class="s1">function</span><span class="s2">}</span><span class="s4">: `validate_call` should be applied to one of the following: function, method, partial, or lambda'</span><span class="s3">,</span>
+        <span class="s1">code</span><span class="s3">=</span><span class="s1">_INVALID_TYPE_ERROR_CODE</span><span class="s3">,</span>
+    <span class="s3">)</span>
+
+
+<span class="s3">@</span><span class="s1">overload</span>
+<span class="s2">def </span><span class="s1">validate_call</span><span class="s3">(</span>
+    <span class="s3">*, </span><span class="s1">config</span><span class="s3">: </span><span class="s1">ConfigDict </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">, </span><span class="s1">validate_return</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span>
+<span class="s3">) </span><span class="s1">-&gt; Callable</span><span class="s3">[[</span><span class="s1">AnyCallableT</span><span class="s3">], </span><span class="s1">AnyCallableT</span><span class="s3">]: ...</span>
+
+
+<span class="s3">@</span><span class="s1">overload</span>
+<span class="s2">def </span><span class="s1">validate_call</span><span class="s3">(</span><span class="s1">func</span><span class="s3">: </span><span class="s1">AnyCallableT</span><span class="s3">, /) </span><span class="s1">-&gt; AnyCallableT</span><span class="s3">: ...</span>
+
+
+<span class="s2">def </span><span class="s1">validate_call</span><span class="s3">(</span>
+    <span class="s1">func</span><span class="s3">: </span><span class="s1">AnyCallableT </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s3">/,</span>
+    <span class="s3">*,</span>
+    <span class="s1">config</span><span class="s3">: </span><span class="s1">ConfigDict </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">validate_return</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; AnyCallableT </span><span class="s3">| </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">AnyCallableT</span><span class="s3">], </span><span class="s1">AnyCallableT</span><span class="s3">]:</span>
+    <span class="s0">&quot;&quot;&quot;!!! abstract &quot;Usage Documentation&quot; 
+        [Validation Decorator](../concepts/validation_decorator.md) 
+ 
+    Returns a decorated wrapper around the function that validates the arguments and, optionally, the return value. 
+ 
+    Usage may be either as a plain decorator `@validate_call` or with arguments `@validate_call(...)`. 
+ 
+    Args: 
+        func: The function to be decorated. 
+        config: The configuration dictionary. 
+        validate_return: Whether to validate the return value. 
+ 
+    Returns: 
+        The decorated function. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">parent_namespace </span><span class="s3">= </span><span class="s1">_typing_extra</span><span class="s3">.</span><span class="s1">parent_frame_namespace</span><span class="s3">()</span>
+
+    <span class="s2">def </span><span class="s1">validate</span><span class="s3">(</span><span class="s1">function</span><span class="s3">: </span><span class="s1">AnyCallableT</span><span class="s3">) </span><span class="s1">-&gt; AnyCallableT</span><span class="s3">:</span>
+        <span class="s1">_check_function_type</span><span class="s3">(</span><span class="s1">function</span><span class="s3">)</span>
+        <span class="s1">validate_call_wrapper </span><span class="s3">= </span><span class="s1">_validate_call</span><span class="s3">.</span><span class="s1">ValidateCallWrapper</span><span class="s3">(</span>
+            <span class="s1">cast</span><span class="s3">(</span><span class="s1">_generate_schema</span><span class="s3">.</span><span class="s1">ValidateCallSupportedTypes</span><span class="s3">, </span><span class="s1">function</span><span class="s3">), </span><span class="s1">config</span><span class="s3">, </span><span class="s1">validate_return</span><span class="s3">, </span><span class="s1">parent_namespace</span>
+        <span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">_validate_call</span><span class="s3">.</span><span class="s1">update_wrapper_attributes</span><span class="s3">(</span><span class="s1">function</span><span class="s3">, </span><span class="s1">validate_call_wrapper</span><span class="s3">.</span><span class="s1">__call__</span><span class="s3">)  </span><span class="s5"># type: ignore</span>
+
+    <span class="s2">if </span><span class="s1">func </span><span class="s2">is not None</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">validate</span><span class="s3">(</span><span class="s1">func</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">validate</span>
+</pre>
+</body>
+</html>

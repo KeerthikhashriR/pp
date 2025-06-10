@@ -1,0 +1,288 @@
+<html>
+<head>
+<title>ImageMorph.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #2aacb8;}
+.s5 { color: #5f826b; font-style: italic;}
+.s6 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageMorph.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># A binary morphology add-on for the Python Imaging Library</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0">#   2014-06-04 Initial version.</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 2014 Dov Grobgeld &lt;dov.grobgeld@gmail.com&gt;</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">re</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">_imagingmorph</span>
+
+<span class="s1">LUT_SIZE </span><span class="s3">= </span><span class="s4">1 </span><span class="s3">&lt;&lt; </span><span class="s4">9</span>
+
+<span class="s0"># fmt: off</span>
+<span class="s1">ROTATION_MATRIX </span><span class="s3">= [</span>
+    <span class="s4">6</span><span class="s3">, </span><span class="s4">3</span><span class="s3">, </span><span class="s4">0</span><span class="s3">,</span>
+    <span class="s4">7</span><span class="s3">, </span><span class="s4">4</span><span class="s3">, </span><span class="s4">1</span><span class="s3">,</span>
+    <span class="s4">8</span><span class="s3">, </span><span class="s4">5</span><span class="s3">, </span><span class="s4">2</span><span class="s3">,</span>
+<span class="s3">]</span>
+<span class="s1">MIRROR_MATRIX </span><span class="s3">= [</span>
+    <span class="s4">2</span><span class="s3">, </span><span class="s4">1</span><span class="s3">, </span><span class="s4">0</span><span class="s3">,</span>
+    <span class="s4">5</span><span class="s3">, </span><span class="s4">4</span><span class="s3">, </span><span class="s4">3</span><span class="s3">,</span>
+    <span class="s4">8</span><span class="s3">, </span><span class="s4">7</span><span class="s3">, </span><span class="s4">6</span><span class="s3">,</span>
+<span class="s3">]</span>
+<span class="s0"># fmt: on</span>
+
+
+<span class="s2">class </span><span class="s1">LutBuilder</span><span class="s3">:</span>
+    <span class="s5">&quot;&quot;&quot;A class for building a MorphLut from a descriptive language 
+ 
+    The input patterns is a list of a strings sequences like these:: 
+ 
+        4:(... 
+           .1. 
+           111)-&gt;1 
+ 
+    (whitespaces including linebreaks are ignored). The option 4 
+    describes a series of symmetry operations (in this case a 
+    4-rotation), the pattern is described by: 
+ 
+    - . or X - Ignore 
+    - 1 - Pixel is on 
+    - 0 - Pixel is off 
+ 
+    The result of the operation is described after &quot;-&gt;&quot; string. 
+ 
+    The default is to return the current pixel value, which is 
+    returned if no other match is found. 
+ 
+    Operations: 
+ 
+    - 4 - 4 way rotation 
+    - N - Negate 
+    - 1 - Dummy op for no other operation (an op must always be given) 
+    - M - Mirroring 
+ 
+    Example:: 
+ 
+        lb = LutBuilder(patterns = [&quot;4:(... .1. 111)-&gt;1&quot;]) 
+        lut = lb.build_lut() 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">, </span><span class="s1">patterns</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">str</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">, </span><span class="s1">op_name</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">patterns </span><span class="s2">is not None</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">patterns </span><span class="s3">= </span><span class="s1">patterns</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">patterns </span><span class="s3">= []</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">lut</span><span class="s3">: </span><span class="s1">bytearray </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s2">if </span><span class="s1">op_name </span><span class="s2">is not None</span><span class="s3">:</span>
+            <span class="s1">known_patterns </span><span class="s3">= {</span>
+                <span class="s6">&quot;corner&quot;</span><span class="s3">: [</span><span class="s6">&quot;1:(... ... ...)-&gt;0&quot;</span><span class="s3">, </span><span class="s6">&quot;4:(00. 01. ...)-&gt;1&quot;</span><span class="s3">],</span>
+                <span class="s6">&quot;dilation4&quot;</span><span class="s3">: [</span><span class="s6">&quot;4:(... .0. .1.)-&gt;1&quot;</span><span class="s3">],</span>
+                <span class="s6">&quot;dilation8&quot;</span><span class="s3">: [</span><span class="s6">&quot;4:(... .0. .1.)-&gt;1&quot;</span><span class="s3">, </span><span class="s6">&quot;4:(... .0. ..1)-&gt;1&quot;</span><span class="s3">],</span>
+                <span class="s6">&quot;erosion4&quot;</span><span class="s3">: [</span><span class="s6">&quot;4:(... .1. .0.)-&gt;0&quot;</span><span class="s3">],</span>
+                <span class="s6">&quot;erosion8&quot;</span><span class="s3">: [</span><span class="s6">&quot;4:(... .1. .0.)-&gt;0&quot;</span><span class="s3">, </span><span class="s6">&quot;4:(... .1. ..0)-&gt;0&quot;</span><span class="s3">],</span>
+                <span class="s6">&quot;edge&quot;</span><span class="s3">: [</span>
+                    <span class="s6">&quot;1:(... ... ...)-&gt;0&quot;</span><span class="s3">,</span>
+                    <span class="s6">&quot;4:(.0. .1. ...)-&gt;1&quot;</span><span class="s3">,</span>
+                    <span class="s6">&quot;4:(01. .1. ...)-&gt;1&quot;</span><span class="s3">,</span>
+                <span class="s3">],</span>
+            <span class="s3">}</span>
+            <span class="s2">if </span><span class="s1">op_name </span><span class="s2">not in </span><span class="s1">known_patterns</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s6">f&quot;Unknown pattern </span><span class="s2">{</span><span class="s1">op_name</span><span class="s2">}</span><span class="s6">!&quot;</span>
+                <span class="s2">raise </span><span class="s1">Exception</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">patterns </span><span class="s3">= </span><span class="s1">known_patterns</span><span class="s3">[</span><span class="s1">op_name</span><span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">add_patterns</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">patterns</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">str</span><span class="s3">]) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">patterns </span><span class="s3">+= </span><span class="s1">patterns</span>
+
+    <span class="s2">def </span><span class="s1">build_default_lut</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">symbols </span><span class="s3">= [</span><span class="s4">0</span><span class="s3">, </span><span class="s4">1</span><span class="s3">]</span>
+        <span class="s1">m </span><span class="s3">= </span><span class="s4">1 </span><span class="s3">&lt;&lt; </span><span class="s4">4  </span><span class="s0"># pos of current pixel</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">lut </span><span class="s3">= </span><span class="s1">bytearray</span><span class="s3">(</span><span class="s1">symbols</span><span class="s3">[(</span><span class="s1">i </span><span class="s3">&amp; </span><span class="s1">m</span><span class="s3">) &gt; </span><span class="s4">0</span><span class="s3">] </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">LUT_SIZE</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">get_lut</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; bytearray </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">lut</span>
+
+    <span class="s2">def </span><span class="s1">_string_permute</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">pattern</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, </span><span class="s1">permutation</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">int</span><span class="s3">]) </span><span class="s1">-&gt; str</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot;string_permute takes a pattern and a permutation and returns the 
+        string permuted according to the permutation list. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">assert </span><span class="s1">len</span><span class="s3">(</span><span class="s1">permutation</span><span class="s3">) == </span><span class="s4">9</span>
+        <span class="s2">return </span><span class="s6">&quot;&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">pattern</span><span class="s3">[</span><span class="s1">p</span><span class="s3">] </span><span class="s2">for </span><span class="s1">p </span><span class="s2">in </span><span class="s1">permutation</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">_pattern_permute</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">, </span><span class="s1">basic_pattern</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, </span><span class="s1">options</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, </span><span class="s1">basic_result</span><span class="s3">: </span><span class="s1">int</span>
+    <span class="s3">) </span><span class="s1">-&gt; list</span><span class="s3">[</span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]]:</span>
+        <span class="s5">&quot;&quot;&quot;pattern_permute takes a basic pattern and its result and clones 
+        the pattern according to the modifications described in the $options 
+        parameter. It returns a list of all cloned patterns.&quot;&quot;&quot;</span>
+        <span class="s1">patterns </span><span class="s3">= [(</span><span class="s1">basic_pattern</span><span class="s3">, </span><span class="s1">basic_result</span><span class="s3">)]</span>
+
+        <span class="s0"># rotations</span>
+        <span class="s2">if </span><span class="s6">&quot;4&quot; </span><span class="s2">in </span><span class="s1">options</span><span class="s3">:</span>
+            <span class="s1">res </span><span class="s3">= </span><span class="s1">patterns</span><span class="s3">[-</span><span class="s4">1</span><span class="s3">][</span><span class="s4">1</span><span class="s3">]</span>
+            <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">4</span><span class="s3">):</span>
+                <span class="s1">patterns</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span>
+                    <span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_string_permute</span><span class="s3">(</span><span class="s1">patterns</span><span class="s3">[-</span><span class="s4">1</span><span class="s3">][</span><span class="s4">0</span><span class="s3">], </span><span class="s1">ROTATION_MATRIX</span><span class="s3">), </span><span class="s1">res</span><span class="s3">)</span>
+                <span class="s3">)</span>
+        <span class="s0"># mirror</span>
+        <span class="s2">if </span><span class="s6">&quot;M&quot; </span><span class="s2">in </span><span class="s1">options</span><span class="s3">:</span>
+            <span class="s1">n </span><span class="s3">= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">patterns</span><span class="s3">)</span>
+            <span class="s2">for </span><span class="s1">pattern</span><span class="s3">, </span><span class="s1">res </span><span class="s2">in </span><span class="s1">patterns</span><span class="s3">[:</span><span class="s1">n</span><span class="s3">]:</span>
+                <span class="s1">patterns</span><span class="s3">.</span><span class="s1">append</span><span class="s3">((</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_string_permute</span><span class="s3">(</span><span class="s1">pattern</span><span class="s3">, </span><span class="s1">MIRROR_MATRIX</span><span class="s3">), </span><span class="s1">res</span><span class="s3">))</span>
+
+        <span class="s0"># negate</span>
+        <span class="s2">if </span><span class="s6">&quot;N&quot; </span><span class="s2">in </span><span class="s1">options</span><span class="s3">:</span>
+            <span class="s1">n </span><span class="s3">= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">patterns</span><span class="s3">)</span>
+            <span class="s2">for </span><span class="s1">pattern</span><span class="s3">, </span><span class="s1">res </span><span class="s2">in </span><span class="s1">patterns</span><span class="s3">[:</span><span class="s1">n</span><span class="s3">]:</span>
+                <span class="s0"># Swap 0 and 1</span>
+                <span class="s1">pattern </span><span class="s3">= </span><span class="s1">pattern</span><span class="s3">.</span><span class="s1">replace</span><span class="s3">(</span><span class="s6">&quot;0&quot;</span><span class="s3">, </span><span class="s6">&quot;Z&quot;</span><span class="s3">).</span><span class="s1">replace</span><span class="s3">(</span><span class="s6">&quot;1&quot;</span><span class="s3">, </span><span class="s6">&quot;0&quot;</span><span class="s3">).</span><span class="s1">replace</span><span class="s3">(</span><span class="s6">&quot;Z&quot;</span><span class="s3">, </span><span class="s6">&quot;1&quot;</span><span class="s3">)</span>
+                <span class="s1">res </span><span class="s3">= </span><span class="s4">1 </span><span class="s3">- </span><span class="s1">int</span><span class="s3">(</span><span class="s1">res</span><span class="s3">)</span>
+                <span class="s1">patterns</span><span class="s3">.</span><span class="s1">append</span><span class="s3">((</span><span class="s1">pattern</span><span class="s3">, </span><span class="s1">res</span><span class="s3">))</span>
+
+        <span class="s2">return </span><span class="s1">patterns</span>
+
+    <span class="s2">def </span><span class="s1">build_lut</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; bytearray</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot;Compile all patterns into a morphology lut. 
+ 
+        TBD :Build based on (file) morphlut:modify_lut 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">build_default_lut</span><span class="s3">()</span>
+        <span class="s2">assert </span><span class="s1">self</span><span class="s3">.</span><span class="s1">lut </span><span class="s2">is not None</span>
+        <span class="s1">patterns </span><span class="s3">= []</span>
+
+        <span class="s0"># Parse and create symmetries of the patterns strings</span>
+        <span class="s2">for </span><span class="s1">p </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">patterns</span><span class="s3">:</span>
+            <span class="s1">m </span><span class="s3">= </span><span class="s1">re</span><span class="s3">.</span><span class="s1">search</span><span class="s3">(</span><span class="s6">r&quot;(\w*):?\s*\((.+?)\)\s*-&gt;\s*(\d)&quot;</span><span class="s3">, </span><span class="s1">p</span><span class="s3">.</span><span class="s1">replace</span><span class="s3">(</span><span class="s6">&quot;</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s3">, </span><span class="s6">&quot;&quot;</span><span class="s3">))</span>
+            <span class="s2">if not </span><span class="s1">m</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s6">'Syntax error in pattern &quot;' </span><span class="s3">+ </span><span class="s1">p </span><span class="s3">+ </span><span class="s6">'&quot;'</span>
+                <span class="s2">raise </span><span class="s1">Exception</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+            <span class="s1">options </span><span class="s3">= </span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s4">1</span><span class="s3">)</span>
+            <span class="s1">pattern </span><span class="s3">= </span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s4">2</span><span class="s3">)</span>
+            <span class="s1">result </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s4">3</span><span class="s3">))</span>
+
+            <span class="s0"># Get rid of spaces</span>
+            <span class="s1">pattern </span><span class="s3">= </span><span class="s1">pattern</span><span class="s3">.</span><span class="s1">replace</span><span class="s3">(</span><span class="s6">&quot; &quot;</span><span class="s3">, </span><span class="s6">&quot;&quot;</span><span class="s3">).</span><span class="s1">replace</span><span class="s3">(</span><span class="s6">&quot;</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s3">, </span><span class="s6">&quot;&quot;</span><span class="s3">)</span>
+
+            <span class="s1">patterns </span><span class="s3">+= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_pattern_permute</span><span class="s3">(</span><span class="s1">pattern</span><span class="s3">, </span><span class="s1">options</span><span class="s3">, </span><span class="s1">result</span><span class="s3">)</span>
+
+        <span class="s0"># compile the patterns into regular expressions for speed</span>
+        <span class="s1">compiled_patterns </span><span class="s3">= []</span>
+        <span class="s2">for </span><span class="s1">pattern </span><span class="s2">in </span><span class="s1">patterns</span><span class="s3">:</span>
+            <span class="s1">p </span><span class="s3">= </span><span class="s1">pattern</span><span class="s3">[</span><span class="s4">0</span><span class="s3">].</span><span class="s1">replace</span><span class="s3">(</span><span class="s6">&quot;.&quot;</span><span class="s3">, </span><span class="s6">&quot;X&quot;</span><span class="s3">).</span><span class="s1">replace</span><span class="s3">(</span><span class="s6">&quot;X&quot;</span><span class="s3">, </span><span class="s6">&quot;[01]&quot;</span><span class="s3">)</span>
+            <span class="s1">compiled_patterns</span><span class="s3">.</span><span class="s1">append</span><span class="s3">((</span><span class="s1">re</span><span class="s3">.</span><span class="s1">compile</span><span class="s3">(</span><span class="s1">p</span><span class="s3">), </span><span class="s1">pattern</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]))</span>
+
+        <span class="s0"># Step through table and find patterns that match.</span>
+        <span class="s0"># Note that all the patterns are searched. The last one</span>
+        <span class="s0"># caught overrides</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">LUT_SIZE</span><span class="s3">):</span>
+            <span class="s0"># Build the bit pattern</span>
+            <span class="s1">bitpattern </span><span class="s3">= </span><span class="s1">bin</span><span class="s3">(</span><span class="s1">i</span><span class="s3">)[</span><span class="s4">2</span><span class="s3">:]</span>
+            <span class="s1">bitpattern </span><span class="s3">= (</span><span class="s6">&quot;0&quot; </span><span class="s3">* (</span><span class="s4">9 </span><span class="s3">- </span><span class="s1">len</span><span class="s3">(</span><span class="s1">bitpattern</span><span class="s3">)) + </span><span class="s1">bitpattern</span><span class="s3">)[::-</span><span class="s4">1</span><span class="s3">]</span>
+
+            <span class="s2">for </span><span class="s1">pattern</span><span class="s3">, </span><span class="s1">r </span><span class="s2">in </span><span class="s1">compiled_patterns</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s1">pattern</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s1">bitpattern</span><span class="s3">):</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">lut</span><span class="s3">[</span><span class="s1">i</span><span class="s3">] = [</span><span class="s4">0</span><span class="s3">, </span><span class="s4">1</span><span class="s3">][</span><span class="s1">r</span><span class="s3">]</span>
+
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">lut</span>
+
+
+<span class="s2">class </span><span class="s1">MorphOp</span><span class="s3">:</span>
+    <span class="s5">&quot;&quot;&quot;A class for binary morphological operators&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">lut</span><span class="s3">: </span><span class="s1">bytearray </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">op_name</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">patterns</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">str</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot;Create a binary morphological operator&quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">lut </span><span class="s3">= </span><span class="s1">lut</span>
+        <span class="s2">if </span><span class="s1">op_name </span><span class="s2">is not None</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">lut </span><span class="s3">= </span><span class="s1">LutBuilder</span><span class="s3">(</span><span class="s1">op_name</span><span class="s3">=</span><span class="s1">op_name</span><span class="s3">).</span><span class="s1">build_lut</span><span class="s3">()</span>
+        <span class="s2">elif </span><span class="s1">patterns </span><span class="s2">is not None</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">lut </span><span class="s3">= </span><span class="s1">LutBuilder</span><span class="s3">(</span><span class="s1">patterns</span><span class="s3">=</span><span class="s1">patterns</span><span class="s3">).</span><span class="s1">build_lut</span><span class="s3">()</span>
+
+    <span class="s2">def </span><span class="s1">apply</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">]:</span>
+        <span class="s5">&quot;&quot;&quot;Run a single morphological operation on an image 
+ 
+        Returns a tuple of the number of changed pixels and the 
+        morphed image&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">lut </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;No operator loaded&quot;</span>
+            <span class="s2">raise </span><span class="s1">Exception</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">!= </span><span class="s6">&quot;L&quot;</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;Image mode must be L&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">outimage </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">new</span><span class="s3">(</span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">, </span><span class="s1">image</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)</span>
+        <span class="s1">count </span><span class="s3">= </span><span class="s1">_imagingmorph</span><span class="s3">.</span><span class="s1">apply</span><span class="s3">(</span><span class="s1">bytes</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">lut</span><span class="s3">), </span><span class="s1">image</span><span class="s3">.</span><span class="s1">getim</span><span class="s3">(), </span><span class="s1">outimage</span><span class="s3">.</span><span class="s1">getim</span><span class="s3">())</span>
+        <span class="s2">return </span><span class="s1">count</span><span class="s3">, </span><span class="s1">outimage</span>
+
+    <span class="s2">def </span><span class="s1">match</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; list</span><span class="s3">[</span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]]:</span>
+        <span class="s5">&quot;&quot;&quot;Get a list of coordinates matching the morphological operation on 
+        an image. 
+ 
+        Returns a list of tuples of (x,y) coordinates 
+        of all matching pixels. See :ref:`coordinate-system`.&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">lut </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;No operator loaded&quot;</span>
+            <span class="s2">raise </span><span class="s1">Exception</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">!= </span><span class="s6">&quot;L&quot;</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;Image mode must be L&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">_imagingmorph</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s1">bytes</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">lut</span><span class="s3">), </span><span class="s1">image</span><span class="s3">.</span><span class="s1">getim</span><span class="s3">())</span>
+
+    <span class="s2">def </span><span class="s1">get_on_pixels</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; list</span><span class="s3">[</span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]]:</span>
+        <span class="s5">&quot;&quot;&quot;Get a list of all turned on pixels in a binary image 
+ 
+        Returns a list of tuples of (x,y) coordinates 
+        of all matching pixels. See :ref:`coordinate-system`.&quot;&quot;&quot;</span>
+
+        <span class="s2">if </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">!= </span><span class="s6">&quot;L&quot;</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;Image mode must be L&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">_imagingmorph</span><span class="s3">.</span><span class="s1">get_on_pixels</span><span class="s3">(</span><span class="s1">image</span><span class="s3">.</span><span class="s1">getim</span><span class="s3">())</span>
+
+    <span class="s2">def </span><span class="s1">load_lut</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot;Load an operator from an mrl file&quot;&quot;&quot;</span>
+        <span class="s2">with </span><span class="s1">open</span><span class="s3">(</span><span class="s1">filename</span><span class="s3">, </span><span class="s6">&quot;rb&quot;</span><span class="s3">) </span><span class="s2">as </span><span class="s1">f</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">lut </span><span class="s3">= </span><span class="s1">bytearray</span><span class="s3">(</span><span class="s1">f</span><span class="s3">.</span><span class="s1">read</span><span class="s3">())</span>
+
+        <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">lut</span><span class="s3">) != </span><span class="s1">LUT_SIZE</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">lut </span><span class="s3">= </span><span class="s2">None</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;Wrong size operator file!&quot;</span>
+            <span class="s2">raise </span><span class="s1">Exception</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">save_lut</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot;Save an operator to an mrl file&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">lut </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;No operator loaded&quot;</span>
+            <span class="s2">raise </span><span class="s1">Exception</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s2">with </span><span class="s1">open</span><span class="s3">(</span><span class="s1">filename</span><span class="s3">, </span><span class="s6">&quot;wb&quot;</span><span class="s3">) </span><span class="s2">as </span><span class="s1">f</span><span class="s3">:</span>
+            <span class="s1">f</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">lut</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">set_lut</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">lut</span><span class="s3">: </span><span class="s1">bytearray </span><span class="s3">| </span><span class="s2">None</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot;Set the lut from an external source&quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">lut </span><span class="s3">= </span><span class="s1">lut</span>
+</pre>
+</body>
+</html>

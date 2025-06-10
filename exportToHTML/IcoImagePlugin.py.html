@@ -1,0 +1,405 @@
+<html>
+<head>
+<title>IcoImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #a5c261;}
+.s5 { color: #6aab73;}
+.s6 { color: #2aacb8;}
+.s7 { color: #5f826b; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+IcoImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># Windows Icon support for PIL</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0">#       96-05-27 fl     Created</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) Secret Labs AB 1997.</span>
+<span class="s0"># Copyright (c) Fredrik Lundh 1996.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s0"># This plugin is a refactored version of Win32IconImagePlugin by Bryan Davis</span>
+<span class="s0"># &lt;casadebender@gmail.com&gt;.</span>
+<span class="s0"># https://code.google.com/archive/p/casadebender/wikis/Win32IconImagePlugin.wiki</span>
+<span class="s0">#</span>
+<span class="s0"># Icon format references:</span>
+<span class="s0">#   * https://en.wikipedia.org/wiki/ICO_(file_format)</span>
+<span class="s0">#   * https://msdn.microsoft.com/en-us/library/ms997538.aspx</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">warnings</span>
+<span class="s2">from </span><span class="s1">io </span><span class="s2">import </span><span class="s1">BytesIO</span>
+<span class="s2">from </span><span class="s1">math </span><span class="s2">import </span><span class="s1">ceil</span><span class="s3">, </span><span class="s1">log</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">IO</span><span class="s3">, </span><span class="s1">NamedTuple</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">BmpImagePlugin</span><span class="s3">, </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">ImageFile</span><span class="s3">, </span><span class="s1">PngImagePlugin</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">i16le </span><span class="s2">as </span><span class="s1">i16</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">i32le </span><span class="s2">as </span><span class="s1">i32</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">o8</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">o16le </span><span class="s2">as </span><span class="s1">o16</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">o32le </span><span class="s2">as </span><span class="s1">o32</span>
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+
+<span class="s1">_MAGIC </span><span class="s3">= </span><span class="s4">b&quot;</span><span class="s2">\0\0\1\0</span><span class="s4">&quot;</span>
+
+
+<span class="s2">def </span><span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">_MAGIC</span><span class="s3">)  </span><span class="s0"># (2+2)</span>
+    <span class="s1">bmp </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;bitmap_format&quot;</span><span class="s3">) == </span><span class="s5">&quot;bmp&quot;</span>
+    <span class="s1">sizes </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span>
+        <span class="s5">&quot;sizes&quot;</span><span class="s3">,</span>
+        <span class="s3">[(</span><span class="s6">16</span><span class="s3">, </span><span class="s6">16</span><span class="s3">), (</span><span class="s6">24</span><span class="s3">, </span><span class="s6">24</span><span class="s3">), (</span><span class="s6">32</span><span class="s3">, </span><span class="s6">32</span><span class="s3">), (</span><span class="s6">48</span><span class="s3">, </span><span class="s6">48</span><span class="s3">), (</span><span class="s6">64</span><span class="s3">, </span><span class="s6">64</span><span class="s3">), (</span><span class="s6">128</span><span class="s3">, </span><span class="s6">128</span><span class="s3">), (</span><span class="s6">256</span><span class="s3">, </span><span class="s6">256</span><span class="s3">)],</span>
+    <span class="s3">)</span>
+    <span class="s1">frames </span><span class="s3">= []</span>
+    <span class="s1">provided_ims </span><span class="s3">= [</span><span class="s1">im</span><span class="s3">] + </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">&quot;append_images&quot;</span><span class="s3">, [])</span>
+    <span class="s1">width</span><span class="s3">, </span><span class="s1">height </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span>
+    <span class="s2">for </span><span class="s1">size </span><span class="s2">in </span><span class="s1">sorted</span><span class="s3">(</span><span class="s1">set</span><span class="s3">(</span><span class="s1">sizes</span><span class="s3">)):</span>
+        <span class="s2">if </span><span class="s1">size</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] &gt; </span><span class="s1">width </span><span class="s2">or </span><span class="s1">size</span><span class="s3">[</span><span class="s6">1</span><span class="s3">] &gt; </span><span class="s1">height </span><span class="s2">or </span><span class="s1">size</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] &gt; </span><span class="s6">256 </span><span class="s2">or </span><span class="s1">size</span><span class="s3">[</span><span class="s6">1</span><span class="s3">] &gt; </span><span class="s6">256</span><span class="s3">:</span>
+            <span class="s2">continue</span>
+
+        <span class="s2">for </span><span class="s1">provided_im </span><span class="s2">in </span><span class="s1">provided_ims</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">provided_im</span><span class="s3">.</span><span class="s1">size </span><span class="s3">!= </span><span class="s1">size</span><span class="s3">:</span>
+                <span class="s2">continue</span>
+            <span class="s1">frames</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">provided_im</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">bmp</span><span class="s3">:</span>
+                <span class="s1">bits </span><span class="s3">= </span><span class="s1">BmpImagePlugin</span><span class="s3">.</span><span class="s1">SAVE</span><span class="s3">[</span><span class="s1">provided_im</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">][</span><span class="s6">1</span><span class="s3">]</span>
+                <span class="s1">bits_used </span><span class="s3">= [</span><span class="s1">bits</span><span class="s3">]</span>
+                <span class="s2">for </span><span class="s1">other_im </span><span class="s2">in </span><span class="s1">provided_ims</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s1">other_im</span><span class="s3">.</span><span class="s1">size </span><span class="s3">!= </span><span class="s1">size</span><span class="s3">:</span>
+                        <span class="s2">continue</span>
+                    <span class="s1">bits </span><span class="s3">= </span><span class="s1">BmpImagePlugin</span><span class="s3">.</span><span class="s1">SAVE</span><span class="s3">[</span><span class="s1">other_im</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">][</span><span class="s6">1</span><span class="s3">]</span>
+                    <span class="s2">if </span><span class="s1">bits </span><span class="s2">not in </span><span class="s1">bits_used</span><span class="s3">:</span>
+                        <span class="s0"># Another image has been supplied for this size</span>
+                        <span class="s0"># with a different bit depth</span>
+                        <span class="s1">frames</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">other_im</span><span class="s3">)</span>
+                        <span class="s1">bits_used</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">bits</span><span class="s3">)</span>
+            <span class="s2">break</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s0"># TODO: invent a more convenient method for proportional scalings</span>
+            <span class="s1">frame </span><span class="s3">= </span><span class="s1">provided_im</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+            <span class="s1">frame</span><span class="s3">.</span><span class="s1">thumbnail</span><span class="s3">(</span><span class="s1">size</span><span class="s3">, </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Resampling</span><span class="s3">.</span><span class="s1">LANCZOS</span><span class="s3">, </span><span class="s1">reducing_gap</span><span class="s3">=</span><span class="s2">None</span><span class="s3">)</span>
+            <span class="s1">frames</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">frame</span><span class="s3">)</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">o16</span><span class="s3">(</span><span class="s1">len</span><span class="s3">(</span><span class="s1">frames</span><span class="s3">)))  </span><span class="s0"># idCount(2)</span>
+    <span class="s1">offset </span><span class="s3">= </span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">() + </span><span class="s1">len</span><span class="s3">(</span><span class="s1">frames</span><span class="s3">) * </span><span class="s6">16</span>
+    <span class="s2">for </span><span class="s1">frame </span><span class="s2">in </span><span class="s1">frames</span><span class="s3">:</span>
+        <span class="s1">width</span><span class="s3">, </span><span class="s1">height </span><span class="s3">= </span><span class="s1">frame</span><span class="s3">.</span><span class="s1">size</span>
+        <span class="s0"># 0 means 256</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">o8</span><span class="s3">(</span><span class="s1">width </span><span class="s2">if </span><span class="s1">width </span><span class="s3">&lt; </span><span class="s6">256 </span><span class="s2">else </span><span class="s6">0</span><span class="s3">))  </span><span class="s0"># bWidth(1)</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">o8</span><span class="s3">(</span><span class="s1">height </span><span class="s2">if </span><span class="s1">height </span><span class="s3">&lt; </span><span class="s6">256 </span><span class="s2">else </span><span class="s6">0</span><span class="s3">))  </span><span class="s0"># bHeight(1)</span>
+
+        <span class="s1">bits</span><span class="s3">, </span><span class="s1">colors </span><span class="s3">= </span><span class="s1">BmpImagePlugin</span><span class="s3">.</span><span class="s1">SAVE</span><span class="s3">[</span><span class="s1">frame</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">][</span><span class="s6">1</span><span class="s3">:] </span><span class="s2">if </span><span class="s1">bmp </span><span class="s2">else </span><span class="s3">(</span><span class="s6">32</span><span class="s3">, </span><span class="s6">0</span><span class="s3">)</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">o8</span><span class="s3">(</span><span class="s1">colors</span><span class="s3">))  </span><span class="s0"># bColorCount(1)</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">b&quot;</span><span class="s2">\0</span><span class="s4">&quot;</span><span class="s3">)  </span><span class="s0"># bReserved(1)</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">b&quot;</span><span class="s2">\0\0</span><span class="s4">&quot;</span><span class="s3">)  </span><span class="s0"># wPlanes(2)</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">o16</span><span class="s3">(</span><span class="s1">bits</span><span class="s3">))  </span><span class="s0"># wBitCount(2)</span>
+
+        <span class="s1">image_io </span><span class="s3">= </span><span class="s1">BytesIO</span><span class="s3">()</span>
+        <span class="s2">if </span><span class="s1">bmp</span><span class="s3">:</span>
+            <span class="s1">frame</span><span class="s3">.</span><span class="s1">save</span><span class="s3">(</span><span class="s1">image_io</span><span class="s3">, </span><span class="s5">&quot;dib&quot;</span><span class="s3">)</span>
+
+            <span class="s2">if </span><span class="s1">bits </span><span class="s3">!= </span><span class="s6">32</span><span class="s3">:</span>
+                <span class="s1">and_mask </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">new</span><span class="s3">(</span><span class="s5">&quot;1&quot;</span><span class="s3">, </span><span class="s1">size</span><span class="s3">)</span>
+                <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_save</span><span class="s3">(</span>
+                    <span class="s1">and_mask</span><span class="s3">,</span>
+                    <span class="s1">image_io</span><span class="s3">,</span>
+                    <span class="s3">[</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s5">&quot;raw&quot;</span><span class="s3">, (</span><span class="s6">0</span><span class="s3">, </span><span class="s6">0</span><span class="s3">) + </span><span class="s1">size</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, (</span><span class="s5">&quot;1&quot;</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">))],</span>
+                <span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">frame</span><span class="s3">.</span><span class="s1">save</span><span class="s3">(</span><span class="s1">image_io</span><span class="s3">, </span><span class="s5">&quot;png&quot;</span><span class="s3">)</span>
+        <span class="s1">image_io</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s6">0</span><span class="s3">)</span>
+        <span class="s1">image_bytes </span><span class="s3">= </span><span class="s1">image_io</span><span class="s3">.</span><span class="s1">read</span><span class="s3">()</span>
+        <span class="s2">if </span><span class="s1">bmp</span><span class="s3">:</span>
+            <span class="s1">image_bytes </span><span class="s3">= </span><span class="s1">image_bytes</span><span class="s3">[:</span><span class="s6">8</span><span class="s3">] + </span><span class="s1">o32</span><span class="s3">(</span><span class="s1">height </span><span class="s3">* </span><span class="s6">2</span><span class="s3">) + </span><span class="s1">image_bytes</span><span class="s3">[</span><span class="s6">12</span><span class="s3">:]</span>
+        <span class="s1">bytes_len </span><span class="s3">= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">image_bytes</span><span class="s3">)</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">o32</span><span class="s3">(</span><span class="s1">bytes_len</span><span class="s3">))  </span><span class="s0"># dwBytesInRes(4)</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">o32</span><span class="s3">(</span><span class="s1">offset</span><span class="s3">))  </span><span class="s0"># dwImageOffset(4)</span>
+        <span class="s1">current </span><span class="s3">= </span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">()</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">offset</span><span class="s3">)</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">image_bytes</span><span class="s3">)</span>
+        <span class="s1">offset </span><span class="s3">= </span><span class="s1">offset </span><span class="s3">+ </span><span class="s1">bytes_len</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">current</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_accept</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">: </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s2">return </span><span class="s1">prefix</span><span class="s3">[:</span><span class="s6">4</span><span class="s3">] == </span><span class="s1">_MAGIC</span>
+
+
+<span class="s2">class </span><span class="s1">IconHeader</span><span class="s3">(</span><span class="s1">NamedTuple</span><span class="s3">):</span>
+    <span class="s1">width</span><span class="s3">: </span><span class="s1">int</span>
+    <span class="s1">height</span><span class="s3">: </span><span class="s1">int</span>
+    <span class="s1">nb_color</span><span class="s3">: </span><span class="s1">int</span>
+    <span class="s1">reserved</span><span class="s3">: </span><span class="s1">int</span>
+    <span class="s1">planes</span><span class="s3">: </span><span class="s1">int</span>
+    <span class="s1">bpp</span><span class="s3">: </span><span class="s1">int</span>
+    <span class="s1">size</span><span class="s3">: </span><span class="s1">int</span>
+    <span class="s1">offset</span><span class="s3">: </span><span class="s1">int</span>
+    <span class="s1">dim</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]</span>
+    <span class="s1">square</span><span class="s3">: </span><span class="s1">int</span>
+    <span class="s1">color_depth</span><span class="s3">: </span><span class="s1">int</span>
+
+
+<span class="s2">class </span><span class="s1">IcoFile</span><span class="s3">:</span>
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">buf</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">]) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s7">&quot;&quot;&quot; 
+        Parse image from file-like object containing ico file data 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0"># check magic</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">buf</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s6">6</span><span class="s3">)</span>
+        <span class="s2">if not </span><span class="s1">_accept</span><span class="s3">(</span><span class="s1">s</span><span class="s3">):</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;not an ICO file&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">buf </span><span class="s3">= </span><span class="s1">buf</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">entry </span><span class="s3">= []</span>
+
+        <span class="s0"># Number of items in file</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">nb_items </span><span class="s3">= </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">4</span><span class="s3">)</span>
+
+        <span class="s0"># Get headers for each item</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">nb_items</span><span class="s3">):</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">buf</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s6">16</span><span class="s3">)</span>
+
+            <span class="s0"># See Wikipedia</span>
+            <span class="s1">width </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] </span><span class="s2">or </span><span class="s6">256</span>
+            <span class="s1">height </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s6">1</span><span class="s3">] </span><span class="s2">or </span><span class="s6">256</span>
+
+            <span class="s0"># No. of colors in image (0 if &gt;=8bpp)</span>
+            <span class="s1">nb_color </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s6">2</span><span class="s3">]</span>
+            <span class="s1">bpp </span><span class="s3">= </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">6</span><span class="s3">)</span>
+            <span class="s1">icon_header </span><span class="s3">= </span><span class="s1">IconHeader</span><span class="s3">(</span>
+                <span class="s1">width</span><span class="s3">=</span><span class="s1">width</span><span class="s3">,</span>
+                <span class="s1">height</span><span class="s3">=</span><span class="s1">height</span><span class="s3">,</span>
+                <span class="s1">nb_color</span><span class="s3">=</span><span class="s1">nb_color</span><span class="s3">,</span>
+                <span class="s1">reserved</span><span class="s3">=</span><span class="s1">s</span><span class="s3">[</span><span class="s6">3</span><span class="s3">],</span>
+                <span class="s1">planes</span><span class="s3">=</span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">4</span><span class="s3">),</span>
+                <span class="s1">bpp</span><span class="s3">=</span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">6</span><span class="s3">),</span>
+                <span class="s1">size</span><span class="s3">=</span><span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">8</span><span class="s3">),</span>
+                <span class="s1">offset</span><span class="s3">=</span><span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">12</span><span class="s3">),</span>
+                <span class="s1">dim</span><span class="s3">=(</span><span class="s1">width</span><span class="s3">, </span><span class="s1">height</span><span class="s3">),</span>
+                <span class="s1">square</span><span class="s3">=</span><span class="s1">width </span><span class="s3">* </span><span class="s1">height</span><span class="s3">,</span>
+                <span class="s0"># See Wikipedia notes about color depth.</span>
+                <span class="s0"># We need this just to differ images with equal sizes</span>
+                <span class="s1">color_depth</span><span class="s3">=</span><span class="s1">bpp </span><span class="s2">or </span><span class="s3">(</span><span class="s1">nb_color </span><span class="s3">!= </span><span class="s6">0 </span><span class="s2">and </span><span class="s1">ceil</span><span class="s3">(</span><span class="s1">log</span><span class="s3">(</span><span class="s1">nb_color</span><span class="s3">, </span><span class="s6">2</span><span class="s3">))) </span><span class="s2">or </span><span class="s6">256</span><span class="s3">,</span>
+            <span class="s3">)</span>
+
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">entry</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">icon_header</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">entry </span><span class="s3">= </span><span class="s1">sorted</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">entry</span><span class="s3">, </span><span class="s1">key</span><span class="s3">=</span><span class="s2">lambda </span><span class="s1">x</span><span class="s3">: </span><span class="s1">x</span><span class="s3">.</span><span class="s1">color_depth</span><span class="s3">)</span>
+        <span class="s0"># ICO images are usually squares</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">entry </span><span class="s3">= </span><span class="s1">sorted</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">entry</span><span class="s3">, </span><span class="s1">key</span><span class="s3">=</span><span class="s2">lambda </span><span class="s1">x</span><span class="s3">: </span><span class="s1">x</span><span class="s3">.</span><span class="s1">square</span><span class="s3">, </span><span class="s1">reverse</span><span class="s3">=</span><span class="s2">True</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">sizes</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; set</span><span class="s3">[</span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]]:</span>
+        <span class="s7">&quot;&quot;&quot; 
+        Get a set of all available icon sizes and color depths. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s3">{(</span><span class="s1">h</span><span class="s3">.</span><span class="s1">width</span><span class="s3">, </span><span class="s1">h</span><span class="s3">.</span><span class="s1">height</span><span class="s3">) </span><span class="s2">for </span><span class="s1">h </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">entry</span><span class="s3">}</span>
+
+    <span class="s2">def </span><span class="s1">getentryindex</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">size</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">], </span><span class="s1">bpp</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">h </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">entry</span><span class="s3">):</span>
+            <span class="s2">if </span><span class="s1">size </span><span class="s3">== </span><span class="s1">h</span><span class="s3">.</span><span class="s1">dim </span><span class="s2">and </span><span class="s3">(</span><span class="s1">bpp </span><span class="s2">is False or </span><span class="s1">bpp </span><span class="s3">== </span><span class="s1">h</span><span class="s3">.</span><span class="s1">color_depth</span><span class="s3">):</span>
+                <span class="s2">return </span><span class="s1">i</span>
+        <span class="s2">return </span><span class="s6">0</span>
+
+    <span class="s2">def </span><span class="s1">getimage</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">size</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">], </span><span class="s1">bpp</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+        <span class="s7">&quot;&quot;&quot; 
+        Get an image from the icon 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">frame</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">getentryindex</span><span class="s3">(</span><span class="s1">size</span><span class="s3">, </span><span class="s1">bpp</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">frame</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">idx</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+        <span class="s7">&quot;&quot;&quot; 
+        Get an image from frame idx 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">header </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">entry</span><span class="s3">[</span><span class="s1">idx</span><span class="s3">]</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">buf</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">header</span><span class="s3">.</span><span class="s1">offset</span><span class="s3">)</span>
+        <span class="s1">data </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">buf</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s6">8</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">buf</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">header</span><span class="s3">.</span><span class="s1">offset</span><span class="s3">)</span>
+
+        <span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span>
+        <span class="s2">if </span><span class="s1">data</span><span class="s3">[:</span><span class="s6">8</span><span class="s3">] == </span><span class="s1">PngImagePlugin</span><span class="s3">.</span><span class="s1">_MAGIC</span><span class="s3">:</span>
+            <span class="s0"># png frame</span>
+            <span class="s1">im </span><span class="s3">= </span><span class="s1">PngImagePlugin</span><span class="s3">.</span><span class="s1">PngImageFile</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">buf</span><span class="s3">)</span>
+            <span class="s1">Image</span><span class="s3">.</span><span class="s1">_decompression_bomb_check</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s0"># XOR + AND mask bmp frame</span>
+            <span class="s1">im </span><span class="s3">= </span><span class="s1">BmpImagePlugin</span><span class="s3">.</span><span class="s1">DibImageFile</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">buf</span><span class="s3">)</span>
+            <span class="s1">Image</span><span class="s3">.</span><span class="s1">_decompression_bomb_check</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+
+            <span class="s0"># change tile dimension to only encompass XOR image</span>
+            <span class="s1">im</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= (</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s6">0</span><span class="s3">], </span><span class="s1">int</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s6">1</span><span class="s3">] / </span><span class="s6">2</span><span class="s3">))</span>
+            <span class="s1">d</span><span class="s3">, </span><span class="s1">e</span><span class="s3">, </span><span class="s1">o</span><span class="s3">, </span><span class="s1">a </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">tile</span><span class="s3">[</span><span class="s6">0</span><span class="s3">]</span>
+            <span class="s1">im</span><span class="s3">.</span><span class="s1">tile</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] = </span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s1">d</span><span class="s3">, (</span><span class="s6">0</span><span class="s3">, </span><span class="s6">0</span><span class="s3">) + </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">o</span><span class="s3">, </span><span class="s1">a</span><span class="s3">)</span>
+
+            <span class="s0"># figure out where AND mask image starts</span>
+            <span class="s2">if </span><span class="s1">header</span><span class="s3">.</span><span class="s1">bpp </span><span class="s3">== </span><span class="s6">32</span><span class="s3">:</span>
+                <span class="s0"># 32-bit color depth icon image allows semitransparent areas</span>
+                <span class="s0"># PIL's DIB format ignores transparency bits, recover them.</span>
+                <span class="s0"># The DIB is packed in BGRX byte order where X is the alpha</span>
+                <span class="s0"># channel.</span>
+
+                <span class="s0"># Back up to start of bmp data</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">buf</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">o</span><span class="s3">)</span>
+                <span class="s0"># extract every 4th byte (eg. 3,7,11,15,...)</span>
+                <span class="s1">alpha_bytes </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">buf</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] * </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s6">1</span><span class="s3">] * </span><span class="s6">4</span><span class="s3">)[</span><span class="s6">3</span><span class="s3">::</span><span class="s6">4</span><span class="s3">]</span>
+
+                <span class="s0"># convert to an 8bpp grayscale image</span>
+                <span class="s2">try</span><span class="s3">:</span>
+                    <span class="s1">mask </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">frombuffer</span><span class="s3">(</span>
+                        <span class="s5">&quot;L&quot;</span><span class="s3">,  </span><span class="s0"># 8bpp</span>
+                        <span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">,  </span><span class="s0"># (w, h)</span>
+                        <span class="s1">alpha_bytes</span><span class="s3">,  </span><span class="s0"># source chars</span>
+                        <span class="s5">&quot;raw&quot;</span><span class="s3">,  </span><span class="s0"># raw decoder</span>
+                        <span class="s3">(</span><span class="s5">&quot;L&quot;</span><span class="s3">, </span><span class="s6">0</span><span class="s3">, -</span><span class="s6">1</span><span class="s3">),  </span><span class="s0"># 8bpp inverted, unpadded, reversed</span>
+                    <span class="s3">)</span>
+                <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">LOAD_TRUNCATED_IMAGES</span><span class="s3">:</span>
+                        <span class="s1">mask </span><span class="s3">= </span><span class="s2">None</span>
+                    <span class="s2">else</span><span class="s3">:</span>
+                        <span class="s2">raise</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s0"># get AND image from end of bitmap</span>
+                <span class="s1">w </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s6">0</span><span class="s3">]</span>
+                <span class="s2">if </span><span class="s3">(</span><span class="s1">w </span><span class="s3">% </span><span class="s6">32</span><span class="s3">) &gt; </span><span class="s6">0</span><span class="s3">:</span>
+                    <span class="s0"># bitmap row data is aligned to word boundaries</span>
+                    <span class="s1">w </span><span class="s3">+= </span><span class="s6">32 </span><span class="s3">- (</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] % </span><span class="s6">32</span><span class="s3">)</span>
+
+                <span class="s0"># the total mask data is</span>
+                <span class="s0"># padded row size * height / bits per char</span>
+
+                <span class="s1">total_bytes </span><span class="s3">= </span><span class="s1">int</span><span class="s3">((</span><span class="s1">w </span><span class="s3">* </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s6">1</span><span class="s3">]) / </span><span class="s6">8</span><span class="s3">)</span>
+                <span class="s1">and_mask_offset </span><span class="s3">= </span><span class="s1">header</span><span class="s3">.</span><span class="s1">offset </span><span class="s3">+ </span><span class="s1">header</span><span class="s3">.</span><span class="s1">size </span><span class="s3">- </span><span class="s1">total_bytes</span>
+
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">buf</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">and_mask_offset</span><span class="s3">)</span>
+                <span class="s1">mask_data </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">buf</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s1">total_bytes</span><span class="s3">)</span>
+
+                <span class="s0"># convert raw data to image</span>
+                <span class="s2">try</span><span class="s3">:</span>
+                    <span class="s1">mask </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">frombuffer</span><span class="s3">(</span>
+                        <span class="s5">&quot;1&quot;</span><span class="s3">,  </span><span class="s0"># 1 bpp</span>
+                        <span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">,  </span><span class="s0"># (w, h)</span>
+                        <span class="s1">mask_data</span><span class="s3">,  </span><span class="s0"># source chars</span>
+                        <span class="s5">&quot;raw&quot;</span><span class="s3">,  </span><span class="s0"># raw decoder</span>
+                        <span class="s3">(</span><span class="s5">&quot;1;I&quot;</span><span class="s3">, </span><span class="s1">int</span><span class="s3">(</span><span class="s1">w </span><span class="s3">/ </span><span class="s6">8</span><span class="s3">), -</span><span class="s6">1</span><span class="s3">),  </span><span class="s0"># 1bpp inverted, padded, reversed</span>
+                    <span class="s3">)</span>
+                <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">LOAD_TRUNCATED_IMAGES</span><span class="s3">:</span>
+                        <span class="s1">mask </span><span class="s3">= </span><span class="s2">None</span>
+                    <span class="s2">else</span><span class="s3">:</span>
+                        <span class="s2">raise</span>
+
+                <span class="s0"># now we have two images, im is XOR image and mask is AND image</span>
+
+            <span class="s0"># apply mask image as alpha channel</span>
+            <span class="s2">if </span><span class="s1">mask</span><span class="s3">:</span>
+                <span class="s1">im </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s5">&quot;RGBA&quot;</span><span class="s3">)</span>
+                <span class="s1">im</span><span class="s3">.</span><span class="s1">putalpha</span><span class="s3">(</span><span class="s1">mask</span><span class="s3">)</span>
+
+        <span class="s2">return </span><span class="s1">im</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for Windows Icon files.</span>
+
+
+<span class="s2">class </span><span class="s1">IcoImageFile</span><span class="s3">(</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">ImageFile</span><span class="s3">):</span>
+    <span class="s7">&quot;&quot;&quot; 
+    PIL read-only image support for Microsoft Windows .ico files. 
+ 
+    By default the largest resolution image in the file will be loaded. This 
+    can be changed by altering the 'size' attribute before calling 'load'. 
+ 
+    The info dictionary has a key 'sizes' that is a list of the sizes available 
+    in the icon file. 
+ 
+    Handles classic, XP and Vista icon formats. 
+ 
+    When saving, PNG compression is used. Support for this was only added in 
+    Windows Vista. If you are unable to view the icon in Windows, convert the 
+    image to &quot;RGBA&quot; mode before saving. 
+ 
+    This plugin is a refactored version of Win32IconImagePlugin by Bryan Davis 
+    &lt;casadebender@gmail.com&gt;. 
+    https://code.google.com/archive/p/casadebender/wikis/Win32IconImagePlugin.wiki 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">format </span><span class="s3">= </span><span class="s5">&quot;ICO&quot;</span>
+    <span class="s1">format_description </span><span class="s3">= </span><span class="s5">&quot;Windows Icon&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">ico </span><span class="s3">= </span><span class="s1">IcoFile</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;sizes&quot;</span><span class="s3">] = </span><span class="s1">self</span><span class="s3">.</span><span class="s1">ico</span><span class="s3">.</span><span class="s1">sizes</span><span class="s3">()</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">size </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">ico</span><span class="s3">.</span><span class="s1">entry</span><span class="s3">[</span><span class="s6">0</span><span class="s3">].</span><span class="s1">dim</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">load</span><span class="s3">()</span>
+
+    <span class="s3">@</span><span class="s1">property</span>
+    <span class="s2">def </span><span class="s1">size</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_size</span>
+
+    <span class="s3">@</span><span class="s1">size</span><span class="s3">.</span><span class="s1">setter</span>
+    <span class="s2">def </span><span class="s1">size</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">value</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">value </span><span class="s2">not in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;sizes&quot;</span><span class="s3">]:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;This is not one of the allowed sizes of this image&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= </span><span class="s1">value</span>
+
+    <span class="s2">def </span><span class="s1">load</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">.</span><span class="s1">PixelAccess </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_im </span><span class="s2">is not None and </span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size </span><span class="s3">== </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">:</span>
+            <span class="s0"># Already loaded</span>
+            <span class="s2">return </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">.</span><span class="s1">load</span><span class="s3">(</span><span class="s1">self</span><span class="s3">)</span>
+        <span class="s1">im </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">ico</span><span class="s3">.</span><span class="s1">getimage</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+        <span class="s0"># if tile is PNG, it won't really be loaded yet</span>
+        <span class="s1">im</span><span class="s3">.</span><span class="s1">load</span><span class="s3">()</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">im </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">im</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span>
+        <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">palette </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette</span>
+        <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size </span><span class="s3">!= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">:</span>
+            <span class="s1">warnings</span><span class="s3">.</span><span class="s1">warn</span><span class="s3">(</span><span class="s5">&quot;Image was not the expected size&quot;</span><span class="s3">)</span>
+
+            <span class="s1">index </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">ico</span><span class="s3">.</span><span class="s1">getentryindex</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+            <span class="s1">sizes </span><span class="s3">= </span><span class="s1">list</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;sizes&quot;</span><span class="s3">])</span>
+            <span class="s1">sizes</span><span class="s3">[</span><span class="s1">index</span><span class="s3">] = </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;sizes&quot;</span><span class="s3">] = </span><span class="s1">set</span><span class="s3">(</span><span class="s1">sizes</span><span class="s3">)</span>
+
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">size </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span>
+        <span class="s2">return None</span>
+
+    <span class="s2">def </span><span class="s1">load_seek</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">pos</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s0"># Flag the ImageFile.Parser so that it</span>
+        <span class="s0"># just does all the decode at the end.</span>
+        <span class="s2">pass</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_open</span><span class="s3">(</span><span class="s1">IcoImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">IcoImageFile</span><span class="s3">, </span><span class="s1">_accept</span><span class="s3">)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_save</span><span class="s3">(</span><span class="s1">IcoImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">_save</span><span class="s3">)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_extension</span><span class="s3">(</span><span class="s1">IcoImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s5">&quot;.ico&quot;</span><span class="s3">)</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_mime</span><span class="s3">(</span><span class="s1">IcoImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s5">&quot;image/x-icon&quot;</span><span class="s3">)</span>
+</pre>
+</body>
+</html>

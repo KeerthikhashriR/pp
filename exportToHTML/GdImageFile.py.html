@@ -1,0 +1,125 @@
+<html>
+<head>
+<title>GdImageFile.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #5f826b; font-style: italic;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #bcbec4;}
+.s5 { color: #6aab73;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+GdImageFile.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># GD file handling</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1996-04-12 fl   Created</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997 by Secret Labs AB.</span>
+<span class="s0"># Copyright (c) 1996 by Fredrik Lundh.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+
+<span class="s2">&quot;&quot;&quot; 
+.. note:: 
+    This format cannot be automatically recognized, so the 
+    class is not registered for use with :py:func:`PIL.Image.open()`.  To open a 
+    gd file, use the :py:func:`PIL.GdImageFile.open()` function instead. 
+ 
+.. warning:: 
+    THE GD FORMAT IS NOT DESIGNED FOR DATA INTERCHANGE.  This 
+    implementation is provided for convenience and demonstrational 
+    purposes only. 
+&quot;&quot;&quot;</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">IO</span>
+
+<span class="s3">from </span><span class="s4">. </span><span class="s3">import </span><span class="s1">ImageFile</span><span class="s4">, </span><span class="s1">ImagePalette</span><span class="s4">, </span><span class="s1">UnidentifiedImageError</span>
+<span class="s3">from </span><span class="s4">.</span><span class="s1">_binary </span><span class="s3">import </span><span class="s1">i16be </span><span class="s3">as </span><span class="s1">i16</span>
+<span class="s3">from </span><span class="s4">.</span><span class="s1">_binary </span><span class="s3">import </span><span class="s1">i32be </span><span class="s3">as </span><span class="s1">i32</span>
+<span class="s3">from </span><span class="s4">.</span><span class="s1">_typing </span><span class="s3">import </span><span class="s1">StrOrBytesPath</span>
+
+
+<span class="s3">class </span><span class="s1">GdImageFile</span><span class="s4">(</span><span class="s1">ImageFile</span><span class="s4">.</span><span class="s1">ImageFile</span><span class="s4">):</span>
+    <span class="s2">&quot;&quot;&quot; 
+    Image plugin for the GD uncompressed format.  Note that this format 
+    is not supported by the standard :py:func:`PIL.Image.open()` function.  To use 
+    this plugin, you have to import the :py:mod:`PIL.GdImageFile` module and 
+    use the :py:func:`PIL.GdImageFile.open()` function. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">format </span><span class="s4">= </span><span class="s5">&quot;GD&quot;</span>
+    <span class="s1">format_description </span><span class="s4">= </span><span class="s5">&quot;GD uncompressed images&quot;</span>
+
+    <span class="s3">def </span><span class="s1">_open</span><span class="s4">(</span><span class="s1">self</span><span class="s4">) </span><span class="s1">-&gt; </span><span class="s3">None</span><span class="s4">:</span>
+        <span class="s0"># Header</span>
+        <span class="s3">assert </span><span class="s1">self</span><span class="s4">.</span><span class="s1">fp </span><span class="s3">is not None</span>
+
+        <span class="s1">s </span><span class="s4">= </span><span class="s1">self</span><span class="s4">.</span><span class="s1">fp</span><span class="s4">.</span><span class="s1">read</span><span class="s4">(</span><span class="s6">1037</span><span class="s4">)</span>
+
+        <span class="s3">if </span><span class="s1">i16</span><span class="s4">(</span><span class="s1">s</span><span class="s4">) </span><span class="s3">not in </span><span class="s4">[</span><span class="s6">65534</span><span class="s4">, </span><span class="s6">65535</span><span class="s4">]:</span>
+            <span class="s1">msg </span><span class="s4">= </span><span class="s5">&quot;Not a valid GD 2.x .gd file&quot;</span>
+            <span class="s3">raise </span><span class="s1">SyntaxError</span><span class="s4">(</span><span class="s1">msg</span><span class="s4">)</span>
+
+        <span class="s1">self</span><span class="s4">.</span><span class="s1">_mode </span><span class="s4">= </span><span class="s5">&quot;L&quot;  </span><span class="s0"># FIXME: &quot;P&quot;</span>
+        <span class="s1">self</span><span class="s4">.</span><span class="s1">_size </span><span class="s4">= </span><span class="s1">i16</span><span class="s4">(</span><span class="s1">s</span><span class="s4">, </span><span class="s6">2</span><span class="s4">), </span><span class="s1">i16</span><span class="s4">(</span><span class="s1">s</span><span class="s4">, </span><span class="s6">4</span><span class="s4">)</span>
+
+        <span class="s1">true_color </span><span class="s4">= </span><span class="s1">s</span><span class="s4">[</span><span class="s6">6</span><span class="s4">]</span>
+        <span class="s1">true_color_offset </span><span class="s4">= </span><span class="s6">2 </span><span class="s3">if </span><span class="s1">true_color </span><span class="s3">else </span><span class="s6">0</span>
+
+        <span class="s0"># transparency index</span>
+        <span class="s1">tindex </span><span class="s4">= </span><span class="s1">i32</span><span class="s4">(</span><span class="s1">s</span><span class="s4">, </span><span class="s6">7 </span><span class="s4">+ </span><span class="s1">true_color_offset</span><span class="s4">)</span>
+        <span class="s3">if </span><span class="s1">tindex </span><span class="s4">&lt; </span><span class="s6">256</span><span class="s4">:</span>
+            <span class="s1">self</span><span class="s4">.</span><span class="s1">info</span><span class="s4">[</span><span class="s5">&quot;transparency&quot;</span><span class="s4">] = </span><span class="s1">tindex</span>
+
+        <span class="s1">self</span><span class="s4">.</span><span class="s1">palette </span><span class="s4">= </span><span class="s1">ImagePalette</span><span class="s4">.</span><span class="s1">raw</span><span class="s4">(</span>
+            <span class="s5">&quot;XBGR&quot;</span><span class="s4">, </span><span class="s1">s</span><span class="s4">[</span><span class="s6">7 </span><span class="s4">+ </span><span class="s1">true_color_offset </span><span class="s4">+ </span><span class="s6">4 </span><span class="s4">: </span><span class="s6">7 </span><span class="s4">+ </span><span class="s1">true_color_offset </span><span class="s4">+ </span><span class="s6">4 </span><span class="s4">+ </span><span class="s6">256 </span><span class="s4">* </span><span class="s6">4</span><span class="s4">]</span>
+        <span class="s4">)</span>
+
+        <span class="s1">self</span><span class="s4">.</span><span class="s1">tile </span><span class="s4">= [</span>
+            <span class="s1">ImageFile</span><span class="s4">.</span><span class="s1">_Tile</span><span class="s4">(</span>
+                <span class="s5">&quot;raw&quot;</span><span class="s4">,</span>
+                <span class="s4">(</span><span class="s6">0</span><span class="s4">, </span><span class="s6">0</span><span class="s4">) + </span><span class="s1">self</span><span class="s4">.</span><span class="s1">size</span><span class="s4">,</span>
+                <span class="s6">7 </span><span class="s4">+ </span><span class="s1">true_color_offset </span><span class="s4">+ </span><span class="s6">4 </span><span class="s4">+ </span><span class="s6">256 </span><span class="s4">* </span><span class="s6">4</span><span class="s4">,</span>
+                <span class="s5">&quot;L&quot;</span><span class="s4">,</span>
+            <span class="s4">)</span>
+        <span class="s4">]</span>
+
+
+<span class="s3">def </span><span class="s1">open</span><span class="s4">(</span><span class="s1">fp</span><span class="s4">: </span><span class="s1">StrOrBytesPath </span><span class="s4">| </span><span class="s1">IO</span><span class="s4">[</span><span class="s1">bytes</span><span class="s4">], </span><span class="s1">mode</span><span class="s4">: </span><span class="s1">str </span><span class="s4">= </span><span class="s5">&quot;r&quot;</span><span class="s4">) </span><span class="s1">-&gt; GdImageFile</span><span class="s4">:</span>
+    <span class="s2">&quot;&quot;&quot; 
+    Load texture from a GD image file. 
+ 
+    :param fp: GD file name, or an opened file handle. 
+    :param mode: Optional mode.  In this version, if the mode argument 
+        is given, it must be &quot;r&quot;. 
+    :returns: An image instance. 
+    :raises OSError: If the image could not be read. 
+    &quot;&quot;&quot;</span>
+    <span class="s3">if </span><span class="s1">mode </span><span class="s4">!= </span><span class="s5">&quot;r&quot;</span><span class="s4">:</span>
+        <span class="s1">msg </span><span class="s4">= </span><span class="s5">&quot;bad mode&quot;</span>
+        <span class="s3">raise </span><span class="s1">ValueError</span><span class="s4">(</span><span class="s1">msg</span><span class="s4">)</span>
+
+    <span class="s3">try</span><span class="s4">:</span>
+        <span class="s3">return </span><span class="s1">GdImageFile</span><span class="s4">(</span><span class="s1">fp</span><span class="s4">)</span>
+    <span class="s3">except </span><span class="s1">SyntaxError </span><span class="s3">as </span><span class="s1">e</span><span class="s4">:</span>
+        <span class="s1">msg </span><span class="s4">= </span><span class="s5">&quot;cannot identify this image file&quot;</span>
+        <span class="s3">raise </span><span class="s1">UnidentifiedImageError</span><span class="s4">(</span><span class="s1">msg</span><span class="s4">) </span><span class="s3">from </span><span class="s1">e</span>
+</pre>
+</body>
+</html>

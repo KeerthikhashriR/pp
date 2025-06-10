@@ -1,0 +1,150 @@
+<html>
+<head>
+<title>terminal.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #7a7e85;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+terminal.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot; 
+    pygments.formatters.terminal 
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 
+ 
+    Formatter for terminal output with ANSI sequences. 
+ 
+    :copyright: Copyright 2006-2023 by the Pygments team, see AUTHORS. 
+    :license: BSD, see LICENSE for details. 
+&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">formatter </span><span class="s2">import </span><span class="s1">Formatter</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">token </span><span class="s2">import </span><span class="s1">Keyword</span><span class="s3">, </span><span class="s1">Name</span><span class="s3">, </span><span class="s1">Comment</span><span class="s3">, </span><span class="s1">String</span><span class="s3">, </span><span class="s1">Error</span><span class="s3">, </span><span class="s1">\</span>
+    <span class="s1">Number</span><span class="s3">, </span><span class="s1">Operator</span><span class="s3">, </span><span class="s1">Generic</span><span class="s3">, </span><span class="s1">Token</span><span class="s3">, </span><span class="s1">Whitespace</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">console </span><span class="s2">import </span><span class="s1">ansiformat</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">util </span><span class="s2">import </span><span class="s1">get_choice_opt</span>
+
+
+<span class="s1">__all__ </span><span class="s3">= [</span><span class="s4">'TerminalFormatter'</span><span class="s3">]</span>
+
+
+<span class="s5">#: Map token types to a tuple of color values for light and dark</span>
+<span class="s5">#: backgrounds.</span>
+<span class="s1">TERMINAL_COLORS </span><span class="s3">= {</span>
+    <span class="s1">Token</span><span class="s3">:              (</span><span class="s4">''</span><span class="s3">,            </span><span class="s4">''</span><span class="s3">),</span>
+
+    <span class="s1">Whitespace</span><span class="s3">:         (</span><span class="s4">'gray'</span><span class="s3">,   </span><span class="s4">'brightblack'</span><span class="s3">),</span>
+    <span class="s1">Comment</span><span class="s3">:            (</span><span class="s4">'gray'</span><span class="s3">,   </span><span class="s4">'brightblack'</span><span class="s3">),</span>
+    <span class="s1">Comment</span><span class="s3">.</span><span class="s1">Preproc</span><span class="s3">:    (</span><span class="s4">'cyan'</span><span class="s3">,        </span><span class="s4">'brightcyan'</span><span class="s3">),</span>
+    <span class="s1">Keyword</span><span class="s3">:            (</span><span class="s4">'blue'</span><span class="s3">,    </span><span class="s4">'brightblue'</span><span class="s3">),</span>
+    <span class="s1">Keyword</span><span class="s3">.</span><span class="s1">Type</span><span class="s3">:       (</span><span class="s4">'cyan'</span><span class="s3">,        </span><span class="s4">'brightcyan'</span><span class="s3">),</span>
+    <span class="s1">Operator</span><span class="s3">.</span><span class="s1">Word</span><span class="s3">:      (</span><span class="s4">'magenta'</span><span class="s3">,      </span><span class="s4">'brightmagenta'</span><span class="s3">),</span>
+    <span class="s1">Name</span><span class="s3">.</span><span class="s1">Builtin</span><span class="s3">:       (</span><span class="s4">'cyan'</span><span class="s3">,        </span><span class="s4">'brightcyan'</span><span class="s3">),</span>
+    <span class="s1">Name</span><span class="s3">.</span><span class="s1">Function</span><span class="s3">:      (</span><span class="s4">'green'</span><span class="s3">,   </span><span class="s4">'brightgreen'</span><span class="s3">),</span>
+    <span class="s1">Name</span><span class="s3">.</span><span class="s1">Namespace</span><span class="s3">:     (</span><span class="s4">'_cyan_'</span><span class="s3">,      </span><span class="s4">'_brightcyan_'</span><span class="s3">),</span>
+    <span class="s1">Name</span><span class="s3">.</span><span class="s1">Class</span><span class="s3">:         (</span><span class="s4">'_green_'</span><span class="s3">, </span><span class="s4">'_brightgreen_'</span><span class="s3">),</span>
+    <span class="s1">Name</span><span class="s3">.</span><span class="s1">Exception</span><span class="s3">:     (</span><span class="s4">'cyan'</span><span class="s3">,        </span><span class="s4">'brightcyan'</span><span class="s3">),</span>
+    <span class="s1">Name</span><span class="s3">.</span><span class="s1">Decorator</span><span class="s3">:     (</span><span class="s4">'brightblack'</span><span class="s3">,    </span><span class="s4">'gray'</span><span class="s3">),</span>
+    <span class="s1">Name</span><span class="s3">.</span><span class="s1">Variable</span><span class="s3">:      (</span><span class="s4">'red'</span><span class="s3">,     </span><span class="s4">'brightred'</span><span class="s3">),</span>
+    <span class="s1">Name</span><span class="s3">.</span><span class="s1">Constant</span><span class="s3">:      (</span><span class="s4">'red'</span><span class="s3">,     </span><span class="s4">'brightred'</span><span class="s3">),</span>
+    <span class="s1">Name</span><span class="s3">.</span><span class="s1">Attribute</span><span class="s3">:     (</span><span class="s4">'cyan'</span><span class="s3">,        </span><span class="s4">'brightcyan'</span><span class="s3">),</span>
+    <span class="s1">Name</span><span class="s3">.</span><span class="s1">Tag</span><span class="s3">:           (</span><span class="s4">'brightblue'</span><span class="s3">,        </span><span class="s4">'brightblue'</span><span class="s3">),</span>
+    <span class="s1">String</span><span class="s3">:             (</span><span class="s4">'yellow'</span><span class="s3">,       </span><span class="s4">'yellow'</span><span class="s3">),</span>
+    <span class="s1">Number</span><span class="s3">:             (</span><span class="s4">'blue'</span><span class="s3">,    </span><span class="s4">'brightblue'</span><span class="s3">),</span>
+
+    <span class="s1">Generic</span><span class="s3">.</span><span class="s1">Deleted</span><span class="s3">:    (</span><span class="s4">'brightred'</span><span class="s3">,        </span><span class="s4">'brightred'</span><span class="s3">),</span>
+    <span class="s1">Generic</span><span class="s3">.</span><span class="s1">Inserted</span><span class="s3">:   (</span><span class="s4">'green'</span><span class="s3">,  </span><span class="s4">'brightgreen'</span><span class="s3">),</span>
+    <span class="s1">Generic</span><span class="s3">.</span><span class="s1">Heading</span><span class="s3">:    (</span><span class="s4">'**'</span><span class="s3">,         </span><span class="s4">'**'</span><span class="s3">),</span>
+    <span class="s1">Generic</span><span class="s3">.</span><span class="s1">Subheading</span><span class="s3">: (</span><span class="s4">'*magenta*'</span><span class="s3">,   </span><span class="s4">'*brightmagenta*'</span><span class="s3">),</span>
+    <span class="s1">Generic</span><span class="s3">.</span><span class="s1">Prompt</span><span class="s3">:     (</span><span class="s4">'**'</span><span class="s3">,         </span><span class="s4">'**'</span><span class="s3">),</span>
+    <span class="s1">Generic</span><span class="s3">.</span><span class="s1">Error</span><span class="s3">:      (</span><span class="s4">'brightred'</span><span class="s3">,        </span><span class="s4">'brightred'</span><span class="s3">),</span>
+
+    <span class="s1">Error</span><span class="s3">:              (</span><span class="s4">'_brightred_'</span><span class="s3">,      </span><span class="s4">'_brightred_'</span><span class="s3">),</span>
+<span class="s3">}</span>
+
+
+<span class="s2">class </span><span class="s1">TerminalFormatter</span><span class="s3">(</span><span class="s1">Formatter</span><span class="s3">):</span>
+    <span class="s0">r&quot;&quot;&quot; 
+    Format tokens with ANSI color sequences, for output in a text console. 
+    Color sequences are terminated at newlines, so that paging the output 
+    works correctly. 
+ 
+    The `get_style_defs()` method doesn't do anything special since there is 
+    no support for common styles. 
+ 
+    Options accepted: 
+ 
+    `bg` 
+        Set to ``&quot;light&quot;`` or ``&quot;dark&quot;`` depending on the terminal's background 
+        (default: ``&quot;light&quot;``). 
+ 
+    `colorscheme` 
+        A dictionary mapping token types to (lightbg, darkbg) color names or 
+        ``None`` (default: ``None`` = use builtin colorscheme). 
+ 
+    `linenos` 
+        Set to ``True`` to have line numbers on the terminal output as well 
+        (default: ``False`` = no line numbers). 
+    &quot;&quot;&quot;</span>
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">'Terminal'</span>
+    <span class="s1">aliases </span><span class="s3">= [</span><span class="s4">'terminal'</span><span class="s3">, </span><span class="s4">'console'</span><span class="s3">]</span>
+    <span class="s1">filenames </span><span class="s3">= []</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">):</span>
+        <span class="s1">Formatter</span><span class="s3">.</span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">darkbg </span><span class="s3">= </span><span class="s1">get_choice_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'bg'</span><span class="s3">,</span>
+                                     <span class="s3">[</span><span class="s4">'light'</span><span class="s3">, </span><span class="s4">'dark'</span><span class="s3">], </span><span class="s4">'light'</span><span class="s3">) == </span><span class="s4">'dark'</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">colorscheme </span><span class="s3">= </span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'colorscheme'</span><span class="s3">, </span><span class="s2">None</span><span class="s3">) </span><span class="s2">or </span><span class="s1">TERMINAL_COLORS</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">linenos </span><span class="s3">= </span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'linenos'</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_lineno </span><span class="s3">= </span><span class="s6">0</span>
+
+    <span class="s2">def </span><span class="s1">format</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">tokensource</span><span class="s3">, </span><span class="s1">outfile</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">Formatter</span><span class="s3">.</span><span class="s1">format</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">tokensource</span><span class="s3">, </span><span class="s1">outfile</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">_write_lineno</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">outfile</span><span class="s3">):</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_lineno </span><span class="s3">+= </span><span class="s6">1</span>
+        <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">&quot;%s%04d: &quot; </span><span class="s3">% (</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_lineno </span><span class="s3">!= </span><span class="s6">1 </span><span class="s2">and </span><span class="s4">'</span><span class="s2">\n</span><span class="s4">' </span><span class="s2">or </span><span class="s4">''</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_lineno</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">_get_color</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">ttype</span><span class="s3">):</span>
+        <span class="s5"># self.colorscheme is a dict containing usually generic types, so we</span>
+        <span class="s5"># have to walk the tree of dots.  The base Token type must be a key,</span>
+        <span class="s5"># even if it's empty string, as in the default above.</span>
+        <span class="s1">colors </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">colorscheme</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">ttype</span><span class="s3">)</span>
+        <span class="s2">while </span><span class="s1">colors </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s1">ttype </span><span class="s3">= </span><span class="s1">ttype</span><span class="s3">.</span><span class="s1">parent</span>
+            <span class="s1">colors </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">colorscheme</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">ttype</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">colors</span><span class="s3">[</span><span class="s1">self</span><span class="s3">.</span><span class="s1">darkbg</span><span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">format_unencoded</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">tokensource</span><span class="s3">, </span><span class="s1">outfile</span><span class="s3">):</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">linenos</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_write_lineno</span><span class="s3">(</span><span class="s1">outfile</span><span class="s3">)</span>
+
+        <span class="s2">for </span><span class="s1">ttype</span><span class="s3">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">tokensource</span><span class="s3">:</span>
+            <span class="s1">color </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_get_color</span><span class="s3">(</span><span class="s1">ttype</span><span class="s3">)</span>
+
+            <span class="s2">for </span><span class="s1">line </span><span class="s2">in </span><span class="s1">value</span><span class="s3">.</span><span class="s1">splitlines</span><span class="s3">(</span><span class="s2">True</span><span class="s3">):</span>
+                <span class="s2">if </span><span class="s1">color</span><span class="s3">:</span>
+                    <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">ansiformat</span><span class="s3">(</span><span class="s1">color</span><span class="s3">, </span><span class="s1">line</span><span class="s3">.</span><span class="s1">rstrip</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">)))</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">line</span><span class="s3">.</span><span class="s1">rstrip</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">))</span>
+                <span class="s2">if </span><span class="s1">line</span><span class="s3">.</span><span class="s1">endswith</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">):</span>
+                    <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">linenos</span><span class="s3">:</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">_write_lineno</span><span class="s3">(</span><span class="s1">outfile</span><span class="s3">)</span>
+                    <span class="s2">else</span><span class="s3">:</span>
+                        <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">linenos</span><span class="s3">:</span>
+            <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">&quot;</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s3">)</span>
+</pre>
+</body>
+</html>

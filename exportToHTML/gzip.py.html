@@ -1,0 +1,165 @@
+<html>
+<head>
+<title>gzip.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8;}
+.s5 { color: #7a7e85;}
+.s6 { color: #a5c261;}
+.s7 { color: #5f826b; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+gzip.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">gzip</span>
+<span class="s0">import </span><span class="s1">io</span>
+<span class="s0">import </span><span class="s1">typing</span>
+
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">datastructures </span><span class="s0">import </span><span class="s1">Headers</span><span class="s2">, </span><span class="s1">MutableHeaders</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">ASGIApp</span><span class="s2">, </span><span class="s1">Message</span><span class="s2">, </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">Send</span>
+
+<span class="s1">DEFAULT_EXCLUDED_CONTENT_TYPES </span><span class="s2">= (</span><span class="s3">&quot;text/event-stream&quot;</span><span class="s2">,)</span>
+
+
+<span class="s0">class </span><span class="s1">GZipMiddleware</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">app</span><span class="s2">: </span><span class="s1">ASGIApp</span><span class="s2">, </span><span class="s1">minimum_size</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s4">500</span><span class="s2">, </span><span class="s1">compresslevel</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s4">9</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app </span><span class="s2">= </span><span class="s1">app</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">minimum_size </span><span class="s2">= </span><span class="s1">minimum_size</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">compresslevel </span><span class="s2">= </span><span class="s1">compresslevel</span>
+
+    <span class="s0">async def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">: </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">: </span><span class="s1">Send</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">scope</span><span class="s2">[</span><span class="s3">&quot;type&quot;</span><span class="s2">] != </span><span class="s3">&quot;http&quot;</span><span class="s2">:  </span><span class="s5"># pragma: no cover</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+            <span class="s0">return</span>
+
+        <span class="s1">headers </span><span class="s2">= </span><span class="s1">Headers</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">=</span><span class="s1">scope</span><span class="s2">)</span>
+        <span class="s1">responder</span><span class="s2">: </span><span class="s1">ASGIApp</span>
+        <span class="s0">if </span><span class="s3">&quot;gzip&quot; </span><span class="s0">in </span><span class="s1">headers</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;Accept-Encoding&quot;</span><span class="s2">, </span><span class="s3">&quot;&quot;</span><span class="s2">):</span>
+            <span class="s1">responder </span><span class="s2">= </span><span class="s1">GZipResponder</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">minimum_size</span><span class="s2">, </span><span class="s1">compresslevel</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">compresslevel</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">responder </span><span class="s2">= </span><span class="s1">IdentityResponder</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">minimum_size</span><span class="s2">)</span>
+
+        <span class="s0">await </span><span class="s1">responder</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">IdentityResponder</span><span class="s2">:</span>
+    <span class="s1">content_encoding</span><span class="s2">: </span><span class="s1">str</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">app</span><span class="s2">: </span><span class="s1">ASGIApp</span><span class="s2">, </span><span class="s1">minimum_size</span><span class="s2">: </span><span class="s1">int</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app </span><span class="s2">= </span><span class="s1">app</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">minimum_size </span><span class="s2">= </span><span class="s1">minimum_size</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">: </span><span class="s1">Send </span><span class="s2">= </span><span class="s1">unattached_send</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">initial_message</span><span class="s2">: </span><span class="s1">Message </span><span class="s2">= {}</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">started </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">content_encoding_set </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">content_type_is_excluded </span><span class="s2">= </span><span class="s0">False</span>
+
+    <span class="s0">async def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">: </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">: </span><span class="s1">Send</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">send </span><span class="s2">= </span><span class="s1">send</span>
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send_with_compression</span><span class="s2">)</span>
+
+    <span class="s0">async def </span><span class="s1">send_with_compression</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">message</span><span class="s2">: </span><span class="s1">Message</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">message_type </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s3">&quot;type&quot;</span><span class="s2">]</span>
+        <span class="s0">if </span><span class="s1">message_type </span><span class="s2">== </span><span class="s3">&quot;http.response.start&quot;</span><span class="s2">:</span>
+            <span class="s5"># Don't send the initial message until we've determined how to</span>
+            <span class="s5"># modify the outgoing headers correctly.</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">initial_message </span><span class="s2">= </span><span class="s1">message</span>
+            <span class="s1">headers </span><span class="s2">= </span><span class="s1">Headers</span><span class="s2">(</span><span class="s1">raw</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">initial_message</span><span class="s2">[</span><span class="s3">&quot;headers&quot;</span><span class="s2">])</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">content_encoding_set </span><span class="s2">= </span><span class="s3">&quot;content-encoding&quot; </span><span class="s0">in </span><span class="s1">headers</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">content_type_is_excluded </span><span class="s2">= </span><span class="s1">headers</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;content-type&quot;</span><span class="s2">, </span><span class="s3">&quot;&quot;</span><span class="s2">).</span><span class="s1">startswith</span><span class="s2">(</span><span class="s1">DEFAULT_EXCLUDED_CONTENT_TYPES</span><span class="s2">)</span>
+        <span class="s0">elif </span><span class="s1">message_type </span><span class="s2">== </span><span class="s3">&quot;http.response.body&quot; </span><span class="s0">and </span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">content_encoding_set </span><span class="s0">or </span><span class="s1">self</span><span class="s2">.</span><span class="s1">content_type_is_excluded</span><span class="s2">):</span>
+            <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">started</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">started </span><span class="s2">= </span><span class="s0">True</span>
+                <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">initial_message</span><span class="s2">)</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+        <span class="s0">elif </span><span class="s1">message_type </span><span class="s2">== </span><span class="s3">&quot;http.response.body&quot; </span><span class="s0">and not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">started</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">started </span><span class="s2">= </span><span class="s0">True</span>
+            <span class="s1">body </span><span class="s2">= </span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;body&quot;</span><span class="s2">, </span><span class="s6">b&quot;&quot;</span><span class="s2">)</span>
+            <span class="s1">more_body </span><span class="s2">= </span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;more_body&quot;</span><span class="s2">, </span><span class="s0">False</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">body</span><span class="s2">) &lt; </span><span class="s1">self</span><span class="s2">.</span><span class="s1">minimum_size </span><span class="s0">and not </span><span class="s1">more_body</span><span class="s2">:</span>
+                <span class="s5"># Don't apply compression to small outgoing responses.</span>
+                <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">initial_message</span><span class="s2">)</span>
+                <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+            <span class="s0">elif not </span><span class="s1">more_body</span><span class="s2">:</span>
+                <span class="s5"># Standard response.</span>
+                <span class="s1">body </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">apply_compression</span><span class="s2">(</span><span class="s1">body</span><span class="s2">, </span><span class="s1">more_body</span><span class="s2">=</span><span class="s0">False</span><span class="s2">)</span>
+
+                <span class="s1">headers </span><span class="s2">= </span><span class="s1">MutableHeaders</span><span class="s2">(</span><span class="s1">raw</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">initial_message</span><span class="s2">[</span><span class="s3">&quot;headers&quot;</span><span class="s2">])</span>
+                <span class="s1">headers</span><span class="s2">.</span><span class="s1">add_vary_header</span><span class="s2">(</span><span class="s3">&quot;Accept-Encoding&quot;</span><span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">body </span><span class="s2">!= </span><span class="s1">message</span><span class="s2">[</span><span class="s3">&quot;body&quot;</span><span class="s2">]:</span>
+                    <span class="s1">headers</span><span class="s2">[</span><span class="s3">&quot;Content-Encoding&quot;</span><span class="s2">] = </span><span class="s1">self</span><span class="s2">.</span><span class="s1">content_encoding</span>
+                    <span class="s1">headers</span><span class="s2">[</span><span class="s3">&quot;Content-Length&quot;</span><span class="s2">] = </span><span class="s1">str</span><span class="s2">(</span><span class="s1">len</span><span class="s2">(</span><span class="s1">body</span><span class="s2">))</span>
+                    <span class="s1">message</span><span class="s2">[</span><span class="s3">&quot;body&quot;</span><span class="s2">] = </span><span class="s1">body</span>
+
+                <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">initial_message</span><span class="s2">)</span>
+                <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s5"># Initial body in streaming response.</span>
+                <span class="s1">body </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">apply_compression</span><span class="s2">(</span><span class="s1">body</span><span class="s2">, </span><span class="s1">more_body</span><span class="s2">=</span><span class="s0">True</span><span class="s2">)</span>
+
+                <span class="s1">headers </span><span class="s2">= </span><span class="s1">MutableHeaders</span><span class="s2">(</span><span class="s1">raw</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">initial_message</span><span class="s2">[</span><span class="s3">&quot;headers&quot;</span><span class="s2">])</span>
+                <span class="s1">headers</span><span class="s2">.</span><span class="s1">add_vary_header</span><span class="s2">(</span><span class="s3">&quot;Accept-Encoding&quot;</span><span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">body </span><span class="s2">!= </span><span class="s1">message</span><span class="s2">[</span><span class="s3">&quot;body&quot;</span><span class="s2">]:</span>
+                    <span class="s1">headers</span><span class="s2">[</span><span class="s3">&quot;Content-Encoding&quot;</span><span class="s2">] = </span><span class="s1">self</span><span class="s2">.</span><span class="s1">content_encoding</span>
+                    <span class="s0">del </span><span class="s1">headers</span><span class="s2">[</span><span class="s3">&quot;Content-Length&quot;</span><span class="s2">]</span>
+                    <span class="s1">message</span><span class="s2">[</span><span class="s3">&quot;body&quot;</span><span class="s2">] = </span><span class="s1">body</span>
+
+                <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">initial_message</span><span class="s2">)</span>
+                <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+        <span class="s0">elif </span><span class="s1">message_type </span><span class="s2">== </span><span class="s3">&quot;http.response.body&quot;</span><span class="s2">:  </span><span class="s5"># pragma: no branch</span>
+            <span class="s5"># Remaining body in streaming response.</span>
+            <span class="s1">body </span><span class="s2">= </span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;body&quot;</span><span class="s2">, </span><span class="s6">b&quot;&quot;</span><span class="s2">)</span>
+            <span class="s1">more_body </span><span class="s2">= </span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;more_body&quot;</span><span class="s2">, </span><span class="s0">False</span><span class="s2">)</span>
+
+            <span class="s1">message</span><span class="s2">[</span><span class="s3">&quot;body&quot;</span><span class="s2">] = </span><span class="s1">self</span><span class="s2">.</span><span class="s1">apply_compression</span><span class="s2">(</span><span class="s1">body</span><span class="s2">, </span><span class="s1">more_body</span><span class="s2">=</span><span class="s1">more_body</span><span class="s2">)</span>
+
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">apply_compression</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">body</span><span class="s2">: </span><span class="s1">bytes</span><span class="s2">, *, </span><span class="s1">more_body</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">) </span><span class="s1">-&gt; bytes</span><span class="s2">:</span>
+        <span class="s7">&quot;&quot;&quot;Apply compression on the response body. 
+ 
+        If more_body is False, any compression file should be closed. If it 
+        isn't, it won't be closed automatically until all background tasks 
+        complete. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">body</span>
+
+
+<span class="s0">class </span><span class="s1">GZipResponder</span><span class="s2">(</span><span class="s1">IdentityResponder</span><span class="s2">):</span>
+    <span class="s1">content_encoding </span><span class="s2">= </span><span class="s3">&quot;gzip&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">app</span><span class="s2">: </span><span class="s1">ASGIApp</span><span class="s2">, </span><span class="s1">minimum_size</span><span class="s2">: </span><span class="s1">int</span><span class="s2">, </span><span class="s1">compresslevel</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s4">9</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">app</span><span class="s2">, </span><span class="s1">minimum_size</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">gzip_buffer </span><span class="s2">= </span><span class="s1">io</span><span class="s2">.</span><span class="s1">BytesIO</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">gzip_file </span><span class="s2">= </span><span class="s1">gzip</span><span class="s2">.</span><span class="s1">GzipFile</span><span class="s2">(</span><span class="s1">mode</span><span class="s2">=</span><span class="s3">&quot;wb&quot;</span><span class="s2">, </span><span class="s1">fileobj</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">gzip_buffer</span><span class="s2">, </span><span class="s1">compresslevel</span><span class="s2">=</span><span class="s1">compresslevel</span><span class="s2">)</span>
+
+    <span class="s0">async def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">: </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">: </span><span class="s1">Send</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">with </span><span class="s1">self</span><span class="s2">.</span><span class="s1">gzip_buffer</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">gzip_file</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">super</span><span class="s2">().</span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">apply_compression</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">body</span><span class="s2">: </span><span class="s1">bytes</span><span class="s2">, *, </span><span class="s1">more_body</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">) </span><span class="s1">-&gt; bytes</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">gzip_file</span><span class="s2">.</span><span class="s1">write</span><span class="s2">(</span><span class="s1">body</span><span class="s2">)</span>
+        <span class="s0">if not </span><span class="s1">more_body</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">gzip_file</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+
+        <span class="s1">body </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">gzip_buffer</span><span class="s2">.</span><span class="s1">getvalue</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">gzip_buffer</span><span class="s2">.</span><span class="s1">seek</span><span class="s2">(</span><span class="s4">0</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">gzip_buffer</span><span class="s2">.</span><span class="s1">truncate</span><span class="s2">()</span>
+
+        <span class="s0">return </span><span class="s1">body</span>
+
+
+<span class="s0">async def </span><span class="s1">unattached_send</span><span class="s2">(</span><span class="s1">message</span><span class="s2">: </span><span class="s1">Message</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">NoReturn</span><span class="s2">:</span>
+    <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s3">&quot;send awaitable not set&quot;</span><span class="s2">)  </span><span class="s5"># pragma: no cover</span>
+</pre>
+</body>
+</html>

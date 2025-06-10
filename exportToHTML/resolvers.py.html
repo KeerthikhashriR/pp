@@ -1,0 +1,570 @@
+<html>
+<head>
+<title>resolvers.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #7a7e85;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+resolvers.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">collections</span>
+<span class="s0">import </span><span class="s1">itertools</span>
+<span class="s0">import </span><span class="s1">operator</span>
+
+<span class="s0">from </span><span class="s2">.</span><span class="s1">providers </span><span class="s0">import </span><span class="s1">AbstractResolver</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">structs </span><span class="s0">import </span><span class="s1">DirectedGraph</span><span class="s2">, </span><span class="s1">IteratorMapping</span><span class="s2">, </span><span class="s1">build_iter_view</span>
+
+<span class="s1">RequirementInformation </span><span class="s2">= </span><span class="s1">collections</span><span class="s2">.</span><span class="s1">namedtuple</span><span class="s2">(</span>
+    <span class="s3">&quot;RequirementInformation&quot;</span><span class="s2">, [</span><span class="s3">&quot;requirement&quot;</span><span class="s2">, </span><span class="s3">&quot;parent&quot;</span><span class="s2">]</span>
+<span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">ResolverException</span><span class="s2">(</span><span class="s1">Exception</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;A base class for all exceptions raised by this module. 
+ 
+    Exceptions derived by this class should all be handled in this module. Any 
+    bubbling pass the resolver should be treated as a bug. 
+    &quot;&quot;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">RequirementsConflicted</span><span class="s2">(</span><span class="s1">ResolverException</span><span class="s2">):</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">criterion</span><span class="s2">):</span>
+        <span class="s1">super</span><span class="s2">(</span><span class="s1">RequirementsConflicted</span><span class="s2">, </span><span class="s1">self</span><span class="s2">).</span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">criterion</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">criterion </span><span class="s2">= </span><span class="s1">criterion</span>
+
+    <span class="s0">def </span><span class="s1">__str__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s3">&quot;Requirements conflict: {}&quot;</span><span class="s2">.</span><span class="s1">format</span><span class="s2">(</span>
+            <span class="s3">&quot;, &quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">repr</span><span class="s2">(</span><span class="s1">r</span><span class="s2">) </span><span class="s0">for </span><span class="s1">r </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">criterion</span><span class="s2">.</span><span class="s1">iter_requirement</span><span class="s2">()),</span>
+        <span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">InconsistentCandidate</span><span class="s2">(</span><span class="s1">ResolverException</span><span class="s2">):</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">candidate</span><span class="s2">, </span><span class="s1">criterion</span><span class="s2">):</span>
+        <span class="s1">super</span><span class="s2">(</span><span class="s1">InconsistentCandidate</span><span class="s2">, </span><span class="s1">self</span><span class="s2">).</span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">candidate</span><span class="s2">, </span><span class="s1">criterion</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">candidate </span><span class="s2">= </span><span class="s1">candidate</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">criterion </span><span class="s2">= </span><span class="s1">criterion</span>
+
+    <span class="s0">def </span><span class="s1">__str__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s3">&quot;Provided candidate {!r} does not satisfy {}&quot;</span><span class="s2">.</span><span class="s1">format</span><span class="s2">(</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">candidate</span><span class="s2">,</span>
+            <span class="s3">&quot;, &quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">repr</span><span class="s2">(</span><span class="s1">r</span><span class="s2">) </span><span class="s0">for </span><span class="s1">r </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">criterion</span><span class="s2">.</span><span class="s1">iter_requirement</span><span class="s2">()),</span>
+        <span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">Criterion</span><span class="s2">(</span><span class="s1">object</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;Representation of possible resolution results of a package. 
+ 
+    This holds three attributes: 
+ 
+    * `information` is a collection of `RequirementInformation` pairs. 
+      Each pair is a requirement contributing to this criterion, and the 
+      candidate that provides the requirement. 
+    * `incompatibilities` is a collection of all known not-to-work candidates 
+      to exclude from consideration. 
+    * `candidates` is a collection containing all possible candidates deducted 
+      from the union of contributing requirements and known incompatibilities. 
+      It should never be empty, except when the criterion is an attribute of a 
+      raised `RequirementsConflicted` (in which case it is always empty). 
+ 
+    .. note:: 
+        This class is intended to be externally immutable. **Do not** mutate 
+        any of its attribute containers. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">candidates</span><span class="s2">, </span><span class="s1">information</span><span class="s2">, </span><span class="s1">incompatibilities</span><span class="s2">):</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">candidates </span><span class="s2">= </span><span class="s1">candidates</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">information </span><span class="s2">= </span><span class="s1">information</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">incompatibilities </span><span class="s2">= </span><span class="s1">incompatibilities</span>
+
+    <span class="s0">def </span><span class="s1">__repr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">):</span>
+        <span class="s1">requirements </span><span class="s2">= </span><span class="s3">&quot;, &quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span>
+            <span class="s3">&quot;({!r}, via={!r})&quot;</span><span class="s2">.</span><span class="s1">format</span><span class="s2">(</span><span class="s1">req</span><span class="s2">, </span><span class="s1">parent</span><span class="s2">)</span>
+            <span class="s0">for </span><span class="s1">req</span><span class="s2">, </span><span class="s1">parent </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">information</span>
+        <span class="s2">)</span>
+        <span class="s0">return </span><span class="s3">&quot;Criterion({})&quot;</span><span class="s2">.</span><span class="s1">format</span><span class="s2">(</span><span class="s1">requirements</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">iter_requirement</span><span class="s2">(</span><span class="s1">self</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s2">(</span><span class="s1">i</span><span class="s2">.</span><span class="s1">requirement </span><span class="s0">for </span><span class="s1">i </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">information</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">iter_parent</span><span class="s2">(</span><span class="s1">self</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s2">(</span><span class="s1">i</span><span class="s2">.</span><span class="s1">parent </span><span class="s0">for </span><span class="s1">i </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">information</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">ResolutionError</span><span class="s2">(</span><span class="s1">ResolverException</span><span class="s2">):</span>
+    <span class="s0">pass</span>
+
+
+<span class="s0">class </span><span class="s1">ResolutionImpossible</span><span class="s2">(</span><span class="s1">ResolutionError</span><span class="s2">):</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">causes</span><span class="s2">):</span>
+        <span class="s1">super</span><span class="s2">(</span><span class="s1">ResolutionImpossible</span><span class="s2">, </span><span class="s1">self</span><span class="s2">).</span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">causes</span><span class="s2">)</span>
+        <span class="s5"># causes is a list of RequirementInformation objects</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">causes </span><span class="s2">= </span><span class="s1">causes</span>
+
+
+<span class="s0">class </span><span class="s1">ResolutionTooDeep</span><span class="s2">(</span><span class="s1">ResolutionError</span><span class="s2">):</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">round_count</span><span class="s2">):</span>
+        <span class="s1">super</span><span class="s2">(</span><span class="s1">ResolutionTooDeep</span><span class="s2">, </span><span class="s1">self</span><span class="s2">).</span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">round_count</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">round_count </span><span class="s2">= </span><span class="s1">round_count</span>
+
+
+<span class="s5"># Resolution state in a round.</span>
+<span class="s1">State </span><span class="s2">= </span><span class="s1">collections</span><span class="s2">.</span><span class="s1">namedtuple</span><span class="s2">(</span><span class="s3">&quot;State&quot;</span><span class="s2">, </span><span class="s3">&quot;mapping criteria backtrack_causes&quot;</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">Resolution</span><span class="s2">(</span><span class="s1">object</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;Stateful resolution object. 
+ 
+    This is designed as a one-off object that holds information to kick start 
+    the resolution process, and holds the results afterwards. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">provider</span><span class="s2">, </span><span class="s1">reporter</span><span class="s2">):</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_p </span><span class="s2">= </span><span class="s1">provider</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_r </span><span class="s2">= </span><span class="s1">reporter</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_states </span><span class="s2">= []</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">state</span><span class="s2">(</span><span class="s1">self</span><span class="s2">):</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_states</span><span class="s2">[-</span><span class="s6">1</span><span class="s2">]</span>
+        <span class="s0">except </span><span class="s1">IndexError</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">AttributeError</span><span class="s2">(</span><span class="s3">&quot;state&quot;</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_push_new_state</span><span class="s2">(</span><span class="s1">self</span><span class="s2">):</span>
+        <span class="s4">&quot;&quot;&quot;Push a new state into history. 
+ 
+        This new state will be used to hold resolution results of the next 
+        coming round. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">base </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_states</span><span class="s2">[-</span><span class="s6">1</span><span class="s2">]</span>
+        <span class="s1">state </span><span class="s2">= </span><span class="s1">State</span><span class="s2">(</span>
+            <span class="s1">mapping</span><span class="s2">=</span><span class="s1">base</span><span class="s2">.</span><span class="s1">mapping</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">(),</span>
+            <span class="s1">criteria</span><span class="s2">=</span><span class="s1">base</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">(),</span>
+            <span class="s1">backtrack_causes</span><span class="s2">=</span><span class="s1">base</span><span class="s2">.</span><span class="s1">backtrack_causes</span><span class="s2">[:],</span>
+        <span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_states</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">state</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_add_to_criteria</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">criteria</span><span class="s2">, </span><span class="s1">requirement</span><span class="s2">, </span><span class="s1">parent</span><span class="s2">):</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_r</span><span class="s2">.</span><span class="s1">adding_requirement</span><span class="s2">(</span><span class="s1">requirement</span><span class="s2">=</span><span class="s1">requirement</span><span class="s2">, </span><span class="s1">parent</span><span class="s2">=</span><span class="s1">parent</span><span class="s2">)</span>
+
+        <span class="s1">identifier </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_p</span><span class="s2">.</span><span class="s1">identify</span><span class="s2">(</span><span class="s1">requirement_or_candidate</span><span class="s2">=</span><span class="s1">requirement</span><span class="s2">)</span>
+        <span class="s1">criterion </span><span class="s2">= </span><span class="s1">criteria</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">identifier</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">criterion</span><span class="s2">:</span>
+            <span class="s1">incompatibilities </span><span class="s2">= </span><span class="s1">list</span><span class="s2">(</span><span class="s1">criterion</span><span class="s2">.</span><span class="s1">incompatibilities</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">incompatibilities </span><span class="s2">= []</span>
+
+        <span class="s1">matches </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_p</span><span class="s2">.</span><span class="s1">find_matches</span><span class="s2">(</span>
+            <span class="s1">identifier</span><span class="s2">=</span><span class="s1">identifier</span><span class="s2">,</span>
+            <span class="s1">requirements</span><span class="s2">=</span><span class="s1">IteratorMapping</span><span class="s2">(</span>
+                <span class="s1">criteria</span><span class="s2">,</span>
+                <span class="s1">operator</span><span class="s2">.</span><span class="s1">methodcaller</span><span class="s2">(</span><span class="s3">&quot;iter_requirement&quot;</span><span class="s2">),</span>
+                <span class="s2">{</span><span class="s1">identifier</span><span class="s2">: [</span><span class="s1">requirement</span><span class="s2">]},</span>
+            <span class="s2">),</span>
+            <span class="s1">incompatibilities</span><span class="s2">=</span><span class="s1">IteratorMapping</span><span class="s2">(</span>
+                <span class="s1">criteria</span><span class="s2">,</span>
+                <span class="s1">operator</span><span class="s2">.</span><span class="s1">attrgetter</span><span class="s2">(</span><span class="s3">&quot;incompatibilities&quot;</span><span class="s2">),</span>
+                <span class="s2">{</span><span class="s1">identifier</span><span class="s2">: </span><span class="s1">incompatibilities</span><span class="s2">},</span>
+            <span class="s2">),</span>
+        <span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">criterion</span><span class="s2">:</span>
+            <span class="s1">information </span><span class="s2">= </span><span class="s1">list</span><span class="s2">(</span><span class="s1">criterion</span><span class="s2">.</span><span class="s1">information</span><span class="s2">)</span>
+            <span class="s1">information</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">RequirementInformation</span><span class="s2">(</span><span class="s1">requirement</span><span class="s2">, </span><span class="s1">parent</span><span class="s2">))</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">information </span><span class="s2">= [</span><span class="s1">RequirementInformation</span><span class="s2">(</span><span class="s1">requirement</span><span class="s2">, </span><span class="s1">parent</span><span class="s2">)]</span>
+
+        <span class="s1">criterion </span><span class="s2">= </span><span class="s1">Criterion</span><span class="s2">(</span>
+            <span class="s1">candidates</span><span class="s2">=</span><span class="s1">build_iter_view</span><span class="s2">(</span><span class="s1">matches</span><span class="s2">),</span>
+            <span class="s1">information</span><span class="s2">=</span><span class="s1">information</span><span class="s2">,</span>
+            <span class="s1">incompatibilities</span><span class="s2">=</span><span class="s1">incompatibilities</span><span class="s2">,</span>
+        <span class="s2">)</span>
+        <span class="s0">if not </span><span class="s1">criterion</span><span class="s2">.</span><span class="s1">candidates</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RequirementsConflicted</span><span class="s2">(</span><span class="s1">criterion</span><span class="s2">)</span>
+        <span class="s1">criteria</span><span class="s2">[</span><span class="s1">identifier</span><span class="s2">] = </span><span class="s1">criterion</span>
+
+    <span class="s0">def </span><span class="s1">_remove_information_from_criteria</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">criteria</span><span class="s2">, </span><span class="s1">parents</span><span class="s2">):</span>
+        <span class="s4">&quot;&quot;&quot;Remove information from parents of criteria. 
+ 
+        Concretely, removes all values from each criterion's ``information`` 
+        field that have one of ``parents`` as provider of the requirement. 
+ 
+        :param criteria: The criteria to update. 
+        :param parents: Identifiers for which to remove information from all criteria. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if not </span><span class="s1">parents</span><span class="s2">:</span>
+            <span class="s0">return</span>
+        <span class="s0">for </span><span class="s1">key</span><span class="s2">, </span><span class="s1">criterion </span><span class="s0">in </span><span class="s1">criteria</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+            <span class="s1">criteria</span><span class="s2">[</span><span class="s1">key</span><span class="s2">] = </span><span class="s1">Criterion</span><span class="s2">(</span>
+                <span class="s1">criterion</span><span class="s2">.</span><span class="s1">candidates</span><span class="s2">,</span>
+                <span class="s2">[</span>
+                    <span class="s1">information</span>
+                    <span class="s0">for </span><span class="s1">information </span><span class="s0">in </span><span class="s1">criterion</span><span class="s2">.</span><span class="s1">information</span>
+                    <span class="s0">if </span><span class="s2">(</span>
+                        <span class="s1">information</span><span class="s2">.</span><span class="s1">parent </span><span class="s0">is None</span>
+                        <span class="s0">or </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_p</span><span class="s2">.</span><span class="s1">identify</span><span class="s2">(</span><span class="s1">information</span><span class="s2">.</span><span class="s1">parent</span><span class="s2">) </span><span class="s0">not in </span><span class="s1">parents</span>
+                    <span class="s2">)</span>
+                <span class="s2">],</span>
+                <span class="s1">criterion</span><span class="s2">.</span><span class="s1">incompatibilities</span><span class="s2">,</span>
+            <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_get_preference</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_p</span><span class="s2">.</span><span class="s1">get_preference</span><span class="s2">(</span>
+            <span class="s1">identifier</span><span class="s2">=</span><span class="s1">name</span><span class="s2">,</span>
+            <span class="s1">resolutions</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">mapping</span><span class="s2">,</span>
+            <span class="s1">candidates</span><span class="s2">=</span><span class="s1">IteratorMapping</span><span class="s2">(</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">,</span>
+                <span class="s1">operator</span><span class="s2">.</span><span class="s1">attrgetter</span><span class="s2">(</span><span class="s3">&quot;candidates&quot;</span><span class="s2">),</span>
+            <span class="s2">),</span>
+            <span class="s1">information</span><span class="s2">=</span><span class="s1">IteratorMapping</span><span class="s2">(</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">,</span>
+                <span class="s1">operator</span><span class="s2">.</span><span class="s1">attrgetter</span><span class="s2">(</span><span class="s3">&quot;information&quot;</span><span class="s2">),</span>
+            <span class="s2">),</span>
+            <span class="s1">backtrack_causes</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">backtrack_causes</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_is_current_pin_satisfying</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">, </span><span class="s1">criterion</span><span class="s2">):</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">current_pin </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">mapping</span><span class="s2">[</span><span class="s1">name</span><span class="s2">]</span>
+        <span class="s0">except </span><span class="s1">KeyError</span><span class="s2">:</span>
+            <span class="s0">return False</span>
+        <span class="s0">return </span><span class="s1">all</span><span class="s2">(</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_p</span><span class="s2">.</span><span class="s1">is_satisfied_by</span><span class="s2">(</span><span class="s1">requirement</span><span class="s2">=</span><span class="s1">r</span><span class="s2">, </span><span class="s1">candidate</span><span class="s2">=</span><span class="s1">current_pin</span><span class="s2">)</span>
+            <span class="s0">for </span><span class="s1">r </span><span class="s0">in </span><span class="s1">criterion</span><span class="s2">.</span><span class="s1">iter_requirement</span><span class="s2">()</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_get_updated_criteria</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">candidate</span><span class="s2">):</span>
+        <span class="s1">criteria </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">()</span>
+        <span class="s0">for </span><span class="s1">requirement </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_p</span><span class="s2">.</span><span class="s1">get_dependencies</span><span class="s2">(</span><span class="s1">candidate</span><span class="s2">=</span><span class="s1">candidate</span><span class="s2">):</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_add_to_criteria</span><span class="s2">(</span><span class="s1">criteria</span><span class="s2">, </span><span class="s1">requirement</span><span class="s2">, </span><span class="s1">parent</span><span class="s2">=</span><span class="s1">candidate</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">criteria</span>
+
+    <span class="s0">def </span><span class="s1">_attempt_to_pin_criterion</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">):</span>
+        <span class="s1">criterion </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">[</span><span class="s1">name</span><span class="s2">]</span>
+
+        <span class="s1">causes </span><span class="s2">= []</span>
+        <span class="s0">for </span><span class="s1">candidate </span><span class="s0">in </span><span class="s1">criterion</span><span class="s2">.</span><span class="s1">candidates</span><span class="s2">:</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">criteria </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_get_updated_criteria</span><span class="s2">(</span><span class="s1">candidate</span><span class="s2">)</span>
+            <span class="s0">except </span><span class="s1">RequirementsConflicted </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_r</span><span class="s2">.</span><span class="s1">rejecting_candidate</span><span class="s2">(</span><span class="s1">e</span><span class="s2">.</span><span class="s1">criterion</span><span class="s2">, </span><span class="s1">candidate</span><span class="s2">)</span>
+                <span class="s1">causes</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">e</span><span class="s2">.</span><span class="s1">criterion</span><span class="s2">)</span>
+                <span class="s0">continue</span>
+
+            <span class="s5"># Check the newly-pinned candidate actually works. This should</span>
+            <span class="s5"># always pass under normal circumstances, but in the case of a</span>
+            <span class="s5"># faulty provider, we will raise an error to notify the implementer</span>
+            <span class="s5"># to fix find_matches() and/or is_satisfied_by().</span>
+            <span class="s1">satisfied </span><span class="s2">= </span><span class="s1">all</span><span class="s2">(</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_p</span><span class="s2">.</span><span class="s1">is_satisfied_by</span><span class="s2">(</span><span class="s1">requirement</span><span class="s2">=</span><span class="s1">r</span><span class="s2">, </span><span class="s1">candidate</span><span class="s2">=</span><span class="s1">candidate</span><span class="s2">)</span>
+                <span class="s0">for </span><span class="s1">r </span><span class="s0">in </span><span class="s1">criterion</span><span class="s2">.</span><span class="s1">iter_requirement</span><span class="s2">()</span>
+            <span class="s2">)</span>
+            <span class="s0">if not </span><span class="s1">satisfied</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">InconsistentCandidate</span><span class="s2">(</span><span class="s1">candidate</span><span class="s2">, </span><span class="s1">criterion</span><span class="s2">)</span>
+
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_r</span><span class="s2">.</span><span class="s1">pinning</span><span class="s2">(</span><span class="s1">candidate</span><span class="s2">=</span><span class="s1">candidate</span><span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">criteria</span><span class="s2">)</span>
+
+            <span class="s5"># Put newly-pinned candidate at the end. This is essential because</span>
+            <span class="s5"># backtracking looks at this mapping to get the last pin.</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">mapping</span><span class="s2">.</span><span class="s1">pop</span><span class="s2">(</span><span class="s1">name</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">mapping</span><span class="s2">[</span><span class="s1">name</span><span class="s2">] = </span><span class="s1">candidate</span>
+
+            <span class="s0">return </span><span class="s2">[]</span>
+
+        <span class="s5"># All candidates tried, nothing works. This criterion is a dead</span>
+        <span class="s5"># end, signal for backtracking.</span>
+        <span class="s0">return </span><span class="s1">causes</span>
+
+    <span class="s0">def </span><span class="s1">_backjump</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">causes</span><span class="s2">):</span>
+        <span class="s4">&quot;&quot;&quot;Perform backjumping. 
+ 
+        When we enter here, the stack is like this:: 
+ 
+            [ state Z ] 
+            [ state Y ] 
+            [ state X ] 
+            .... earlier states are irrelevant. 
+ 
+        1. No pins worked for Z, so it does not have a pin. 
+        2. We want to reset state Y to unpinned, and pin another candidate. 
+        3. State X holds what state Y was before the pin, but does not 
+           have the incompatibility information gathered in state Y. 
+ 
+        Each iteration of the loop will: 
+ 
+        1.  Identify Z. The incompatibility is not always caused by the latest 
+            state. For example, given three requirements A, B and C, with 
+            dependencies A1, B1 and C1, where A1 and B1 are incompatible: the 
+            last state might be related to C, so we want to discard the 
+            previous state. 
+        2.  Discard Z. 
+        3.  Discard Y but remember its incompatibility information gathered 
+            previously, and the failure we're dealing with right now. 
+        4.  Push a new state Y' based on X, and apply the incompatibility 
+            information from Y to Y'. 
+        5a. If this causes Y' to conflict, we need to backtrack again. Make Y' 
+            the new Z and go back to step 2. 
+        5b. If the incompatibilities apply cleanly, end backtracking. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">incompatible_reqs </span><span class="s2">= </span><span class="s1">itertools</span><span class="s2">.</span><span class="s1">chain</span><span class="s2">(</span>
+            <span class="s2">(</span><span class="s1">c</span><span class="s2">.</span><span class="s1">parent </span><span class="s0">for </span><span class="s1">c </span><span class="s0">in </span><span class="s1">causes </span><span class="s0">if </span><span class="s1">c</span><span class="s2">.</span><span class="s1">parent </span><span class="s0">is not None</span><span class="s2">),</span>
+            <span class="s2">(</span><span class="s1">c</span><span class="s2">.</span><span class="s1">requirement </span><span class="s0">for </span><span class="s1">c </span><span class="s0">in </span><span class="s1">causes</span><span class="s2">),</span>
+        <span class="s2">)</span>
+        <span class="s1">incompatible_deps </span><span class="s2">= {</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_p</span><span class="s2">.</span><span class="s1">identify</span><span class="s2">(</span><span class="s1">r</span><span class="s2">) </span><span class="s0">for </span><span class="s1">r </span><span class="s0">in </span><span class="s1">incompatible_reqs</span><span class="s2">}</span>
+        <span class="s0">while </span><span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_states</span><span class="s2">) &gt;= </span><span class="s6">3</span><span class="s2">:</span>
+            <span class="s5"># Remove the state that triggered backtracking.</span>
+            <span class="s0">del </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_states</span><span class="s2">[-</span><span class="s6">1</span><span class="s2">]</span>
+
+            <span class="s5"># Ensure to backtrack to a state that caused the incompatibility</span>
+            <span class="s1">incompatible_state </span><span class="s2">= </span><span class="s0">False</span>
+            <span class="s0">while not </span><span class="s1">incompatible_state</span><span class="s2">:</span>
+                <span class="s5"># Retrieve the last candidate pin and known incompatibilities.</span>
+                <span class="s0">try</span><span class="s2">:</span>
+                    <span class="s1">broken_state </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_states</span><span class="s2">.</span><span class="s1">pop</span><span class="s2">()</span>
+                    <span class="s1">name</span><span class="s2">, </span><span class="s1">candidate </span><span class="s2">= </span><span class="s1">broken_state</span><span class="s2">.</span><span class="s1">mapping</span><span class="s2">.</span><span class="s1">popitem</span><span class="s2">()</span>
+                <span class="s0">except </span><span class="s2">(</span><span class="s1">IndexError</span><span class="s2">, </span><span class="s1">KeyError</span><span class="s2">):</span>
+                    <span class="s0">raise </span><span class="s1">ResolutionImpossible</span><span class="s2">(</span><span class="s1">causes</span><span class="s2">)</span>
+                <span class="s1">current_dependencies </span><span class="s2">= {</span>
+                    <span class="s1">self</span><span class="s2">.</span><span class="s1">_p</span><span class="s2">.</span><span class="s1">identify</span><span class="s2">(</span><span class="s1">d</span><span class="s2">)</span>
+                    <span class="s0">for </span><span class="s1">d </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_p</span><span class="s2">.</span><span class="s1">get_dependencies</span><span class="s2">(</span><span class="s1">candidate</span><span class="s2">)</span>
+                <span class="s2">}</span>
+                <span class="s1">incompatible_state </span><span class="s2">= </span><span class="s0">not </span><span class="s1">current_dependencies</span><span class="s2">.</span><span class="s1">isdisjoint</span><span class="s2">(</span>
+                    <span class="s1">incompatible_deps</span>
+                <span class="s2">)</span>
+
+            <span class="s1">incompatibilities_from_broken </span><span class="s2">= [</span>
+                <span class="s2">(</span><span class="s1">k</span><span class="s2">, </span><span class="s1">list</span><span class="s2">(</span><span class="s1">v</span><span class="s2">.</span><span class="s1">incompatibilities</span><span class="s2">))</span>
+                <span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">broken_state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()</span>
+            <span class="s2">]</span>
+
+            <span class="s5"># Also mark the newly known incompatibility.</span>
+            <span class="s1">incompatibilities_from_broken</span><span class="s2">.</span><span class="s1">append</span><span class="s2">((</span><span class="s1">name</span><span class="s2">, [</span><span class="s1">candidate</span><span class="s2">]))</span>
+
+            <span class="s5"># Create a new state from the last known-to-work one, and apply</span>
+            <span class="s5"># the previously gathered incompatibility information.</span>
+            <span class="s0">def </span><span class="s1">_patch_criteria</span><span class="s2">():</span>
+                <span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">incompatibilities </span><span class="s0">in </span><span class="s1">incompatibilities_from_broken</span><span class="s2">:</span>
+                    <span class="s0">if not </span><span class="s1">incompatibilities</span><span class="s2">:</span>
+                        <span class="s0">continue</span>
+                    <span class="s0">try</span><span class="s2">:</span>
+                        <span class="s1">criterion </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">[</span><span class="s1">k</span><span class="s2">]</span>
+                    <span class="s0">except </span><span class="s1">KeyError</span><span class="s2">:</span>
+                        <span class="s0">continue</span>
+                    <span class="s1">matches </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_p</span><span class="s2">.</span><span class="s1">find_matches</span><span class="s2">(</span>
+                        <span class="s1">identifier</span><span class="s2">=</span><span class="s1">k</span><span class="s2">,</span>
+                        <span class="s1">requirements</span><span class="s2">=</span><span class="s1">IteratorMapping</span><span class="s2">(</span>
+                            <span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">,</span>
+                            <span class="s1">operator</span><span class="s2">.</span><span class="s1">methodcaller</span><span class="s2">(</span><span class="s3">&quot;iter_requirement&quot;</span><span class="s2">),</span>
+                        <span class="s2">),</span>
+                        <span class="s1">incompatibilities</span><span class="s2">=</span><span class="s1">IteratorMapping</span><span class="s2">(</span>
+                            <span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">,</span>
+                            <span class="s1">operator</span><span class="s2">.</span><span class="s1">attrgetter</span><span class="s2">(</span><span class="s3">&quot;incompatibilities&quot;</span><span class="s2">),</span>
+                            <span class="s2">{</span><span class="s1">k</span><span class="s2">: </span><span class="s1">incompatibilities</span><span class="s2">},</span>
+                        <span class="s2">),</span>
+                    <span class="s2">)</span>
+                    <span class="s1">candidates </span><span class="s2">= </span><span class="s1">build_iter_view</span><span class="s2">(</span><span class="s1">matches</span><span class="s2">)</span>
+                    <span class="s0">if not </span><span class="s1">candidates</span><span class="s2">:</span>
+                        <span class="s0">return False</span>
+                    <span class="s1">incompatibilities</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">(</span><span class="s1">criterion</span><span class="s2">.</span><span class="s1">incompatibilities</span><span class="s2">)</span>
+                    <span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">[</span><span class="s1">k</span><span class="s2">] = </span><span class="s1">Criterion</span><span class="s2">(</span>
+                        <span class="s1">candidates</span><span class="s2">=</span><span class="s1">candidates</span><span class="s2">,</span>
+                        <span class="s1">information</span><span class="s2">=</span><span class="s1">list</span><span class="s2">(</span><span class="s1">criterion</span><span class="s2">.</span><span class="s1">information</span><span class="s2">),</span>
+                        <span class="s1">incompatibilities</span><span class="s2">=</span><span class="s1">incompatibilities</span><span class="s2">,</span>
+                    <span class="s2">)</span>
+                <span class="s0">return True</span>
+
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_push_new_state</span><span class="s2">()</span>
+            <span class="s1">success </span><span class="s2">= </span><span class="s1">_patch_criteria</span><span class="s2">()</span>
+
+            <span class="s5"># It works! Let's work on this new state.</span>
+            <span class="s0">if </span><span class="s1">success</span><span class="s2">:</span>
+                <span class="s0">return True</span>
+
+            <span class="s5"># State does not work after applying known incompatibilities.</span>
+            <span class="s5"># Try the still previous state.</span>
+
+        <span class="s5"># No way to backtrack anymore.</span>
+        <span class="s0">return False</span>
+
+    <span class="s0">def </span><span class="s1">resolve</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">requirements</span><span class="s2">, </span><span class="s1">max_rounds</span><span class="s2">):</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_states</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s3">&quot;already resolved&quot;</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_r</span><span class="s2">.</span><span class="s1">starting</span><span class="s2">()</span>
+
+        <span class="s5"># Initialize the root state.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_states </span><span class="s2">= [</span>
+            <span class="s1">State</span><span class="s2">(</span>
+                <span class="s1">mapping</span><span class="s2">=</span><span class="s1">collections</span><span class="s2">.</span><span class="s1">OrderedDict</span><span class="s2">(),</span>
+                <span class="s1">criteria</span><span class="s2">={},</span>
+                <span class="s1">backtrack_causes</span><span class="s2">=[],</span>
+            <span class="s2">)</span>
+        <span class="s2">]</span>
+        <span class="s0">for </span><span class="s1">r </span><span class="s0">in </span><span class="s1">requirements</span><span class="s2">:</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_add_to_criteria</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">, </span><span class="s1">r</span><span class="s2">, </span><span class="s1">parent</span><span class="s2">=</span><span class="s0">None</span><span class="s2">)</span>
+            <span class="s0">except </span><span class="s1">RequirementsConflicted </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">ResolutionImpossible</span><span class="s2">(</span><span class="s1">e</span><span class="s2">.</span><span class="s1">criterion</span><span class="s2">.</span><span class="s1">information</span><span class="s2">)</span>
+
+        <span class="s5"># The root state is saved as a sentinel so the first ever pin can have</span>
+        <span class="s5"># something to backtrack to if it fails. The root state is basically</span>
+        <span class="s5"># pinning the virtual &quot;root&quot; package in the graph.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_push_new_state</span><span class="s2">()</span>
+
+        <span class="s0">for </span><span class="s1">round_index </span><span class="s0">in </span><span class="s1">range</span><span class="s2">(</span><span class="s1">max_rounds</span><span class="s2">):</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_r</span><span class="s2">.</span><span class="s1">starting_round</span><span class="s2">(</span><span class="s1">index</span><span class="s2">=</span><span class="s1">round_index</span><span class="s2">)</span>
+
+            <span class="s1">unsatisfied_names </span><span class="s2">= [</span>
+                <span class="s1">key</span>
+                <span class="s0">for </span><span class="s1">key</span><span class="s2">, </span><span class="s1">criterion </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()</span>
+                <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_is_current_pin_satisfying</span><span class="s2">(</span><span class="s1">key</span><span class="s2">, </span><span class="s1">criterion</span><span class="s2">)</span>
+            <span class="s2">]</span>
+
+            <span class="s5"># All criteria are accounted for. Nothing more to pin, we are done!</span>
+            <span class="s0">if not </span><span class="s1">unsatisfied_names</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_r</span><span class="s2">.</span><span class="s1">ending</span><span class="s2">(</span><span class="s1">state</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">)</span>
+                <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">state</span>
+
+            <span class="s5"># keep track of satisfied names to calculate diff after pinning</span>
+            <span class="s1">satisfied_names </span><span class="s2">= </span><span class="s1">set</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">()) - </span><span class="s1">set</span><span class="s2">(</span>
+                <span class="s1">unsatisfied_names</span>
+            <span class="s2">)</span>
+
+            <span class="s5"># Choose the most preferred unpinned criterion to try.</span>
+            <span class="s1">name </span><span class="s2">= </span><span class="s1">min</span><span class="s2">(</span><span class="s1">unsatisfied_names</span><span class="s2">, </span><span class="s1">key</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_get_preference</span><span class="s2">)</span>
+            <span class="s1">failure_causes </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_attempt_to_pin_criterion</span><span class="s2">(</span><span class="s1">name</span><span class="s2">)</span>
+
+            <span class="s0">if </span><span class="s1">failure_causes</span><span class="s2">:</span>
+                <span class="s1">causes </span><span class="s2">= [</span><span class="s1">i </span><span class="s0">for </span><span class="s1">c </span><span class="s0">in </span><span class="s1">failure_causes </span><span class="s0">for </span><span class="s1">i </span><span class="s0">in </span><span class="s1">c</span><span class="s2">.</span><span class="s1">information</span><span class="s2">]</span>
+                <span class="s5"># Backjump if pinning fails. The backjump process puts us in</span>
+                <span class="s5"># an unpinned state, so we can work on it in the next round.</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_r</span><span class="s2">.</span><span class="s1">resolving_conflicts</span><span class="s2">(</span><span class="s1">causes</span><span class="s2">=</span><span class="s1">causes</span><span class="s2">)</span>
+                <span class="s1">success </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_backjump</span><span class="s2">(</span><span class="s1">causes</span><span class="s2">)</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">backtrack_causes</span><span class="s2">[:] = </span><span class="s1">causes</span>
+
+                <span class="s5"># Dead ends everywhere. Give up.</span>
+                <span class="s0">if not </span><span class="s1">success</span><span class="s2">:</span>
+                    <span class="s0">raise </span><span class="s1">ResolutionImpossible</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">backtrack_causes</span><span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s5"># discard as information sources any invalidated names</span>
+                <span class="s5"># (unsatisfied names that were previously satisfied)</span>
+                <span class="s1">newly_unsatisfied_names </span><span class="s2">= {</span>
+                    <span class="s1">key</span>
+                    <span class="s0">for </span><span class="s1">key</span><span class="s2">, </span><span class="s1">criterion </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()</span>
+                    <span class="s0">if </span><span class="s1">key </span><span class="s0">in </span><span class="s1">satisfied_names</span>
+                    <span class="s0">and not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_is_current_pin_satisfying</span><span class="s2">(</span><span class="s1">key</span><span class="s2">, </span><span class="s1">criterion</span><span class="s2">)</span>
+                <span class="s2">}</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_remove_information_from_criteria</span><span class="s2">(</span>
+                    <span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">, </span><span class="s1">newly_unsatisfied_names</span>
+                <span class="s2">)</span>
+                <span class="s5"># Pinning was successful. Push a new state to do another pin.</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_push_new_state</span><span class="s2">()</span>
+
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_r</span><span class="s2">.</span><span class="s1">ending_round</span><span class="s2">(</span><span class="s1">index</span><span class="s2">=</span><span class="s1">round_index</span><span class="s2">, </span><span class="s1">state</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">state</span><span class="s2">)</span>
+
+        <span class="s0">raise </span><span class="s1">ResolutionTooDeep</span><span class="s2">(</span><span class="s1">max_rounds</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">_has_route_to_root</span><span class="s2">(</span><span class="s1">criteria</span><span class="s2">, </span><span class="s1">key</span><span class="s2">, </span><span class="s1">all_keys</span><span class="s2">, </span><span class="s1">connected</span><span class="s2">):</span>
+    <span class="s0">if </span><span class="s1">key </span><span class="s0">in </span><span class="s1">connected</span><span class="s2">:</span>
+        <span class="s0">return True</span>
+    <span class="s0">if </span><span class="s1">key </span><span class="s0">not in </span><span class="s1">criteria</span><span class="s2">:</span>
+        <span class="s0">return False</span>
+    <span class="s0">for </span><span class="s1">p </span><span class="s0">in </span><span class="s1">criteria</span><span class="s2">[</span><span class="s1">key</span><span class="s2">].</span><span class="s1">iter_parent</span><span class="s2">():</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">pkey </span><span class="s2">= </span><span class="s1">all_keys</span><span class="s2">[</span><span class="s1">id</span><span class="s2">(</span><span class="s1">p</span><span class="s2">)]</span>
+        <span class="s0">except </span><span class="s1">KeyError</span><span class="s2">:</span>
+            <span class="s0">continue</span>
+        <span class="s0">if </span><span class="s1">pkey </span><span class="s0">in </span><span class="s1">connected</span><span class="s2">:</span>
+            <span class="s1">connected</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">key</span><span class="s2">)</span>
+            <span class="s0">return True</span>
+        <span class="s0">if </span><span class="s1">_has_route_to_root</span><span class="s2">(</span><span class="s1">criteria</span><span class="s2">, </span><span class="s1">pkey</span><span class="s2">, </span><span class="s1">all_keys</span><span class="s2">, </span><span class="s1">connected</span><span class="s2">):</span>
+            <span class="s1">connected</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">key</span><span class="s2">)</span>
+            <span class="s0">return True</span>
+    <span class="s0">return False</span>
+
+
+<span class="s1">Result </span><span class="s2">= </span><span class="s1">collections</span><span class="s2">.</span><span class="s1">namedtuple</span><span class="s2">(</span><span class="s3">&quot;Result&quot;</span><span class="s2">, </span><span class="s3">&quot;mapping graph criteria&quot;</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">_build_result</span><span class="s2">(</span><span class="s1">state</span><span class="s2">):</span>
+    <span class="s1">mapping </span><span class="s2">= </span><span class="s1">state</span><span class="s2">.</span><span class="s1">mapping</span>
+    <span class="s1">all_keys </span><span class="s2">= {</span><span class="s1">id</span><span class="s2">(</span><span class="s1">v</span><span class="s2">): </span><span class="s1">k </span><span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">mapping</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()}</span>
+    <span class="s1">all_keys</span><span class="s2">[</span><span class="s1">id</span><span class="s2">(</span><span class="s0">None</span><span class="s2">)] = </span><span class="s0">None</span>
+
+    <span class="s1">graph </span><span class="s2">= </span><span class="s1">DirectedGraph</span><span class="s2">()</span>
+    <span class="s1">graph</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s0">None</span><span class="s2">)  </span><span class="s5"># Sentinel as root dependencies' parent.</span>
+
+    <span class="s1">connected </span><span class="s2">= {</span><span class="s0">None</span><span class="s2">}</span>
+    <span class="s0">for </span><span class="s1">key</span><span class="s2">, </span><span class="s1">criterion </span><span class="s0">in </span><span class="s1">state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+        <span class="s0">if not </span><span class="s1">_has_route_to_root</span><span class="s2">(</span><span class="s1">state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">, </span><span class="s1">key</span><span class="s2">, </span><span class="s1">all_keys</span><span class="s2">, </span><span class="s1">connected</span><span class="s2">):</span>
+            <span class="s0">continue</span>
+        <span class="s0">if </span><span class="s1">key </span><span class="s0">not in </span><span class="s1">graph</span><span class="s2">:</span>
+            <span class="s1">graph</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">key</span><span class="s2">)</span>
+        <span class="s0">for </span><span class="s1">p </span><span class="s0">in </span><span class="s1">criterion</span><span class="s2">.</span><span class="s1">iter_parent</span><span class="s2">():</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">pkey </span><span class="s2">= </span><span class="s1">all_keys</span><span class="s2">[</span><span class="s1">id</span><span class="s2">(</span><span class="s1">p</span><span class="s2">)]</span>
+            <span class="s0">except </span><span class="s1">KeyError</span><span class="s2">:</span>
+                <span class="s0">continue</span>
+            <span class="s0">if </span><span class="s1">pkey </span><span class="s0">not in </span><span class="s1">graph</span><span class="s2">:</span>
+                <span class="s1">graph</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">pkey</span><span class="s2">)</span>
+            <span class="s1">graph</span><span class="s2">.</span><span class="s1">connect</span><span class="s2">(</span><span class="s1">pkey</span><span class="s2">, </span><span class="s1">key</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">Result</span><span class="s2">(</span>
+        <span class="s1">mapping</span><span class="s2">={</span><span class="s1">k</span><span class="s2">: </span><span class="s1">v </span><span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">mapping</span><span class="s2">.</span><span class="s1">items</span><span class="s2">() </span><span class="s0">if </span><span class="s1">k </span><span class="s0">in </span><span class="s1">connected</span><span class="s2">},</span>
+        <span class="s1">graph</span><span class="s2">=</span><span class="s1">graph</span><span class="s2">,</span>
+        <span class="s1">criteria</span><span class="s2">=</span><span class="s1">state</span><span class="s2">.</span><span class="s1">criteria</span><span class="s2">,</span>
+    <span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">Resolver</span><span class="s2">(</span><span class="s1">AbstractResolver</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;The thing that performs the actual resolution work.&quot;&quot;&quot;</span>
+
+    <span class="s1">base_exception </span><span class="s2">= </span><span class="s1">ResolverException</span>
+
+    <span class="s0">def </span><span class="s1">resolve</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">requirements</span><span class="s2">, </span><span class="s1">max_rounds</span><span class="s2">=</span><span class="s6">100</span><span class="s2">):</span>
+        <span class="s4">&quot;&quot;&quot;Take a collection of constraints, spit out the resolution result. 
+ 
+        The return value is a representation to the final resolution result. It 
+        is a tuple subclass with three public members: 
+ 
+        * `mapping`: A dict of resolved candidates. Each key is an identifier 
+            of a requirement (as returned by the provider's `identify` method), 
+            and the value is the resolved candidate. 
+        * `graph`: A `DirectedGraph` instance representing the dependency tree. 
+            The vertices are keys of `mapping`, and each edge represents *why* 
+            a particular package is included. A special vertex `None` is 
+            included to represent parents of user-supplied requirements. 
+        * `criteria`: A dict of &quot;criteria&quot; that hold detailed information on 
+            how edges in the graph are derived. Each key is an identifier of a 
+            requirement, and the value is a `Criterion` instance. 
+ 
+        The following exceptions may be raised if a resolution cannot be found: 
+ 
+        * `ResolutionImpossible`: A resolution cannot be found for the given 
+            combination of requirements. The `causes` attribute of the 
+            exception is a list of (requirement, parent), giving the 
+            requirements that could not be satisfied. 
+        * `ResolutionTooDeep`: The dependency tree is too deeply nested and 
+            the resolver gave up. This is usually caused by a circular 
+            dependency, but you can try to resolve this by increasing the 
+            `max_rounds` argument. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">resolution </span><span class="s2">= </span><span class="s1">Resolution</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">provider</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">reporter</span><span class="s2">)</span>
+        <span class="s1">state </span><span class="s2">= </span><span class="s1">resolution</span><span class="s2">.</span><span class="s1">resolve</span><span class="s2">(</span><span class="s1">requirements</span><span class="s2">, </span><span class="s1">max_rounds</span><span class="s2">=</span><span class="s1">max_rounds</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">_build_result</span><span class="s2">(</span><span class="s1">state</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

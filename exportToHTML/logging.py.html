@@ -1,0 +1,140 @@
+<html>
+<head>
+<title>logging.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #2aacb8;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #6aab73;}
+.s6 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+logging.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">http</span>
+<span class="s0">import </span><span class="s1">logging</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">from </span><span class="s1">copy </span><span class="s0">import </span><span class="s1">copy</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Literal</span>
+
+<span class="s0">import </span><span class="s1">click</span>
+
+<span class="s1">TRACE_LOG_LEVEL </span><span class="s2">= </span><span class="s3">5</span>
+
+
+<span class="s0">class </span><span class="s1">ColourizedFormatter</span><span class="s2">(</span><span class="s1">logging</span><span class="s2">.</span><span class="s1">Formatter</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    A custom log formatter class that: 
+ 
+    * Outputs the LOG_LEVEL with an appropriate color. 
+    * If a log call includes an `extra={&quot;color_message&quot;: ...}` it will be used 
+      for formatting the output, instead of the plain text message. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">level_name_colors </span><span class="s2">= {</span>
+        <span class="s1">TRACE_LOG_LEVEL</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">level_name</span><span class="s2">: </span><span class="s1">click</span><span class="s2">.</span><span class="s1">style</span><span class="s2">(</span><span class="s1">str</span><span class="s2">(</span><span class="s1">level_name</span><span class="s2">), </span><span class="s1">fg</span><span class="s2">=</span><span class="s5">&quot;blue&quot;</span><span class="s2">),</span>
+        <span class="s1">logging</span><span class="s2">.</span><span class="s1">DEBUG</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">level_name</span><span class="s2">: </span><span class="s1">click</span><span class="s2">.</span><span class="s1">style</span><span class="s2">(</span><span class="s1">str</span><span class="s2">(</span><span class="s1">level_name</span><span class="s2">), </span><span class="s1">fg</span><span class="s2">=</span><span class="s5">&quot;cyan&quot;</span><span class="s2">),</span>
+        <span class="s1">logging</span><span class="s2">.</span><span class="s1">INFO</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">level_name</span><span class="s2">: </span><span class="s1">click</span><span class="s2">.</span><span class="s1">style</span><span class="s2">(</span><span class="s1">str</span><span class="s2">(</span><span class="s1">level_name</span><span class="s2">), </span><span class="s1">fg</span><span class="s2">=</span><span class="s5">&quot;green&quot;</span><span class="s2">),</span>
+        <span class="s1">logging</span><span class="s2">.</span><span class="s1">WARNING</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">level_name</span><span class="s2">: </span><span class="s1">click</span><span class="s2">.</span><span class="s1">style</span><span class="s2">(</span><span class="s1">str</span><span class="s2">(</span><span class="s1">level_name</span><span class="s2">), </span><span class="s1">fg</span><span class="s2">=</span><span class="s5">&quot;yellow&quot;</span><span class="s2">),</span>
+        <span class="s1">logging</span><span class="s2">.</span><span class="s1">ERROR</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">level_name</span><span class="s2">: </span><span class="s1">click</span><span class="s2">.</span><span class="s1">style</span><span class="s2">(</span><span class="s1">str</span><span class="s2">(</span><span class="s1">level_name</span><span class="s2">), </span><span class="s1">fg</span><span class="s2">=</span><span class="s5">&quot;red&quot;</span><span class="s2">),</span>
+        <span class="s1">logging</span><span class="s2">.</span><span class="s1">CRITICAL</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">level_name</span><span class="s2">: </span><span class="s1">click</span><span class="s2">.</span><span class="s1">style</span><span class="s2">(</span><span class="s1">str</span><span class="s2">(</span><span class="s1">level_name</span><span class="s2">), </span><span class="s1">fg</span><span class="s2">=</span><span class="s5">&quot;bright_red&quot;</span><span class="s2">),</span>
+    <span class="s2">}</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">fmt</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">datefmt</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">style</span><span class="s2">: </span><span class="s1">Literal</span><span class="s2">[</span><span class="s5">&quot;%&quot;</span><span class="s2">, </span><span class="s5">&quot;{&quot;</span><span class="s2">, </span><span class="s5">&quot;$&quot;</span><span class="s2">] = </span><span class="s5">&quot;%&quot;</span><span class="s2">,</span>
+        <span class="s1">use_colors</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">):</span>
+        <span class="s0">if </span><span class="s1">use_colors </span><span class="s0">in </span><span class="s2">(</span><span class="s0">True</span><span class="s2">, </span><span class="s0">False</span><span class="s2">):</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">use_colors </span><span class="s2">= </span><span class="s1">use_colors</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">use_colors </span><span class="s2">= </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">stdout</span><span class="s2">.</span><span class="s1">isatty</span><span class="s2">()</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">fmt</span><span class="s2">=</span><span class="s1">fmt</span><span class="s2">, </span><span class="s1">datefmt</span><span class="s2">=</span><span class="s1">datefmt</span><span class="s2">, </span><span class="s1">style</span><span class="s2">=</span><span class="s1">style</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">color_level_name</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">level_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">level_no</span><span class="s2">: </span><span class="s1">int</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">def </span><span class="s1">default</span><span class="s2">(</span><span class="s1">level_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">str</span><span class="s2">(</span><span class="s1">level_name</span><span class="s2">)  </span><span class="s6"># pragma: no cover</span>
+
+        <span class="s1">func </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">level_name_colors</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">level_no</span><span class="s2">, </span><span class="s1">default</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">func</span><span class="s2">(</span><span class="s1">level_name</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">should_use_colors</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s0">return True  </span><span class="s6"># pragma: no cover</span>
+
+    <span class="s0">def </span><span class="s1">formatMessage</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">record</span><span class="s2">: </span><span class="s1">logging</span><span class="s2">.</span><span class="s1">LogRecord</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s1">recordcopy </span><span class="s2">= </span><span class="s1">copy</span><span class="s2">(</span><span class="s1">record</span><span class="s2">)</span>
+        <span class="s1">levelname </span><span class="s2">= </span><span class="s1">recordcopy</span><span class="s2">.</span><span class="s1">levelname</span>
+        <span class="s1">seperator </span><span class="s2">= </span><span class="s5">&quot; &quot; </span><span class="s2">* (</span><span class="s3">8 </span><span class="s2">- </span><span class="s1">len</span><span class="s2">(</span><span class="s1">recordcopy</span><span class="s2">.</span><span class="s1">levelname</span><span class="s2">))</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">use_colors</span><span class="s2">:</span>
+            <span class="s1">levelname </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">color_level_name</span><span class="s2">(</span><span class="s1">levelname</span><span class="s2">, </span><span class="s1">recordcopy</span><span class="s2">.</span><span class="s1">levelno</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s5">&quot;color_message&quot; </span><span class="s0">in </span><span class="s1">recordcopy</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">:</span>
+                <span class="s1">recordcopy</span><span class="s2">.</span><span class="s1">msg </span><span class="s2">= </span><span class="s1">recordcopy</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">[</span><span class="s5">&quot;color_message&quot;</span><span class="s2">]</span>
+                <span class="s1">recordcopy</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">[</span><span class="s5">&quot;message&quot;</span><span class="s2">] = </span><span class="s1">recordcopy</span><span class="s2">.</span><span class="s1">getMessage</span><span class="s2">()</span>
+        <span class="s1">recordcopy</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">[</span><span class="s5">&quot;levelprefix&quot;</span><span class="s2">] = </span><span class="s1">levelname </span><span class="s2">+ </span><span class="s5">&quot;:&quot; </span><span class="s2">+ </span><span class="s1">seperator</span>
+        <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">formatMessage</span><span class="s2">(</span><span class="s1">recordcopy</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">DefaultFormatter</span><span class="s2">(</span><span class="s1">ColourizedFormatter</span><span class="s2">):</span>
+    <span class="s0">def </span><span class="s1">should_use_colors</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">stderr</span><span class="s2">.</span><span class="s1">isatty</span><span class="s2">()  </span><span class="s6"># pragma: no cover</span>
+
+
+<span class="s0">class </span><span class="s1">AccessFormatter</span><span class="s2">(</span><span class="s1">ColourizedFormatter</span><span class="s2">):</span>
+    <span class="s1">status_code_colours </span><span class="s2">= {</span>
+        <span class="s3">1</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">code</span><span class="s2">: </span><span class="s1">click</span><span class="s2">.</span><span class="s1">style</span><span class="s2">(</span><span class="s1">str</span><span class="s2">(</span><span class="s1">code</span><span class="s2">), </span><span class="s1">fg</span><span class="s2">=</span><span class="s5">&quot;bright_white&quot;</span><span class="s2">),</span>
+        <span class="s3">2</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">code</span><span class="s2">: </span><span class="s1">click</span><span class="s2">.</span><span class="s1">style</span><span class="s2">(</span><span class="s1">str</span><span class="s2">(</span><span class="s1">code</span><span class="s2">), </span><span class="s1">fg</span><span class="s2">=</span><span class="s5">&quot;green&quot;</span><span class="s2">),</span>
+        <span class="s3">3</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">code</span><span class="s2">: </span><span class="s1">click</span><span class="s2">.</span><span class="s1">style</span><span class="s2">(</span><span class="s1">str</span><span class="s2">(</span><span class="s1">code</span><span class="s2">), </span><span class="s1">fg</span><span class="s2">=</span><span class="s5">&quot;yellow&quot;</span><span class="s2">),</span>
+        <span class="s3">4</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">code</span><span class="s2">: </span><span class="s1">click</span><span class="s2">.</span><span class="s1">style</span><span class="s2">(</span><span class="s1">str</span><span class="s2">(</span><span class="s1">code</span><span class="s2">), </span><span class="s1">fg</span><span class="s2">=</span><span class="s5">&quot;red&quot;</span><span class="s2">),</span>
+        <span class="s3">5</span><span class="s2">: </span><span class="s0">lambda </span><span class="s1">code</span><span class="s2">: </span><span class="s1">click</span><span class="s2">.</span><span class="s1">style</span><span class="s2">(</span><span class="s1">str</span><span class="s2">(</span><span class="s1">code</span><span class="s2">), </span><span class="s1">fg</span><span class="s2">=</span><span class="s5">&quot;bright_red&quot;</span><span class="s2">),</span>
+    <span class="s2">}</span>
+
+    <span class="s0">def </span><span class="s1">get_status_code</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">status_code</span><span class="s2">: </span><span class="s1">int</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">status_phrase </span><span class="s2">= </span><span class="s1">http</span><span class="s2">.</span><span class="s1">HTTPStatus</span><span class="s2">(</span><span class="s1">status_code</span><span class="s2">).</span><span class="s1">phrase</span>
+        <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+            <span class="s1">status_phrase </span><span class="s2">= </span><span class="s5">&quot;&quot;</span>
+        <span class="s1">status_and_phrase </span><span class="s2">= </span><span class="s5">f&quot;</span><span class="s0">{</span><span class="s1">status_code</span><span class="s0">} {</span><span class="s1">status_phrase</span><span class="s0">}</span><span class="s5">&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">use_colors</span><span class="s2">:</span>
+
+            <span class="s0">def </span><span class="s1">default</span><span class="s2">(</span><span class="s1">code</span><span class="s2">: </span><span class="s1">int</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">status_and_phrase  </span><span class="s6"># pragma: no cover</span>
+
+            <span class="s1">func </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">status_code_colours</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">status_code </span><span class="s2">// </span><span class="s3">100</span><span class="s2">, </span><span class="s1">default</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">func</span><span class="s2">(</span><span class="s1">status_and_phrase</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">status_and_phrase</span>
+
+    <span class="s0">def </span><span class="s1">formatMessage</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">record</span><span class="s2">: </span><span class="s1">logging</span><span class="s2">.</span><span class="s1">LogRecord</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s1">recordcopy </span><span class="s2">= </span><span class="s1">copy</span><span class="s2">(</span><span class="s1">record</span><span class="s2">)</span>
+        <span class="s2">(</span>
+            <span class="s1">client_addr</span><span class="s2">,</span>
+            <span class="s1">method</span><span class="s2">,</span>
+            <span class="s1">full_path</span><span class="s2">,</span>
+            <span class="s1">http_version</span><span class="s2">,</span>
+            <span class="s1">status_code</span><span class="s2">,</span>
+        <span class="s2">) = </span><span class="s1">recordcopy</span><span class="s2">.</span><span class="s1">args  </span><span class="s6"># type: ignore[misc]</span>
+        <span class="s1">status_code </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">get_status_code</span><span class="s2">(</span><span class="s1">int</span><span class="s2">(</span><span class="s1">status_code</span><span class="s2">))  </span><span class="s6"># type: ignore[arg-type]</span>
+        <span class="s1">request_line </span><span class="s2">= </span><span class="s5">f&quot;</span><span class="s0">{</span><span class="s1">method</span><span class="s0">} {</span><span class="s1">full_path</span><span class="s0">} </span><span class="s5">HTTP/</span><span class="s0">{</span><span class="s1">http_version</span><span class="s0">}</span><span class="s5">&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">use_colors</span><span class="s2">:</span>
+            <span class="s1">request_line </span><span class="s2">= </span><span class="s1">click</span><span class="s2">.</span><span class="s1">style</span><span class="s2">(</span><span class="s1">request_line</span><span class="s2">, </span><span class="s1">bold</span><span class="s2">=</span><span class="s0">True</span><span class="s2">)</span>
+        <span class="s1">recordcopy</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span>
+            <span class="s2">{</span>
+                <span class="s5">&quot;client_addr&quot;</span><span class="s2">: </span><span class="s1">client_addr</span><span class="s2">,</span>
+                <span class="s5">&quot;request_line&quot;</span><span class="s2">: </span><span class="s1">request_line</span><span class="s2">,</span>
+                <span class="s5">&quot;status_code&quot;</span><span class="s2">: </span><span class="s1">status_code</span><span class="s2">,</span>
+            <span class="s2">}</span>
+        <span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">formatMessage</span><span class="s2">(</span><span class="s1">recordcopy</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

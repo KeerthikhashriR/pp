@@ -1,0 +1,213 @@
+<html>
+<head>
+<title>views.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+views.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+
+<span class="s0">from </span><span class="s2">. </span><span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">ft</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">globals </span><span class="s0">import </span><span class="s1">current_app</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">globals </span><span class="s0">import </span><span class="s1">request</span>
+
+<span class="s1">F </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s3">&quot;F&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[..., </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">])</span>
+
+<span class="s1">http_method_funcs </span><span class="s2">= </span><span class="s1">frozenset</span><span class="s2">(</span>
+    <span class="s2">[</span><span class="s3">&quot;get&quot;</span><span class="s2">, </span><span class="s3">&quot;post&quot;</span><span class="s2">, </span><span class="s3">&quot;head&quot;</span><span class="s2">, </span><span class="s3">&quot;options&quot;</span><span class="s2">, </span><span class="s3">&quot;delete&quot;</span><span class="s2">, </span><span class="s3">&quot;put&quot;</span><span class="s2">, </span><span class="s3">&quot;trace&quot;</span><span class="s2">, </span><span class="s3">&quot;patch&quot;</span><span class="s2">]</span>
+<span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">View</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Subclass this class and override :meth:`dispatch_request` to 
+    create a generic class-based view. Call :meth:`as_view` to create a 
+    view function that creates an instance of the class with the given 
+    arguments and calls its ``dispatch_request`` method with any URL 
+    variables. 
+ 
+    See :doc:`views` for a detailed guide. 
+ 
+    .. code-block:: python 
+ 
+        class Hello(View): 
+            init_every_request = False 
+ 
+            def dispatch_request(self, name): 
+                return f&quot;Hello, {name}!&quot; 
+ 
+        app.add_url_rule( 
+            &quot;/hello/&lt;name&gt;&quot;, view_func=Hello.as_view(&quot;hello&quot;) 
+        ) 
+ 
+    Set :attr:`methods` on the class to change what methods the view 
+    accepts. 
+ 
+    Set :attr:`decorators` on the class to apply a list of decorators to 
+    the generated view function. Decorators applied to the class itself 
+    will not be applied to the generated view function! 
+ 
+    Set :attr:`init_every_request` to ``False`` for efficiency, unless 
+    you need to store request-global data on ``self``. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s5">#: The methods this view is registered for. Uses the same default</span>
+    <span class="s5">#: (``[&quot;GET&quot;, &quot;HEAD&quot;, &quot;OPTIONS&quot;]``) as ``route`` and</span>
+    <span class="s5">#: ``add_url_rule`` by default.</span>
+    <span class="s1">methods</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Collection</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None</span><span class="s2">] = </span><span class="s0">None</span>
+
+    <span class="s5">#: Control whether the ``OPTIONS`` method is handled automatically.</span>
+    <span class="s5">#: Uses the same default (``True``) as ``route`` and</span>
+    <span class="s5">#: ``add_url_rule`` by default.</span>
+    <span class="s1">provide_automatic_options</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">bool </span><span class="s2">| </span><span class="s0">None</span><span class="s2">] = </span><span class="s0">None</span>
+
+    <span class="s5">#: A list of decorators to apply, in order, to the generated view</span>
+    <span class="s5">#: function. Remember that ``@decorator`` syntax is applied bottom</span>
+    <span class="s5">#: to top, so the first decorator in the list would be the bottom</span>
+    <span class="s5">#: decorator.</span>
+    <span class="s5">#:</span>
+    <span class="s5">#: .. versionadded:: 0.8</span>
+    <span class="s1">decorators</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">list</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[..., </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]]] = []</span>
+
+    <span class="s5">#: Create a new instance of this view class for every request by</span>
+    <span class="s5">#: default. If a view subclass sets this to ``False``, the same</span>
+    <span class="s5">#: instance is used for every request.</span>
+    <span class="s5">#:</span>
+    <span class="s5">#: A single instance is more efficient, especially if complex setup</span>
+    <span class="s5">#: is done during init. However, storing data on ``self`` is no</span>
+    <span class="s5">#: longer safe across requests, and :data:`~flask.g` should be used</span>
+    <span class="s5">#: instead.</span>
+    <span class="s5">#:</span>
+    <span class="s5">#: .. versionadded:: 2.2</span>
+    <span class="s1">init_every_request</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">] = </span><span class="s0">True</span>
+
+    <span class="s0">def </span><span class="s1">dispatch_request</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; ft</span><span class="s2">.</span><span class="s1">ResponseReturnValue</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;The actual view function behavior. Subclasses must override 
+        this and return a valid response. Any variables from the URL 
+        rule are passed as keyword arguments. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">raise </span><span class="s1">NotImplementedError</span><span class="s2">()</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">as_view</span><span class="s2">(</span>
+        <span class="s1">cls</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, *</span><span class="s1">class_args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, **</span><span class="s1">class_kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span>
+    <span class="s2">) </span><span class="s1">-&gt; ft</span><span class="s2">.</span><span class="s1">RouteCallable</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Convert the class into a view function that can be registered 
+        for a route. 
+ 
+        By default, the generated view will create a new instance of the 
+        view class for every request and call its 
+        :meth:`dispatch_request` method. If the view class sets 
+        :attr:`init_every_request` to ``False``, the same instance will 
+        be used for every request. 
+ 
+        Except for ``name``, all other arguments passed to this method 
+        are forwarded to the view class ``__init__`` method. 
+ 
+        .. versionchanged:: 2.2 
+            Added the ``init_every_request`` class attribute. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">init_every_request</span><span class="s2">:</span>
+
+            <span class="s0">def </span><span class="s1">view</span><span class="s2">(**</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; ft</span><span class="s2">.</span><span class="s1">ResponseReturnValue</span><span class="s2">:</span>
+                <span class="s1">self </span><span class="s2">= </span><span class="s1">view</span><span class="s2">.</span><span class="s1">view_class</span><span class="s2">(  </span><span class="s5"># type: ignore[attr-defined]</span>
+                    <span class="s2">*</span><span class="s1">class_args</span><span class="s2">, **</span><span class="s1">class_kwargs</span>
+                <span class="s2">)</span>
+                <span class="s0">return </span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">ensure_sync</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">dispatch_request</span><span class="s2">)(**</span><span class="s1">kwargs</span><span class="s2">)  </span><span class="s5"># type: ignore[no-any-return]</span>
+
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">self </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">(*</span><span class="s1">class_args</span><span class="s2">, **</span><span class="s1">class_kwargs</span><span class="s2">)  </span><span class="s5"># pyright: ignore</span>
+
+            <span class="s0">def </span><span class="s1">view</span><span class="s2">(**</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; ft</span><span class="s2">.</span><span class="s1">ResponseReturnValue</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">ensure_sync</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">dispatch_request</span><span class="s2">)(**</span><span class="s1">kwargs</span><span class="s2">)  </span><span class="s5"># type: ignore[no-any-return]</span>
+
+        <span class="s0">if </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">decorators</span><span class="s2">:</span>
+            <span class="s1">view</span><span class="s2">.</span><span class="s1">__name__ </span><span class="s2">= </span><span class="s1">name</span>
+            <span class="s1">view</span><span class="s2">.</span><span class="s1">__module__ </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__module__</span>
+            <span class="s0">for </span><span class="s1">decorator </span><span class="s0">in </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">decorators</span><span class="s2">:</span>
+                <span class="s1">view </span><span class="s2">= </span><span class="s1">decorator</span><span class="s2">(</span><span class="s1">view</span><span class="s2">)</span>
+
+        <span class="s5"># We attach the view class to the view function for two reasons:</span>
+        <span class="s5"># first of all it allows us to easily figure out what class-based</span>
+        <span class="s5"># view this thing came from, secondly it's also used for instantiating</span>
+        <span class="s5"># the view class so you can actually replace it with something else</span>
+        <span class="s5"># for testing purposes and debugging.</span>
+        <span class="s1">view</span><span class="s2">.</span><span class="s1">view_class </span><span class="s2">= </span><span class="s1">cls  </span><span class="s5"># type: ignore</span>
+        <span class="s1">view</span><span class="s2">.</span><span class="s1">__name__ </span><span class="s2">= </span><span class="s1">name</span>
+        <span class="s1">view</span><span class="s2">.</span><span class="s1">__doc__ </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__doc__</span>
+        <span class="s1">view</span><span class="s2">.</span><span class="s1">__module__ </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__module__</span>
+        <span class="s1">view</span><span class="s2">.</span><span class="s1">methods </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">methods  </span><span class="s5"># type: ignore</span>
+        <span class="s1">view</span><span class="s2">.</span><span class="s1">provide_automatic_options </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">provide_automatic_options  </span><span class="s5"># type: ignore</span>
+        <span class="s0">return </span><span class="s1">view</span>
+
+
+<span class="s0">class </span><span class="s1">MethodView</span><span class="s2">(</span><span class="s1">View</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;Dispatches request methods to the corresponding instance methods. 
+    For example, if you implement a ``get`` method, it will be used to 
+    handle ``GET`` requests. 
+ 
+    This can be useful for defining a REST API. 
+ 
+    :attr:`methods` is automatically set based on the methods defined on 
+    the class. 
+ 
+    See :doc:`views` for a detailed guide. 
+ 
+    .. code-block:: python 
+ 
+        class CounterAPI(MethodView): 
+            def get(self): 
+                return str(session.get(&quot;counter&quot;, 0)) 
+ 
+            def post(self): 
+                session[&quot;counter&quot;] = session.get(&quot;counter&quot;, 0) + 1 
+                return redirect(url_for(&quot;counter&quot;)) 
+ 
+        app.add_url_rule( 
+            &quot;/counter&quot;, view_func=CounterAPI.as_view(&quot;counter&quot;) 
+        ) 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init_subclass__</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init_subclass__</span><span class="s2">(**</span><span class="s1">kwargs</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s3">&quot;methods&quot; </span><span class="s0">not in </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">:</span>
+            <span class="s1">methods </span><span class="s2">= </span><span class="s1">set</span><span class="s2">()</span>
+
+            <span class="s0">for </span><span class="s1">base </span><span class="s0">in </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__bases__</span><span class="s2">:</span>
+                <span class="s0">if </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">base</span><span class="s2">, </span><span class="s3">&quot;methods&quot;</span><span class="s2">, </span><span class="s0">None</span><span class="s2">):</span>
+                    <span class="s1">methods</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">base</span><span class="s2">.</span><span class="s1">methods</span><span class="s2">)  </span><span class="s5"># type: ignore[attr-defined]</span>
+
+            <span class="s0">for </span><span class="s1">key </span><span class="s0">in </span><span class="s1">http_method_funcs</span><span class="s2">:</span>
+                <span class="s0">if </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, </span><span class="s1">key</span><span class="s2">):</span>
+                    <span class="s1">methods</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">key</span><span class="s2">.</span><span class="s1">upper</span><span class="s2">())</span>
+
+            <span class="s0">if </span><span class="s1">methods</span><span class="s2">:</span>
+                <span class="s1">cls</span><span class="s2">.</span><span class="s1">methods </span><span class="s2">= </span><span class="s1">methods</span>
+
+    <span class="s0">def </span><span class="s1">dispatch_request</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; ft</span><span class="s2">.</span><span class="s1">ResponseReturnValue</span><span class="s2">:</span>
+        <span class="s1">meth </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">request</span><span class="s2">.</span><span class="s1">method</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">(), </span><span class="s0">None</span><span class="s2">)</span>
+
+        <span class="s5"># If the request method is HEAD and we don't have a handler for it</span>
+        <span class="s5"># retry with GET.</span>
+        <span class="s0">if </span><span class="s1">meth </span><span class="s0">is None and </span><span class="s1">request</span><span class="s2">.</span><span class="s1">method </span><span class="s2">== </span><span class="s3">&quot;HEAD&quot;</span><span class="s2">:</span>
+            <span class="s1">meth </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s3">&quot;get&quot;</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+
+        <span class="s0">assert </span><span class="s1">meth </span><span class="s0">is not None</span><span class="s2">, </span><span class="s3">f&quot;Unimplemented method </span><span class="s0">{</span><span class="s1">request</span><span class="s2">.</span><span class="s1">method</span><span class="s0">!r}</span><span class="s3">&quot;</span>
+        <span class="s0">return </span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">ensure_sync</span><span class="s2">(</span><span class="s1">meth</span><span class="s2">)(**</span><span class="s1">kwargs</span><span class="s2">)  </span><span class="s5"># type: ignore[no-any-return]</span>
+</pre>
+</body>
+</html>

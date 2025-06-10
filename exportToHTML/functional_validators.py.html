@@ -1,0 +1,851 @@
+<html>
+<head>
+<title>functional_validators.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #2aacb8;}
+.s5 { color: #6aab73;}
+.s6 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+functional_validators.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;This module contains related classes and functions for validation.&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations </span><span class="s2">as </span><span class="s1">_annotations</span>
+
+<span class="s2">import </span><span class="s1">dataclasses</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">from </span><span class="s1">functools </span><span class="s2">import </span><span class="s1">partialmethod</span>
+<span class="s2">from </span><span class="s1">types </span><span class="s2">import </span><span class="s1">FunctionType</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span><span class="s3">, </span><span class="s1">Annotated</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Callable</span><span class="s3">, </span><span class="s1">Literal</span><span class="s3">, </span><span class="s1">TypeVar</span><span class="s3">, </span><span class="s1">Union</span><span class="s3">, </span><span class="s1">cast</span><span class="s3">, </span><span class="s1">overload</span>
+
+<span class="s2">from </span><span class="s1">pydantic_core </span><span class="s2">import </span><span class="s1">PydanticUndefined</span><span class="s3">, </span><span class="s1">core_schema</span>
+<span class="s2">from </span><span class="s1">pydantic_core </span><span class="s2">import </span><span class="s1">core_schema </span><span class="s2">as </span><span class="s1">_core_schema</span>
+<span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">Self</span><span class="s3">, </span><span class="s1">TypeAlias</span>
+
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_internal </span><span class="s2">import </span><span class="s1">_decorators</span><span class="s3">, </span><span class="s1">_generics</span><span class="s3">, </span><span class="s1">_internal_dataclass</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">annotated_handlers </span><span class="s2">import </span><span class="s1">GetCoreSchemaHandler</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">errors </span><span class="s2">import </span><span class="s1">PydanticUserError</span>
+
+<span class="s2">if </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">version_info </span><span class="s3">&lt; (</span><span class="s4">3</span><span class="s3">, </span><span class="s4">11</span><span class="s3">):</span>
+    <span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">Protocol</span>
+<span class="s2">else</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Protocol</span>
+
+<span class="s1">_inspect_validator </span><span class="s3">= </span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">inspect_validator</span>
+
+
+<span class="s3">@</span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">dataclass</span><span class="s3">(</span><span class="s1">frozen</span><span class="s3">=</span><span class="s2">True</span><span class="s3">, **</span><span class="s1">_internal_dataclass</span><span class="s3">.</span><span class="s1">slots_true</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">AfterValidator</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;!!! abstract &quot;Usage Documentation&quot; 
+        [field *after* validators](../concepts/validators.md#field-after-validator) 
+ 
+    A metadata class that indicates that a validation should be applied **after** the inner validation logic. 
+ 
+    Attributes: 
+        func: The validator function. 
+ 
+    Example: 
+        ```python 
+        from typing import Annotated 
+ 
+        from pydantic import AfterValidator, BaseModel, ValidationError 
+ 
+        MyInt = Annotated[int, AfterValidator(lambda v: v + 1)] 
+ 
+        class Model(BaseModel): 
+            a: MyInt 
+ 
+        print(Model(a=1).a) 
+        #&gt; 2 
+ 
+        try: 
+            Model(a='a') 
+        except ValidationError as e: 
+            print(e.json(indent=2)) 
+            ''' 
+            [ 
+              { 
+                &quot;type&quot;: &quot;int_parsing&quot;, 
+                &quot;loc&quot;: [ 
+                  &quot;a&quot; 
+                ], 
+                &quot;msg&quot;: &quot;Input should be a valid integer, unable to parse string as an integer&quot;, 
+                &quot;input&quot;: &quot;a&quot;, 
+                &quot;url&quot;: &quot;https://errors.pydantic.dev/2/v/int_parsing&quot; 
+              } 
+            ] 
+            ''' 
+        ``` 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">func</span><span class="s3">: </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">NoInfoValidatorFunction </span><span class="s3">| </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">WithInfoValidatorFunction</span>
+
+    <span class="s2">def </span><span class="s1">__get_pydantic_core_schema__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">source_type</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">: </span><span class="s1">GetCoreSchemaHandler</span><span class="s3">) </span><span class="s1">-&gt; core_schema</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">:</span>
+        <span class="s1">schema </span><span class="s3">= </span><span class="s1">handler</span><span class="s3">(</span><span class="s1">source_type</span><span class="s3">)</span>
+        <span class="s1">info_arg </span><span class="s3">= </span><span class="s1">_inspect_validator</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">func</span><span class="s3">, </span><span class="s5">'after'</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">info_arg</span><span class="s3">:</span>
+            <span class="s1">func </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">WithInfoValidatorFunction</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">func</span><span class="s3">)</span>
+            <span class="s2">return </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">with_info_after_validator_function</span><span class="s3">(</span><span class="s1">func</span><span class="s3">, </span><span class="s1">schema</span><span class="s3">=</span><span class="s1">schema</span><span class="s3">, </span><span class="s1">field_name</span><span class="s3">=</span><span class="s1">handler</span><span class="s3">.</span><span class="s1">field_name</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">func </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">NoInfoValidatorFunction</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">func</span><span class="s3">)</span>
+            <span class="s2">return </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">no_info_after_validator_function</span><span class="s3">(</span><span class="s1">func</span><span class="s3">, </span><span class="s1">schema</span><span class="s3">=</span><span class="s1">schema</span><span class="s3">)</span>
+
+    <span class="s3">@</span><span class="s1">classmethod</span>
+    <span class="s2">def </span><span class="s1">_from_decorator</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">decorator</span><span class="s3">: </span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">Decorator</span><span class="s3">[</span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">FieldValidatorDecoratorInfo</span><span class="s3">]) </span><span class="s1">-&gt; Self</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">cls</span><span class="s3">(</span><span class="s1">func</span><span class="s3">=</span><span class="s1">decorator</span><span class="s3">.</span><span class="s1">func</span><span class="s3">)</span>
+
+
+<span class="s3">@</span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">dataclass</span><span class="s3">(</span><span class="s1">frozen</span><span class="s3">=</span><span class="s2">True</span><span class="s3">, **</span><span class="s1">_internal_dataclass</span><span class="s3">.</span><span class="s1">slots_true</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">BeforeValidator</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;!!! abstract &quot;Usage Documentation&quot; 
+        [field *before* validators](../concepts/validators.md#field-before-validator) 
+ 
+    A metadata class that indicates that a validation should be applied **before** the inner validation logic. 
+ 
+    Attributes: 
+        func: The validator function. 
+        json_schema_input_type: The input type of the function. This is only used to generate the appropriate 
+            JSON Schema (in validation mode). 
+ 
+    Example: 
+        ```python 
+        from typing import Annotated 
+ 
+        from pydantic import BaseModel, BeforeValidator 
+ 
+        MyInt = Annotated[int, BeforeValidator(lambda v: v + 1)] 
+ 
+        class Model(BaseModel): 
+            a: MyInt 
+ 
+        print(Model(a=1).a) 
+        #&gt; 2 
+ 
+        try: 
+            Model(a='a') 
+        except TypeError as e: 
+            print(e) 
+            #&gt; can only concatenate str (not &quot;int&quot;) to str 
+        ``` 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">func</span><span class="s3">: </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">NoInfoValidatorFunction </span><span class="s3">| </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">WithInfoValidatorFunction</span>
+    <span class="s1">json_schema_input_type</span><span class="s3">: </span><span class="s1">Any </span><span class="s3">= </span><span class="s1">PydanticUndefined</span>
+
+    <span class="s2">def </span><span class="s1">__get_pydantic_core_schema__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">source_type</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">: </span><span class="s1">GetCoreSchemaHandler</span><span class="s3">) </span><span class="s1">-&gt; core_schema</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">:</span>
+        <span class="s1">schema </span><span class="s3">= </span><span class="s1">handler</span><span class="s3">(</span><span class="s1">source_type</span><span class="s3">)</span>
+        <span class="s1">input_schema </span><span class="s3">= (</span>
+            <span class="s2">None</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">json_schema_input_type </span><span class="s2">is </span><span class="s1">PydanticUndefined</span>
+            <span class="s2">else </span><span class="s1">handler</span><span class="s3">.</span><span class="s1">generate_schema</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">json_schema_input_type</span><span class="s3">)</span>
+        <span class="s3">)</span>
+
+        <span class="s1">info_arg </span><span class="s3">= </span><span class="s1">_inspect_validator</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">func</span><span class="s3">, </span><span class="s5">'before'</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">info_arg</span><span class="s3">:</span>
+            <span class="s1">func </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">WithInfoValidatorFunction</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">func</span><span class="s3">)</span>
+            <span class="s2">return </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">with_info_before_validator_function</span><span class="s3">(</span>
+                <span class="s1">func</span><span class="s3">,</span>
+                <span class="s1">schema</span><span class="s3">=</span><span class="s1">schema</span><span class="s3">,</span>
+                <span class="s1">field_name</span><span class="s3">=</span><span class="s1">handler</span><span class="s3">.</span><span class="s1">field_name</span><span class="s3">,</span>
+                <span class="s1">json_schema_input_schema</span><span class="s3">=</span><span class="s1">input_schema</span><span class="s3">,</span>
+            <span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">func </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">NoInfoValidatorFunction</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">func</span><span class="s3">)</span>
+            <span class="s2">return </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">no_info_before_validator_function</span><span class="s3">(</span>
+                <span class="s1">func</span><span class="s3">, </span><span class="s1">schema</span><span class="s3">=</span><span class="s1">schema</span><span class="s3">, </span><span class="s1">json_schema_input_schema</span><span class="s3">=</span><span class="s1">input_schema</span>
+            <span class="s3">)</span>
+
+    <span class="s3">@</span><span class="s1">classmethod</span>
+    <span class="s2">def </span><span class="s1">_from_decorator</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">decorator</span><span class="s3">: </span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">Decorator</span><span class="s3">[</span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">FieldValidatorDecoratorInfo</span><span class="s3">]) </span><span class="s1">-&gt; Self</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">cls</span><span class="s3">(</span>
+            <span class="s1">func</span><span class="s3">=</span><span class="s1">decorator</span><span class="s3">.</span><span class="s1">func</span><span class="s3">,</span>
+            <span class="s1">json_schema_input_type</span><span class="s3">=</span><span class="s1">decorator</span><span class="s3">.</span><span class="s1">info</span><span class="s3">.</span><span class="s1">json_schema_input_type</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+
+<span class="s3">@</span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">dataclass</span><span class="s3">(</span><span class="s1">frozen</span><span class="s3">=</span><span class="s2">True</span><span class="s3">, **</span><span class="s1">_internal_dataclass</span><span class="s3">.</span><span class="s1">slots_true</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">PlainValidator</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;!!! abstract &quot;Usage Documentation&quot; 
+        [field *plain* validators](../concepts/validators.md#field-plain-validator) 
+ 
+    A metadata class that indicates that a validation should be applied **instead** of the inner validation logic. 
+ 
+    !!! note 
+        Before v2.9, `PlainValidator` wasn't always compatible with JSON Schema generation for `mode='validation'`. 
+        You can now use the `json_schema_input_type` argument to specify the input type of the function 
+        to be used in the JSON schema when `mode='validation'` (the default). See the example below for more details. 
+ 
+    Attributes: 
+        func: The validator function. 
+        json_schema_input_type: The input type of the function. This is only used to generate the appropriate 
+            JSON Schema (in validation mode). If not provided, will default to `Any`. 
+ 
+    Example: 
+        ```python 
+        from typing import Annotated, Union 
+ 
+        from pydantic import BaseModel, PlainValidator 
+ 
+        MyInt = Annotated[ 
+            int, 
+            PlainValidator( 
+                lambda v: int(v) + 1, json_schema_input_type=Union[str, int]  # (1)! 
+            ), 
+        ] 
+ 
+        class Model(BaseModel): 
+            a: MyInt 
+ 
+        print(Model(a='1').a) 
+        #&gt; 2 
+ 
+        print(Model(a=1).a) 
+        #&gt; 2 
+        ``` 
+ 
+        1. In this example, we've specified the `json_schema_input_type` as `Union[str, int]` which indicates to the JSON schema 
+        generator that in validation mode, the input type for the `a` field can be either a `str` or an `int`. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">func</span><span class="s3">: </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">NoInfoValidatorFunction </span><span class="s3">| </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">WithInfoValidatorFunction</span>
+    <span class="s1">json_schema_input_type</span><span class="s3">: </span><span class="s1">Any </span><span class="s3">= </span><span class="s1">Any</span>
+
+    <span class="s2">def </span><span class="s1">__get_pydantic_core_schema__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">source_type</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">: </span><span class="s1">GetCoreSchemaHandler</span><span class="s3">) </span><span class="s1">-&gt; core_schema</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">:</span>
+        <span class="s6"># Note that for some valid uses of PlainValidator, it is not possible to generate a core schema for the</span>
+        <span class="s6"># source_type, so calling `handler(source_type)` will error, which prevents us from generating a proper</span>
+        <span class="s6"># serialization schema. To work around this for use cases that will not involve serialization, we simply</span>
+        <span class="s6"># catch any PydanticSchemaGenerationError that may be raised while attempting to build the serialization schema</span>
+        <span class="s6"># and abort any attempts to handle special serialization.</span>
+        <span class="s2">from </span><span class="s1">pydantic </span><span class="s2">import </span><span class="s1">PydanticSchemaGenerationError</span>
+
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">schema </span><span class="s3">= </span><span class="s1">handler</span><span class="s3">(</span><span class="s1">source_type</span><span class="s3">)</span>
+            <span class="s6"># TODO if `schema['serialization']` is one of `'include-exclude-dict/sequence',</span>
+            <span class="s6"># schema validation will fail. That's why we use 'type ignore' comments below.</span>
+            <span class="s1">serialization </span><span class="s3">= </span><span class="s1">schema</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span>
+                <span class="s5">'serialization'</span><span class="s3">,</span>
+                <span class="s1">core_schema</span><span class="s3">.</span><span class="s1">wrap_serializer_function_ser_schema</span><span class="s3">(</span>
+                    <span class="s1">function</span><span class="s3">=</span><span class="s2">lambda </span><span class="s1">v</span><span class="s3">, </span><span class="s1">h</span><span class="s3">: </span><span class="s1">h</span><span class="s3">(</span><span class="s1">v</span><span class="s3">),</span>
+                    <span class="s1">schema</span><span class="s3">=</span><span class="s1">schema</span><span class="s3">,</span>
+                    <span class="s1">return_schema</span><span class="s3">=</span><span class="s1">handler</span><span class="s3">.</span><span class="s1">generate_schema</span><span class="s3">(</span><span class="s1">source_type</span><span class="s3">),</span>
+                <span class="s3">),</span>
+            <span class="s3">)</span>
+        <span class="s2">except </span><span class="s1">PydanticSchemaGenerationError</span><span class="s3">:</span>
+            <span class="s1">serialization </span><span class="s3">= </span><span class="s2">None</span>
+
+        <span class="s1">input_schema </span><span class="s3">= </span><span class="s1">handler</span><span class="s3">.</span><span class="s1">generate_schema</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">json_schema_input_type</span><span class="s3">)</span>
+
+        <span class="s1">info_arg </span><span class="s3">= </span><span class="s1">_inspect_validator</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">func</span><span class="s3">, </span><span class="s5">'plain'</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">info_arg</span><span class="s3">:</span>
+            <span class="s1">func </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">WithInfoValidatorFunction</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">func</span><span class="s3">)</span>
+            <span class="s2">return </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">with_info_plain_validator_function</span><span class="s3">(</span>
+                <span class="s1">func</span><span class="s3">,</span>
+                <span class="s1">field_name</span><span class="s3">=</span><span class="s1">handler</span><span class="s3">.</span><span class="s1">field_name</span><span class="s3">,</span>
+                <span class="s1">serialization</span><span class="s3">=</span><span class="s1">serialization</span><span class="s3">,  </span><span class="s6"># pyright: ignore[reportArgumentType]</span>
+                <span class="s1">json_schema_input_schema</span><span class="s3">=</span><span class="s1">input_schema</span><span class="s3">,</span>
+            <span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">func </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">NoInfoValidatorFunction</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">func</span><span class="s3">)</span>
+            <span class="s2">return </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">no_info_plain_validator_function</span><span class="s3">(</span>
+                <span class="s1">func</span><span class="s3">,</span>
+                <span class="s1">serialization</span><span class="s3">=</span><span class="s1">serialization</span><span class="s3">,  </span><span class="s6"># pyright: ignore[reportArgumentType]</span>
+                <span class="s1">json_schema_input_schema</span><span class="s3">=</span><span class="s1">input_schema</span><span class="s3">,</span>
+            <span class="s3">)</span>
+
+    <span class="s3">@</span><span class="s1">classmethod</span>
+    <span class="s2">def </span><span class="s1">_from_decorator</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">decorator</span><span class="s3">: </span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">Decorator</span><span class="s3">[</span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">FieldValidatorDecoratorInfo</span><span class="s3">]) </span><span class="s1">-&gt; Self</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">cls</span><span class="s3">(</span>
+            <span class="s1">func</span><span class="s3">=</span><span class="s1">decorator</span><span class="s3">.</span><span class="s1">func</span><span class="s3">,</span>
+            <span class="s1">json_schema_input_type</span><span class="s3">=</span><span class="s1">decorator</span><span class="s3">.</span><span class="s1">info</span><span class="s3">.</span><span class="s1">json_schema_input_type</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+
+<span class="s3">@</span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">dataclass</span><span class="s3">(</span><span class="s1">frozen</span><span class="s3">=</span><span class="s2">True</span><span class="s3">, **</span><span class="s1">_internal_dataclass</span><span class="s3">.</span><span class="s1">slots_true</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">WrapValidator</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;!!! abstract &quot;Usage Documentation&quot; 
+        [field *wrap* validators](../concepts/validators.md#field-wrap-validator) 
+ 
+    A metadata class that indicates that a validation should be applied **around** the inner validation logic. 
+ 
+    Attributes: 
+        func: The validator function. 
+        json_schema_input_type: The input type of the function. This is only used to generate the appropriate 
+            JSON Schema (in validation mode). 
+ 
+    ```python 
+    from datetime import datetime 
+    from typing import Annotated 
+ 
+    from pydantic import BaseModel, ValidationError, WrapValidator 
+ 
+    def validate_timestamp(v, handler): 
+        if v == 'now': 
+            # we don't want to bother with further validation, just return the new value 
+            return datetime.now() 
+        try: 
+            return handler(v) 
+        except ValidationError: 
+            # validation failed, in this case we want to return a default value 
+            return datetime(2000, 1, 1) 
+ 
+    MyTimestamp = Annotated[datetime, WrapValidator(validate_timestamp)] 
+ 
+    class Model(BaseModel): 
+        a: MyTimestamp 
+ 
+    print(Model(a='now').a) 
+    #&gt; 2032-01-02 03:04:05.000006 
+    print(Model(a='invalid').a) 
+    #&gt; 2000-01-01 00:00:00 
+    ``` 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">func</span><span class="s3">: </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">NoInfoWrapValidatorFunction </span><span class="s3">| </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">WithInfoWrapValidatorFunction</span>
+    <span class="s1">json_schema_input_type</span><span class="s3">: </span><span class="s1">Any </span><span class="s3">= </span><span class="s1">PydanticUndefined</span>
+
+    <span class="s2">def </span><span class="s1">__get_pydantic_core_schema__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">source_type</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">: </span><span class="s1">GetCoreSchemaHandler</span><span class="s3">) </span><span class="s1">-&gt; core_schema</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">:</span>
+        <span class="s1">schema </span><span class="s3">= </span><span class="s1">handler</span><span class="s3">(</span><span class="s1">source_type</span><span class="s3">)</span>
+        <span class="s1">input_schema </span><span class="s3">= (</span>
+            <span class="s2">None</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">json_schema_input_type </span><span class="s2">is </span><span class="s1">PydanticUndefined</span>
+            <span class="s2">else </span><span class="s1">handler</span><span class="s3">.</span><span class="s1">generate_schema</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">json_schema_input_type</span><span class="s3">)</span>
+        <span class="s3">)</span>
+
+        <span class="s1">info_arg </span><span class="s3">= </span><span class="s1">_inspect_validator</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">func</span><span class="s3">, </span><span class="s5">'wrap'</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">info_arg</span><span class="s3">:</span>
+            <span class="s1">func </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">WithInfoWrapValidatorFunction</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">func</span><span class="s3">)</span>
+            <span class="s2">return </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">with_info_wrap_validator_function</span><span class="s3">(</span>
+                <span class="s1">func</span><span class="s3">,</span>
+                <span class="s1">schema</span><span class="s3">=</span><span class="s1">schema</span><span class="s3">,</span>
+                <span class="s1">field_name</span><span class="s3">=</span><span class="s1">handler</span><span class="s3">.</span><span class="s1">field_name</span><span class="s3">,</span>
+                <span class="s1">json_schema_input_schema</span><span class="s3">=</span><span class="s1">input_schema</span><span class="s3">,</span>
+            <span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">func </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">NoInfoWrapValidatorFunction</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">func</span><span class="s3">)</span>
+            <span class="s2">return </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">no_info_wrap_validator_function</span><span class="s3">(</span>
+                <span class="s1">func</span><span class="s3">,</span>
+                <span class="s1">schema</span><span class="s3">=</span><span class="s1">schema</span><span class="s3">,</span>
+                <span class="s1">json_schema_input_schema</span><span class="s3">=</span><span class="s1">input_schema</span><span class="s3">,</span>
+            <span class="s3">)</span>
+
+    <span class="s3">@</span><span class="s1">classmethod</span>
+    <span class="s2">def </span><span class="s1">_from_decorator</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">decorator</span><span class="s3">: </span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">Decorator</span><span class="s3">[</span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">FieldValidatorDecoratorInfo</span><span class="s3">]) </span><span class="s1">-&gt; Self</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">cls</span><span class="s3">(</span>
+            <span class="s1">func</span><span class="s3">=</span><span class="s1">decorator</span><span class="s3">.</span><span class="s1">func</span><span class="s3">,</span>
+            <span class="s1">json_schema_input_type</span><span class="s3">=</span><span class="s1">decorator</span><span class="s3">.</span><span class="s1">info</span><span class="s3">.</span><span class="s1">json_schema_input_type</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING</span><span class="s3">:</span>
+
+    <span class="s2">class </span><span class="s1">_OnlyValueValidatorClsMethod</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+        <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, /) </span><span class="s1">-&gt; Any</span><span class="s3">: ...</span>
+
+    <span class="s2">class </span><span class="s1">_V2ValidatorClsMethod</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+        <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">info</span><span class="s3">: </span><span class="s1">_core_schema</span><span class="s3">.</span><span class="s1">ValidationInfo</span><span class="s3">, /) </span><span class="s1">-&gt; Any</span><span class="s3">: ...</span>
+
+    <span class="s2">class </span><span class="s1">_OnlyValueWrapValidatorClsMethod</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+        <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">: </span><span class="s1">_core_schema</span><span class="s3">.</span><span class="s1">ValidatorFunctionWrapHandler</span><span class="s3">, /) </span><span class="s1">-&gt; Any</span><span class="s3">: ...</span>
+
+    <span class="s2">class </span><span class="s1">_V2WrapValidatorClsMethod</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+        <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span>
+            <span class="s1">self</span><span class="s3">,</span>
+            <span class="s1">cls</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+            <span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+            <span class="s1">handler</span><span class="s3">: </span><span class="s1">_core_schema</span><span class="s3">.</span><span class="s1">ValidatorFunctionWrapHandler</span><span class="s3">,</span>
+            <span class="s1">info</span><span class="s3">: </span><span class="s1">_core_schema</span><span class="s3">.</span><span class="s1">ValidationInfo</span><span class="s3">,</span>
+            <span class="s3">/,</span>
+        <span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">: ...</span>
+
+    <span class="s1">_V2Validator </span><span class="s3">= </span><span class="s1">Union</span><span class="s3">[</span>
+        <span class="s1">_V2ValidatorClsMethod</span><span class="s3">,</span>
+        <span class="s1">_core_schema</span><span class="s3">.</span><span class="s1">WithInfoValidatorFunction</span><span class="s3">,</span>
+        <span class="s1">_OnlyValueValidatorClsMethod</span><span class="s3">,</span>
+        <span class="s1">_core_schema</span><span class="s3">.</span><span class="s1">NoInfoValidatorFunction</span><span class="s3">,</span>
+    <span class="s3">]</span>
+
+    <span class="s1">_V2WrapValidator </span><span class="s3">= </span><span class="s1">Union</span><span class="s3">[</span>
+        <span class="s1">_V2WrapValidatorClsMethod</span><span class="s3">,</span>
+        <span class="s1">_core_schema</span><span class="s3">.</span><span class="s1">WithInfoWrapValidatorFunction</span><span class="s3">,</span>
+        <span class="s1">_OnlyValueWrapValidatorClsMethod</span><span class="s3">,</span>
+        <span class="s1">_core_schema</span><span class="s3">.</span><span class="s1">NoInfoWrapValidatorFunction</span><span class="s3">,</span>
+    <span class="s3">]</span>
+
+    <span class="s1">_PartialClsOrStaticMethod</span><span class="s3">: </span><span class="s1">TypeAlias </span><span class="s3">= </span><span class="s1">Union</span><span class="s3">[</span><span class="s1">classmethod</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">], </span><span class="s1">staticmethod</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">], </span><span class="s1">partialmethod</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]]</span>
+
+    <span class="s1">_V2BeforeAfterOrPlainValidatorType </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span>
+        <span class="s5">'_V2BeforeAfterOrPlainValidatorType'</span><span class="s3">,</span>
+        <span class="s1">bound</span><span class="s3">=</span><span class="s1">Union</span><span class="s3">[</span><span class="s1">_V2Validator</span><span class="s3">, </span><span class="s1">_PartialClsOrStaticMethod</span><span class="s3">],</span>
+    <span class="s3">)</span>
+    <span class="s1">_V2WrapValidatorType </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_V2WrapValidatorType'</span><span class="s3">, </span><span class="s1">bound</span><span class="s3">=</span><span class="s1">Union</span><span class="s3">[</span><span class="s1">_V2WrapValidator</span><span class="s3">, </span><span class="s1">_PartialClsOrStaticMethod</span><span class="s3">])</span>
+
+<span class="s1">FieldValidatorModes</span><span class="s3">: </span><span class="s1">TypeAlias </span><span class="s3">= </span><span class="s1">Literal</span><span class="s3">[</span><span class="s5">'before'</span><span class="s3">, </span><span class="s5">'after'</span><span class="s3">, </span><span class="s5">'wrap'</span><span class="s3">, </span><span class="s5">'plain'</span><span class="s3">]</span>
+
+
+<span class="s3">@</span><span class="s1">overload</span>
+<span class="s2">def </span><span class="s1">field_validator</span><span class="s3">(</span>
+    <span class="s1">field</span><span class="s3">: </span><span class="s1">str</span><span class="s3">,</span>
+    <span class="s3">/,</span>
+    <span class="s3">*</span><span class="s1">fields</span><span class="s3">: </span><span class="s1">str</span><span class="s3">,</span>
+    <span class="s1">mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s5">'wrap'</span><span class="s3">],</span>
+    <span class="s1">check_fields</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= ...,</span>
+    <span class="s1">json_schema_input_type</span><span class="s3">: </span><span class="s1">Any </span><span class="s3">= ...,</span>
+<span class="s3">) </span><span class="s1">-&gt; Callable</span><span class="s3">[[</span><span class="s1">_V2WrapValidatorType</span><span class="s3">], </span><span class="s1">_V2WrapValidatorType</span><span class="s3">]: ...</span>
+
+
+<span class="s3">@</span><span class="s1">overload</span>
+<span class="s2">def </span><span class="s1">field_validator</span><span class="s3">(</span>
+    <span class="s1">field</span><span class="s3">: </span><span class="s1">str</span><span class="s3">,</span>
+    <span class="s3">/,</span>
+    <span class="s3">*</span><span class="s1">fields</span><span class="s3">: </span><span class="s1">str</span><span class="s3">,</span>
+    <span class="s1">mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s5">'before'</span><span class="s3">, </span><span class="s5">'plain'</span><span class="s3">],</span>
+    <span class="s1">check_fields</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= ...,</span>
+    <span class="s1">json_schema_input_type</span><span class="s3">: </span><span class="s1">Any </span><span class="s3">= ...,</span>
+<span class="s3">) </span><span class="s1">-&gt; Callable</span><span class="s3">[[</span><span class="s1">_V2BeforeAfterOrPlainValidatorType</span><span class="s3">], </span><span class="s1">_V2BeforeAfterOrPlainValidatorType</span><span class="s3">]: ...</span>
+
+
+<span class="s3">@</span><span class="s1">overload</span>
+<span class="s2">def </span><span class="s1">field_validator</span><span class="s3">(</span>
+    <span class="s1">field</span><span class="s3">: </span><span class="s1">str</span><span class="s3">,</span>
+    <span class="s3">/,</span>
+    <span class="s3">*</span><span class="s1">fields</span><span class="s3">: </span><span class="s1">str</span><span class="s3">,</span>
+    <span class="s1">mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s5">'after'</span><span class="s3">] = ...,</span>
+    <span class="s1">check_fields</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= ...,</span>
+<span class="s3">) </span><span class="s1">-&gt; Callable</span><span class="s3">[[</span><span class="s1">_V2BeforeAfterOrPlainValidatorType</span><span class="s3">], </span><span class="s1">_V2BeforeAfterOrPlainValidatorType</span><span class="s3">]: ...</span>
+
+
+<span class="s2">def </span><span class="s1">field_validator</span><span class="s3">(</span>
+    <span class="s1">field</span><span class="s3">: </span><span class="s1">str</span><span class="s3">,</span>
+    <span class="s3">/,</span>
+    <span class="s3">*</span><span class="s1">fields</span><span class="s3">: </span><span class="s1">str</span><span class="s3">,</span>
+    <span class="s1">mode</span><span class="s3">: </span><span class="s1">FieldValidatorModes </span><span class="s3">= </span><span class="s5">'after'</span><span class="s3">,</span>
+    <span class="s1">check_fields</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">json_schema_input_type</span><span class="s3">: </span><span class="s1">Any </span><span class="s3">= </span><span class="s1">PydanticUndefined</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; Callable</span><span class="s3">[[</span><span class="s1">Any</span><span class="s3">], </span><span class="s1">Any</span><span class="s3">]:</span>
+    <span class="s0">&quot;&quot;&quot;!!! abstract &quot;Usage Documentation&quot; 
+        [field validators](../concepts/validators.md#field-validators) 
+ 
+    Decorate methods on the class indicating that they should be used to validate fields. 
+ 
+    Example usage: 
+    ```python 
+    from typing import Any 
+ 
+    from pydantic import ( 
+        BaseModel, 
+        ValidationError, 
+        field_validator, 
+    ) 
+ 
+    class Model(BaseModel): 
+        a: str 
+ 
+        @field_validator('a') 
+        @classmethod 
+        def ensure_foobar(cls, v: Any): 
+            if 'foobar' not in v: 
+                raise ValueError('&quot;foobar&quot; not found in a') 
+            return v 
+ 
+    print(repr(Model(a='this is foobar good'))) 
+    #&gt; Model(a='this is foobar good') 
+ 
+    try: 
+        Model(a='snap') 
+    except ValidationError as exc_info: 
+        print(exc_info) 
+        ''' 
+        1 validation error for Model 
+        a 
+          Value error, &quot;foobar&quot; not found in a [type=value_error, input_value='snap', input_type=str] 
+        ''' 
+    ``` 
+ 
+    For more in depth examples, see [Field Validators](../concepts/validators.md#field-validators). 
+ 
+    Args: 
+        field: The first field the `field_validator` should be called on; this is separate 
+            from `fields` to ensure an error is raised if you don't pass at least one. 
+        *fields: Additional field(s) the `field_validator` should be called on. 
+        mode: Specifies whether to validate the fields before or after validation. 
+        check_fields: Whether to check that the fields actually exist on the model. 
+        json_schema_input_type: The input type of the function. This is only used to generate 
+            the appropriate JSON Schema (in validation mode) and can only specified 
+            when `mode` is either `'before'`, `'plain'` or `'wrap'`. 
+ 
+    Returns: 
+        A decorator that can be used to decorate a function to be used as a field_validator. 
+ 
+    Raises: 
+        PydanticUserError: 
+            - If `@field_validator` is used bare (with no fields). 
+            - If the args passed to `@field_validator` as fields are not strings. 
+            - If `@field_validator` applied to instance methods. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">field</span><span class="s3">, </span><span class="s1">FunctionType</span><span class="s3">):</span>
+        <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+            <span class="s5">'`@field_validator` should be used with fields and keyword arguments, not bare. '</span>
+            <span class="s5">&quot;E.g. usage should be `@validator('&lt;field_name&gt;', ...)`&quot;</span><span class="s3">,</span>
+            <span class="s1">code</span><span class="s3">=</span><span class="s5">'validator-no-fields'</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">mode </span><span class="s2">not in </span><span class="s3">(</span><span class="s5">'before'</span><span class="s3">, </span><span class="s5">'plain'</span><span class="s3">, </span><span class="s5">'wrap'</span><span class="s3">) </span><span class="s2">and </span><span class="s1">json_schema_input_type </span><span class="s2">is not </span><span class="s1">PydanticUndefined</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+            <span class="s5">f&quot;`json_schema_input_type` can't be used when mode is set to </span><span class="s2">{</span><span class="s1">mode</span><span class="s2">!r}</span><span class="s5">&quot;</span><span class="s3">,</span>
+            <span class="s1">code</span><span class="s3">=</span><span class="s5">'validator-input-type'</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">json_schema_input_type </span><span class="s2">is </span><span class="s1">PydanticUndefined </span><span class="s2">and </span><span class="s1">mode </span><span class="s3">== </span><span class="s5">'plain'</span><span class="s3">:</span>
+        <span class="s1">json_schema_input_type </span><span class="s3">= </span><span class="s1">Any</span>
+
+    <span class="s1">fields </span><span class="s3">= </span><span class="s1">field</span><span class="s3">, *</span><span class="s1">fields</span>
+    <span class="s2">if not </span><span class="s1">all</span><span class="s3">(</span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">field</span><span class="s3">, </span><span class="s1">str</span><span class="s3">) </span><span class="s2">for </span><span class="s1">field </span><span class="s2">in </span><span class="s1">fields</span><span class="s3">):</span>
+        <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+            <span class="s5">'`@field_validator` fields should be passed as separate string args. '</span>
+            <span class="s5">&quot;E.g. usage should be `@validator('&lt;field_name_1&gt;', '&lt;field_name_2&gt;', ...)`&quot;</span><span class="s3">,</span>
+            <span class="s1">code</span><span class="s3">=</span><span class="s5">'validator-invalid-fields'</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">dec</span><span class="s3">(</span>
+        <span class="s1">f</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[..., </span><span class="s1">Any</span><span class="s3">] | </span><span class="s1">staticmethod</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] | </span><span class="s1">classmethod</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">],</span>
+    <span class="s3">) </span><span class="s1">-&gt; _decorators</span><span class="s3">.</span><span class="s1">PydanticDescriptorProxy</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]:</span>
+        <span class="s2">if </span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">is_instance_method_from_sig</span><span class="s3">(</span><span class="s1">f</span><span class="s3">):</span>
+            <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+                <span class="s5">'`@field_validator` cannot be applied to instance methods'</span><span class="s3">, </span><span class="s1">code</span><span class="s3">=</span><span class="s5">'validator-instance-method'</span>
+            <span class="s3">)</span>
+
+        <span class="s6"># auto apply the @classmethod decorator</span>
+        <span class="s1">f </span><span class="s3">= </span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">ensure_classmethod_based_on_signature</span><span class="s3">(</span><span class="s1">f</span><span class="s3">)</span>
+
+        <span class="s1">dec_info </span><span class="s3">= </span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">FieldValidatorDecoratorInfo</span><span class="s3">(</span>
+            <span class="s1">fields</span><span class="s3">=</span><span class="s1">fields</span><span class="s3">, </span><span class="s1">mode</span><span class="s3">=</span><span class="s1">mode</span><span class="s3">, </span><span class="s1">check_fields</span><span class="s3">=</span><span class="s1">check_fields</span><span class="s3">, </span><span class="s1">json_schema_input_type</span><span class="s3">=</span><span class="s1">json_schema_input_type</span>
+        <span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">PydanticDescriptorProxy</span><span class="s3">(</span><span class="s1">f</span><span class="s3">, </span><span class="s1">dec_info</span><span class="s3">)</span>
+
+    <span class="s2">return </span><span class="s1">dec</span>
+
+
+<span class="s1">_ModelType </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_ModelType'</span><span class="s3">)</span>
+<span class="s1">_ModelTypeCo </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_ModelTypeCo'</span><span class="s3">, </span><span class="s1">covariant</span><span class="s3">=</span><span class="s2">True</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">ModelWrapValidatorHandler</span><span class="s3">(</span><span class="s1">_core_schema</span><span class="s3">.</span><span class="s1">ValidatorFunctionWrapHandler</span><span class="s3">, </span><span class="s1">Protocol</span><span class="s3">[</span><span class="s1">_ModelTypeCo</span><span class="s3">]):</span>
+    <span class="s0">&quot;&quot;&quot;`@model_validator` decorated function handler argument type. This is used when `mode='wrap'`.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(  </span><span class="s6"># noqa: D102</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+        <span class="s1">outer_location</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">int </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s3">/,</span>
+    <span class="s3">) </span><span class="s1">-&gt; _ModelTypeCo</span><span class="s3">:  </span><span class="s6"># pragma: no cover</span>
+        <span class="s3">...</span>
+
+
+<span class="s2">class </span><span class="s1">ModelWrapValidatorWithoutInfo</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">[</span><span class="s1">_ModelType</span><span class="s3">]):</span>
+    <span class="s0">&quot;&quot;&quot;A `@model_validator` decorated function signature. 
+    This is used when `mode='wrap'` and the function does not have info argument. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(  </span><span class="s6"># noqa: D102</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">cls</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">_ModelType</span><span class="s3">],</span>
+        <span class="s6"># this can be a dict, a model instance</span>
+        <span class="s6"># or anything else that gets passed to validate_python</span>
+        <span class="s6"># thus validators _must_ handle all cases</span>
+        <span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+        <span class="s1">handler</span><span class="s3">: </span><span class="s1">ModelWrapValidatorHandler</span><span class="s3">[</span><span class="s1">_ModelType</span><span class="s3">],</span>
+        <span class="s3">/,</span>
+    <span class="s3">) </span><span class="s1">-&gt; _ModelType</span><span class="s3">: ...</span>
+
+
+<span class="s2">class </span><span class="s1">ModelWrapValidator</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">[</span><span class="s1">_ModelType</span><span class="s3">]):</span>
+    <span class="s0">&quot;&quot;&quot;A `@model_validator` decorated function signature. This is used when `mode='wrap'`.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(  </span><span class="s6"># noqa: D102</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">cls</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">_ModelType</span><span class="s3">],</span>
+        <span class="s6"># this can be a dict, a model instance</span>
+        <span class="s6"># or anything else that gets passed to validate_python</span>
+        <span class="s6"># thus validators _must_ handle all cases</span>
+        <span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+        <span class="s1">handler</span><span class="s3">: </span><span class="s1">ModelWrapValidatorHandler</span><span class="s3">[</span><span class="s1">_ModelType</span><span class="s3">],</span>
+        <span class="s1">info</span><span class="s3">: </span><span class="s1">_core_schema</span><span class="s3">.</span><span class="s1">ValidationInfo</span><span class="s3">,</span>
+        <span class="s3">/,</span>
+    <span class="s3">) </span><span class="s1">-&gt; _ModelType</span><span class="s3">: ...</span>
+
+
+<span class="s2">class </span><span class="s1">FreeModelBeforeValidatorWithoutInfo</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;A `@model_validator` decorated function signature. 
+    This is used when `mode='before'` and the function does not have info argument. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(  </span><span class="s6"># noqa: D102</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s6"># this can be a dict, a model instance</span>
+        <span class="s6"># or anything else that gets passed to validate_python</span>
+        <span class="s6"># thus validators _must_ handle all cases</span>
+        <span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+        <span class="s3">/,</span>
+    <span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">: ...</span>
+
+
+<span class="s2">class </span><span class="s1">ModelBeforeValidatorWithoutInfo</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;A `@model_validator` decorated function signature. 
+    This is used when `mode='before'` and the function does not have info argument. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(  </span><span class="s6"># noqa: D102</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">cls</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+        <span class="s6"># this can be a dict, a model instance</span>
+        <span class="s6"># or anything else that gets passed to validate_python</span>
+        <span class="s6"># thus validators _must_ handle all cases</span>
+        <span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+        <span class="s3">/,</span>
+    <span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">: ...</span>
+
+
+<span class="s2">class </span><span class="s1">FreeModelBeforeValidator</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;A `@model_validator` decorated function signature. This is used when `mode='before'`.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(  </span><span class="s6"># noqa: D102</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s6"># this can be a dict, a model instance</span>
+        <span class="s6"># or anything else that gets passed to validate_python</span>
+        <span class="s6"># thus validators _must_ handle all cases</span>
+        <span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+        <span class="s1">info</span><span class="s3">: </span><span class="s1">_core_schema</span><span class="s3">.</span><span class="s1">ValidationInfo</span><span class="s3">,</span>
+        <span class="s3">/,</span>
+    <span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">: ...</span>
+
+
+<span class="s2">class </span><span class="s1">ModelBeforeValidator</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;A `@model_validator` decorated function signature. This is used when `mode='before'`.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(  </span><span class="s6"># noqa: D102</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">cls</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+        <span class="s6"># this can be a dict, a model instance</span>
+        <span class="s6"># or anything else that gets passed to validate_python</span>
+        <span class="s6"># thus validators _must_ handle all cases</span>
+        <span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+        <span class="s1">info</span><span class="s3">: </span><span class="s1">_core_schema</span><span class="s3">.</span><span class="s1">ValidationInfo</span><span class="s3">,</span>
+        <span class="s3">/,</span>
+    <span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">: ...</span>
+
+
+<span class="s1">ModelAfterValidatorWithoutInfo </span><span class="s3">= </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">_ModelType</span><span class="s3">], </span><span class="s1">_ModelType</span><span class="s3">]</span>
+<span class="s5">&quot;&quot;&quot;A `@model_validator` decorated function signature. This is used when `mode='after'` and the function does not 
+have info argument. 
+&quot;&quot;&quot;</span>
+
+<span class="s1">ModelAfterValidator </span><span class="s3">= </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">_ModelType</span><span class="s3">, </span><span class="s1">_core_schema</span><span class="s3">.</span><span class="s1">ValidationInfo</span><span class="s3">], </span><span class="s1">_ModelType</span><span class="s3">]</span>
+<span class="s5">&quot;&quot;&quot;A `@model_validator` decorated function signature. This is used when `mode='after'`.&quot;&quot;&quot;</span>
+
+<span class="s1">_AnyModelWrapValidator </span><span class="s3">= </span><span class="s1">Union</span><span class="s3">[</span><span class="s1">ModelWrapValidator</span><span class="s3">[</span><span class="s1">_ModelType</span><span class="s3">], </span><span class="s1">ModelWrapValidatorWithoutInfo</span><span class="s3">[</span><span class="s1">_ModelType</span><span class="s3">]]</span>
+<span class="s1">_AnyModelBeforeValidator </span><span class="s3">= </span><span class="s1">Union</span><span class="s3">[</span>
+    <span class="s1">FreeModelBeforeValidator</span><span class="s3">, </span><span class="s1">ModelBeforeValidator</span><span class="s3">, </span><span class="s1">FreeModelBeforeValidatorWithoutInfo</span><span class="s3">, </span><span class="s1">ModelBeforeValidatorWithoutInfo</span>
+<span class="s3">]</span>
+<span class="s1">_AnyModelAfterValidator </span><span class="s3">= </span><span class="s1">Union</span><span class="s3">[</span><span class="s1">ModelAfterValidator</span><span class="s3">[</span><span class="s1">_ModelType</span><span class="s3">], </span><span class="s1">ModelAfterValidatorWithoutInfo</span><span class="s3">[</span><span class="s1">_ModelType</span><span class="s3">]]</span>
+
+
+<span class="s3">@</span><span class="s1">overload</span>
+<span class="s2">def </span><span class="s1">model_validator</span><span class="s3">(</span>
+    <span class="s3">*,</span>
+    <span class="s1">mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s5">'wrap'</span><span class="s3">],</span>
+<span class="s3">) </span><span class="s1">-&gt; Callable</span><span class="s3">[</span>
+    <span class="s3">[</span><span class="s1">_AnyModelWrapValidator</span><span class="s3">[</span><span class="s1">_ModelType</span><span class="s3">]], </span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">PydanticDescriptorProxy</span><span class="s3">[</span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">ModelValidatorDecoratorInfo</span><span class="s3">]</span>
+<span class="s3">]: ...</span>
+
+
+<span class="s3">@</span><span class="s1">overload</span>
+<span class="s2">def </span><span class="s1">model_validator</span><span class="s3">(</span>
+    <span class="s3">*,</span>
+    <span class="s1">mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s5">'before'</span><span class="s3">],</span>
+<span class="s3">) </span><span class="s1">-&gt; Callable</span><span class="s3">[</span>
+    <span class="s3">[</span><span class="s1">_AnyModelBeforeValidator</span><span class="s3">], </span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">PydanticDescriptorProxy</span><span class="s3">[</span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">ModelValidatorDecoratorInfo</span><span class="s3">]</span>
+<span class="s3">]: ...</span>
+
+
+<span class="s3">@</span><span class="s1">overload</span>
+<span class="s2">def </span><span class="s1">model_validator</span><span class="s3">(</span>
+    <span class="s3">*,</span>
+    <span class="s1">mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s5">'after'</span><span class="s3">],</span>
+<span class="s3">) </span><span class="s1">-&gt; Callable</span><span class="s3">[</span>
+    <span class="s3">[</span><span class="s1">_AnyModelAfterValidator</span><span class="s3">[</span><span class="s1">_ModelType</span><span class="s3">]], </span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">PydanticDescriptorProxy</span><span class="s3">[</span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">ModelValidatorDecoratorInfo</span><span class="s3">]</span>
+<span class="s3">]: ...</span>
+
+
+<span class="s2">def </span><span class="s1">model_validator</span><span class="s3">(</span>
+    <span class="s3">*,</span>
+    <span class="s1">mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s5">'wrap'</span><span class="s3">, </span><span class="s5">'before'</span><span class="s3">, </span><span class="s5">'after'</span><span class="s3">],</span>
+<span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;!!! abstract &quot;Usage Documentation&quot; 
+        [Model Validators](../concepts/validators.md#model-validators) 
+ 
+    Decorate model methods for validation purposes. 
+ 
+    Example usage: 
+    ```python 
+    from typing_extensions import Self 
+ 
+    from pydantic import BaseModel, ValidationError, model_validator 
+ 
+    class Square(BaseModel): 
+        width: float 
+        height: float 
+ 
+        @model_validator(mode='after') 
+        def verify_square(self) -&gt; Self: 
+            if self.width != self.height: 
+                raise ValueError('width and height do not match') 
+            return self 
+ 
+    s = Square(width=1, height=1) 
+    print(repr(s)) 
+    #&gt; Square(width=1.0, height=1.0) 
+ 
+    try: 
+        Square(width=1, height=2) 
+    except ValidationError as e: 
+        print(e) 
+        ''' 
+        1 validation error for Square 
+          Value error, width and height do not match [type=value_error, input_value={'width': 1, 'height': 2}, input_type=dict] 
+        ''' 
+    ``` 
+ 
+    For more in depth examples, see [Model Validators](../concepts/validators.md#model-validators). 
+ 
+    Args: 
+        mode: A required string literal that specifies the validation mode. 
+            It can be one of the following: 'wrap', 'before', or 'after'. 
+ 
+    Returns: 
+        A decorator that can be used to decorate a function to be used as a model validator. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">dec</span><span class="s3">(</span><span class="s1">f</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; _decorators</span><span class="s3">.</span><span class="s1">PydanticDescriptorProxy</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]:</span>
+        <span class="s6"># auto apply the @classmethod decorator</span>
+        <span class="s1">f </span><span class="s3">= </span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">ensure_classmethod_based_on_signature</span><span class="s3">(</span><span class="s1">f</span><span class="s3">)</span>
+        <span class="s1">dec_info </span><span class="s3">= </span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">ModelValidatorDecoratorInfo</span><span class="s3">(</span><span class="s1">mode</span><span class="s3">=</span><span class="s1">mode</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">PydanticDescriptorProxy</span><span class="s3">(</span><span class="s1">f</span><span class="s3">, </span><span class="s1">dec_info</span><span class="s3">)</span>
+
+    <span class="s2">return </span><span class="s1">dec</span>
+
+
+<span class="s1">AnyType </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'AnyType'</span><span class="s3">)</span>
+
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING</span><span class="s3">:</span>
+    <span class="s6"># If we add configurable attributes to IsInstance, we'd probably need to stop hiding it from type checkers like this</span>
+    <span class="s1">InstanceOf </span><span class="s3">= </span><span class="s1">Annotated</span><span class="s3">[</span><span class="s1">AnyType</span><span class="s3">, ...]  </span><span class="s6"># `IsInstance[Sequence]` will be recognized by type checkers as `Sequence`</span>
+
+<span class="s2">else</span><span class="s3">:</span>
+
+    <span class="s3">@</span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">_internal_dataclass</span><span class="s3">.</span><span class="s1">slots_true</span><span class="s3">)</span>
+    <span class="s2">class </span><span class="s1">InstanceOf</span><span class="s3">:</span>
+        <span class="s0">'''Generic type for annotating a type that is an instance of a given class. 
+ 
+        Example: 
+            ```python 
+            from pydantic import BaseModel, InstanceOf 
+ 
+            class Foo: 
+                ... 
+ 
+            class Bar(BaseModel): 
+                foo: InstanceOf[Foo] 
+ 
+            Bar(foo=Foo()) 
+            try: 
+                Bar(foo=42) 
+            except ValidationError as e: 
+                print(e) 
+                &quot;&quot;&quot; 
+                [ 
+                │   { 
+                │   │   'type': 'is_instance_of', 
+                │   │   'loc': ('foo',), 
+                │   │   'msg': 'Input should be an instance of Foo', 
+                │   │   'input': 42, 
+                │   │   'ctx': {'class': 'Foo'}, 
+                │   │   'url': 'https://errors.pydantic.dev/0.38.0/v/is_instance_of' 
+                │   } 
+                ] 
+                &quot;&quot;&quot; 
+            ``` 
+        '''</span>
+
+        <span class="s3">@</span><span class="s1">classmethod</span>
+        <span class="s2">def </span><span class="s1">__class_getitem__</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">item</span><span class="s3">: </span><span class="s1">AnyType</span><span class="s3">) </span><span class="s1">-&gt; AnyType</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">Annotated</span><span class="s3">[</span><span class="s1">item</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">()]</span>
+
+        <span class="s3">@</span><span class="s1">classmethod</span>
+        <span class="s2">def </span><span class="s1">__get_pydantic_core_schema__</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">source</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">: </span><span class="s1">GetCoreSchemaHandler</span><span class="s3">) </span><span class="s1">-&gt; core_schema</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">:</span>
+            <span class="s2">from </span><span class="s1">pydantic </span><span class="s2">import </span><span class="s1">PydanticSchemaGenerationError</span>
+
+            <span class="s6"># use the generic _origin_ as the second argument to isinstance when appropriate</span>
+            <span class="s1">instance_of_schema </span><span class="s3">= </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">is_instance_schema</span><span class="s3">(</span><span class="s1">_generics</span><span class="s3">.</span><span class="s1">get_origin</span><span class="s3">(</span><span class="s1">source</span><span class="s3">) </span><span class="s2">or </span><span class="s1">source</span><span class="s3">)</span>
+
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s6"># Try to generate the &quot;standard&quot; schema, which will be used when loading from JSON</span>
+                <span class="s1">original_schema </span><span class="s3">= </span><span class="s1">handler</span><span class="s3">(</span><span class="s1">source</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">PydanticSchemaGenerationError</span><span class="s3">:</span>
+                <span class="s6"># If that fails, just produce a schema that can validate from python</span>
+                <span class="s2">return </span><span class="s1">instance_of_schema</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s6"># Use the &quot;original&quot; approach to serialization</span>
+                <span class="s1">instance_of_schema</span><span class="s3">[</span><span class="s5">'serialization'</span><span class="s3">] = </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">wrap_serializer_function_ser_schema</span><span class="s3">(</span>
+                    <span class="s1">function</span><span class="s3">=</span><span class="s2">lambda </span><span class="s1">v</span><span class="s3">, </span><span class="s1">h</span><span class="s3">: </span><span class="s1">h</span><span class="s3">(</span><span class="s1">v</span><span class="s3">), </span><span class="s1">schema</span><span class="s3">=</span><span class="s1">original_schema</span>
+                <span class="s3">)</span>
+                <span class="s2">return </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">json_or_python_schema</span><span class="s3">(</span><span class="s1">python_schema</span><span class="s3">=</span><span class="s1">instance_of_schema</span><span class="s3">, </span><span class="s1">json_schema</span><span class="s3">=</span><span class="s1">original_schema</span><span class="s3">)</span>
+
+        <span class="s1">__hash__ </span><span class="s3">= </span><span class="s1">object</span><span class="s3">.</span><span class="s1">__hash__</span>
+
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING</span><span class="s3">:</span>
+    <span class="s1">SkipValidation </span><span class="s3">= </span><span class="s1">Annotated</span><span class="s3">[</span><span class="s1">AnyType</span><span class="s3">, ...]  </span><span class="s6"># SkipValidation[list[str]] will be treated by type checkers as list[str]</span>
+<span class="s2">else</span><span class="s3">:</span>
+
+    <span class="s3">@</span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">_internal_dataclass</span><span class="s3">.</span><span class="s1">slots_true</span><span class="s3">)</span>
+    <span class="s2">class </span><span class="s1">SkipValidation</span><span class="s3">:</span>
+        <span class="s0">&quot;&quot;&quot;If this is applied as an annotation (e.g., via `x: Annotated[int, SkipValidation]`), validation will be 
+            skipped. You can also use `SkipValidation[int]` as a shorthand for `Annotated[int, SkipValidation]`. 
+ 
+        This can be useful if you want to use a type annotation for documentation/IDE/type-checking purposes, 
+        and know that it is safe to skip validation for one or more of the fields. 
+ 
+        Because this converts the validation schema to `any_schema`, subsequent annotation-applied transformations 
+        may not have the expected effects. Therefore, when used, this annotation should generally be the final 
+        annotation applied to a type. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s2">def </span><span class="s1">__class_getitem__</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">item</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">Annotated</span><span class="s3">[</span><span class="s1">item</span><span class="s3">, </span><span class="s1">SkipValidation</span><span class="s3">()]</span>
+
+        <span class="s3">@</span><span class="s1">classmethod</span>
+        <span class="s2">def </span><span class="s1">__get_pydantic_core_schema__</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">source</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">: </span><span class="s1">GetCoreSchemaHandler</span><span class="s3">) </span><span class="s1">-&gt; core_schema</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">:</span>
+            <span class="s1">original_schema </span><span class="s3">= </span><span class="s1">handler</span><span class="s3">(</span><span class="s1">source</span><span class="s3">)</span>
+            <span class="s1">metadata </span><span class="s3">= {</span><span class="s5">'pydantic_js_annotation_functions'</span><span class="s3">: [</span><span class="s2">lambda </span><span class="s1">_c</span><span class="s3">, </span><span class="s1">h</span><span class="s3">: </span><span class="s1">h</span><span class="s3">(</span><span class="s1">original_schema</span><span class="s3">)]}</span>
+            <span class="s2">return </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">any_schema</span><span class="s3">(</span>
+                <span class="s1">metadata</span><span class="s3">=</span><span class="s1">metadata</span><span class="s3">,</span>
+                <span class="s1">serialization</span><span class="s3">=</span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">wrap_serializer_function_ser_schema</span><span class="s3">(</span>
+                    <span class="s1">function</span><span class="s3">=</span><span class="s2">lambda </span><span class="s1">v</span><span class="s3">, </span><span class="s1">h</span><span class="s3">: </span><span class="s1">h</span><span class="s3">(</span><span class="s1">v</span><span class="s3">), </span><span class="s1">schema</span><span class="s3">=</span><span class="s1">original_schema</span>
+                <span class="s3">),</span>
+            <span class="s3">)</span>
+
+        <span class="s1">__hash__ </span><span class="s3">= </span><span class="s1">object</span><span class="s3">.</span><span class="s1">__hash__</span>
+</pre>
+</body>
+</html>

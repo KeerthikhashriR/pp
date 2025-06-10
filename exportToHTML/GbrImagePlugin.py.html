@@ -1,0 +1,126 @@
+<html>
+<head>
+<title>GbrImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #2aacb8;}
+.s5 { color: #6aab73;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+GbrImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library</span>
+<span class="s0">#</span>
+<span class="s0"># load a GIMP brush file</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0">#       96-03-14 fl     Created</span>
+<span class="s0">#       16-01-08 es     Version 2</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) Secret Labs AB 1997.</span>
+<span class="s0"># Copyright (c) Fredrik Lundh 1996.</span>
+<span class="s0"># Copyright (c) Eric Soroos 2016.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s0">#</span>
+<span class="s0"># See https://github.com/GNOME/gimp/blob/mainline/devel-docs/gbr.txt for</span>
+<span class="s0"># format documentation.</span>
+<span class="s0">#</span>
+<span class="s0"># This code Interprets version 1 and 2 .gbr files.</span>
+<span class="s0"># Version 1 files are obsolete, and should not be used for new</span>
+<span class="s0">#   brushes.</span>
+<span class="s0"># Version 2 files are saved by GIMP v2.8 (at least)</span>
+<span class="s0"># Version 3 files have a format specifier of 18 for 16bit floats in</span>
+<span class="s0">#   the color depth field. This is currently unsupported by Pillow.</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">ImageFile</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">i32be </span><span class="s2">as </span><span class="s1">i32</span>
+
+
+<span class="s2">def </span><span class="s1">_accept</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">: </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s2">return </span><span class="s1">len</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">) &gt;= </span><span class="s4">8 </span><span class="s2">and </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">, </span><span class="s4">0</span><span class="s3">) &gt;= </span><span class="s4">20 </span><span class="s2">and </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">, </span><span class="s4">4</span><span class="s3">) </span><span class="s2">in </span><span class="s3">(</span><span class="s4">1</span><span class="s3">, </span><span class="s4">2</span><span class="s3">)</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for the GIMP brush format.</span>
+
+
+<span class="s2">class </span><span class="s1">GbrImageFile</span><span class="s3">(</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">ImageFile</span><span class="s3">):</span>
+    <span class="s1">format </span><span class="s3">= </span><span class="s5">&quot;GBR&quot;</span>
+    <span class="s1">format_description </span><span class="s3">= </span><span class="s5">&quot;GIMP brush file&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">header_size </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">4</span><span class="s3">))</span>
+        <span class="s2">if </span><span class="s1">header_size </span><span class="s3">&lt; </span><span class="s4">20</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;not a GIMP brush&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">version </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">4</span><span class="s3">))</span>
+        <span class="s2">if </span><span class="s1">version </span><span class="s2">not in </span><span class="s3">(</span><span class="s4">1</span><span class="s3">, </span><span class="s4">2</span><span class="s3">):</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s5">f&quot;Unsupported GIMP brush version: </span><span class="s2">{</span><span class="s1">version</span><span class="s2">}</span><span class="s5">&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s1">width </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">4</span><span class="s3">))</span>
+        <span class="s1">height </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">4</span><span class="s3">))</span>
+        <span class="s1">color_depth </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">4</span><span class="s3">))</span>
+        <span class="s2">if </span><span class="s1">width </span><span class="s3">&lt;= </span><span class="s4">0 </span><span class="s2">or </span><span class="s1">height </span><span class="s3">&lt;= </span><span class="s4">0</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;not a GIMP brush&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">color_depth </span><span class="s2">not in </span><span class="s3">(</span><span class="s4">1</span><span class="s3">, </span><span class="s4">4</span><span class="s3">):</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s5">f&quot;Unsupported GIMP brush color depth: </span><span class="s2">{</span><span class="s1">color_depth</span><span class="s2">}</span><span class="s5">&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s1">version </span><span class="s3">== </span><span class="s4">1</span><span class="s3">:</span>
+            <span class="s1">comment_length </span><span class="s3">= </span><span class="s1">header_size </span><span class="s3">- </span><span class="s4">20</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">comment_length </span><span class="s3">= </span><span class="s1">header_size </span><span class="s3">- </span><span class="s4">28</span>
+            <span class="s1">magic_number </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">4</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">magic_number </span><span class="s3">!= </span><span class="s6">b&quot;GIMP&quot;</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;not a GIMP brush, bad magic number&quot;</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;spacing&quot;</span><span class="s3">] = </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s4">4</span><span class="s3">))</span>
+
+        <span class="s1">comment </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s1">comment_length</span><span class="s3">)[:-</span><span class="s4">1</span><span class="s3">]</span>
+
+        <span class="s2">if </span><span class="s1">color_depth </span><span class="s3">== </span><span class="s4">1</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s5">&quot;L&quot;</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s5">&quot;RGBA&quot;</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= </span><span class="s1">width</span><span class="s3">, </span><span class="s1">height</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;comment&quot;</span><span class="s3">] = </span><span class="s1">comment</span>
+
+        <span class="s0"># Image might not be small</span>
+        <span class="s1">Image</span><span class="s3">.</span><span class="s1">_decompression_bomb_check</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+
+        <span class="s0"># Data is an uncompressed block of w * h * bytes/pixel</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_data_size </span><span class="s3">= </span><span class="s1">width </span><span class="s3">* </span><span class="s1">height </span><span class="s3">* </span><span class="s1">color_depth</span>
+
+    <span class="s2">def </span><span class="s1">load</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">.</span><span class="s1">PixelAccess </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_im </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">im </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">.</span><span class="s1">new</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">frombytes</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_data_size</span><span class="s3">))</span>
+        <span class="s2">return </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">.</span><span class="s1">load</span><span class="s3">(</span><span class="s1">self</span><span class="s3">)</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># registry</span>
+
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_open</span><span class="s3">(</span><span class="s1">GbrImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">GbrImageFile</span><span class="s3">, </span><span class="s1">_accept</span><span class="s3">)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_extension</span><span class="s3">(</span><span class="s1">GbrImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s5">&quot;.gbr&quot;</span><span class="s3">)</span>
+</pre>
+</body>
+</html>

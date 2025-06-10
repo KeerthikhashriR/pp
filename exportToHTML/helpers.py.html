@@ -1,0 +1,657 @@
+<html>
+<head>
+<title>helpers.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #7a7e85;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #6aab73;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+helpers.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">importlib</span><span class="s2">.</span><span class="s1">util</span>
+<span class="s0">import </span><span class="s1">os</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+<span class="s0">from </span><span class="s1">datetime </span><span class="s0">import </span><span class="s1">datetime</span>
+<span class="s0">from </span><span class="s1">functools </span><span class="s0">import </span><span class="s1">cache</span>
+<span class="s0">from </span><span class="s1">functools </span><span class="s0">import </span><span class="s1">update_wrapper</span>
+
+<span class="s0">import </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">utils</span>
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">abort </span><span class="s0">as </span><span class="s1">_wz_abort</span>
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">utils </span><span class="s0">import </span><span class="s1">redirect </span><span class="s0">as </span><span class="s1">_wz_redirect</span>
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">wrappers </span><span class="s0">import </span><span class="s1">Response </span><span class="s0">as </span><span class="s1">BaseResponse</span>
+
+<span class="s0">from </span><span class="s2">.</span><span class="s1">globals </span><span class="s0">import </span><span class="s1">_cv_request</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">globals </span><span class="s0">import </span><span class="s1">current_app</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">globals </span><span class="s0">import </span><span class="s1">request</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">globals </span><span class="s0">import </span><span class="s1">request_ctx</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">globals </span><span class="s0">import </span><span class="s1">session</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">signals </span><span class="s0">import </span><span class="s1">message_flashed</span>
+
+<span class="s0">if </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TYPE_CHECKING</span><span class="s2">:  </span><span class="s3"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s2">.</span><span class="s1">wrappers </span><span class="s0">import </span><span class="s1">Response</span>
+
+
+<span class="s0">def </span><span class="s1">get_debug_flag</span><span class="s2">() </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Get whether debug mode should be enabled for the app, indicated by the 
+    :envvar:`FLASK_DEBUG` environment variable. The default is ``False``. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">val </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">environ</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;FLASK_DEBUG&quot;</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">bool</span><span class="s2">(</span><span class="s1">val </span><span class="s0">and </span><span class="s1">val</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">() </span><span class="s0">not in </span><span class="s2">{</span><span class="s5">&quot;0&quot;</span><span class="s2">, </span><span class="s5">&quot;false&quot;</span><span class="s2">, </span><span class="s5">&quot;no&quot;</span><span class="s2">})</span>
+
+
+<span class="s0">def </span><span class="s1">get_load_dotenv</span><span class="s2">(</span><span class="s1">default</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Get whether the user has disabled loading default dotenv files by 
+    setting :envvar:`FLASK_SKIP_DOTENV`. The default is ``True``, load 
+    the files. 
+ 
+    :param default: What to return if the env var isn't set. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">val </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">environ</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;FLASK_SKIP_DOTENV&quot;</span><span class="s2">)</span>
+
+    <span class="s0">if not </span><span class="s1">val</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">default</span>
+
+    <span class="s0">return </span><span class="s1">val</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">() </span><span class="s0">in </span><span class="s2">(</span><span class="s5">&quot;0&quot;</span><span class="s2">, </span><span class="s5">&quot;false&quot;</span><span class="s2">, </span><span class="s5">&quot;no&quot;</span><span class="s2">)</span>
+
+
+<span class="s2">@</span><span class="s1">t</span><span class="s2">.</span><span class="s1">overload</span>
+<span class="s0">def </span><span class="s1">stream_with_context</span><span class="s2">(</span>
+    <span class="s1">generator_or_function</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">AnyStr</span><span class="s2">],</span>
+<span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">AnyStr</span><span class="s2">]: ...</span>
+
+
+<span class="s2">@</span><span class="s1">t</span><span class="s2">.</span><span class="s1">overload</span>
+<span class="s0">def </span><span class="s1">stream_with_context</span><span class="s2">(</span>
+    <span class="s1">generator_or_function</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[..., </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">AnyStr</span><span class="s2">]],</span>
+<span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">AnyStr</span><span class="s2">]], </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">AnyStr</span><span class="s2">]]: ...</span>
+
+
+<span class="s0">def </span><span class="s1">stream_with_context</span><span class="s2">(</span>
+    <span class="s1">generator_or_function</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">AnyStr</span><span class="s2">] | </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[..., </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">AnyStr</span><span class="s2">]],</span>
+<span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">AnyStr</span><span class="s2">] | </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">AnyStr</span><span class="s2">]], </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">AnyStr</span><span class="s2">]]:</span>
+    <span class="s4">&quot;&quot;&quot;Request contexts disappear when the response is started on the server. 
+    This is done for efficiency reasons and to make it less likely to encounter 
+    memory leaks with badly written WSGI middlewares.  The downside is that if 
+    you are using streamed responses, the generator cannot access request bound 
+    information any more. 
+ 
+    This function however can help you keep the context around for longer:: 
+ 
+        from flask import stream_with_context, request, Response 
+ 
+        @app.route('/stream') 
+        def streamed_response(): 
+            @stream_with_context 
+            def generate(): 
+                yield 'Hello ' 
+                yield request.args['name'] 
+                yield '!' 
+            return Response(generate()) 
+ 
+    Alternatively it can also be used around a specific generator:: 
+ 
+        from flask import stream_with_context, request, Response 
+ 
+        @app.route('/stream') 
+        def streamed_response(): 
+            def generate(): 
+                yield 'Hello ' 
+                yield request.args['name'] 
+                yield '!' 
+            return Response(stream_with_context(generate())) 
+ 
+    .. versionadded:: 0.9 
+    &quot;&quot;&quot;</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s1">gen </span><span class="s2">= </span><span class="s1">iter</span><span class="s2">(</span><span class="s1">generator_or_function</span><span class="s2">)  </span><span class="s3"># type: ignore[arg-type]</span>
+    <span class="s0">except </span><span class="s1">TypeError</span><span class="s2">:</span>
+
+        <span class="s0">def </span><span class="s1">decorator</span><span class="s2">(*</span><span class="s1">args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">:</span>
+            <span class="s1">gen </span><span class="s2">= </span><span class="s1">generator_or_function</span><span class="s2">(*</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)  </span><span class="s3"># type: ignore[operator]</span>
+            <span class="s0">return </span><span class="s1">stream_with_context</span><span class="s2">(</span><span class="s1">gen</span><span class="s2">)</span>
+
+        <span class="s0">return </span><span class="s1">update_wrapper</span><span class="s2">(</span><span class="s1">decorator</span><span class="s2">, </span><span class="s1">generator_or_function</span><span class="s2">)  </span><span class="s3"># type: ignore[arg-type]</span>
+
+    <span class="s0">def </span><span class="s1">generator</span><span class="s2">() </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">AnyStr </span><span class="s2">| </span><span class="s0">None</span><span class="s2">]:</span>
+        <span class="s1">ctx </span><span class="s2">= </span><span class="s1">_cv_request</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s0">None</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">ctx </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span>
+                <span class="s5">&quot;'stream_with_context' can only be used when a request&quot;</span>
+                <span class="s5">&quot; context is active, such as in a view function.&quot;</span>
+            <span class="s2">)</span>
+        <span class="s0">with </span><span class="s1">ctx</span><span class="s2">:</span>
+            <span class="s3"># Dummy sentinel.  Has to be inside the context block or we're</span>
+            <span class="s3"># not actually keeping the context around.</span>
+            <span class="s0">yield None</span>
+
+            <span class="s3"># The try/finally is here so that if someone passes a WSGI level</span>
+            <span class="s3"># iterator in we're still running the cleanup logic.  Generators</span>
+            <span class="s3"># don't need that because they are closed on their destruction</span>
+            <span class="s3"># automatically.</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s0">yield from </span><span class="s1">gen</span>
+            <span class="s0">finally</span><span class="s2">:</span>
+                <span class="s0">if </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">gen</span><span class="s2">, </span><span class="s5">&quot;close&quot;</span><span class="s2">):</span>
+                    <span class="s1">gen</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+
+    <span class="s3"># The trick is to start the generator.  Then the code execution runs until</span>
+    <span class="s3"># the first dummy None is yielded at which point the context was already</span>
+    <span class="s3"># pushed.  This item is discarded.  Then when the iteration continues the</span>
+    <span class="s3"># real generator is executed.</span>
+    <span class="s1">wrapped_g </span><span class="s2">= </span><span class="s1">generator</span><span class="s2">()</span>
+    <span class="s1">next</span><span class="s2">(</span><span class="s1">wrapped_g</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">wrapped_g  </span><span class="s3"># type: ignore[return-value]</span>
+
+
+<span class="s0">def </span><span class="s1">make_response</span><span class="s2">(*</span><span class="s1">args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Response</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Sometimes it is necessary to set additional headers in a view.  Because 
+    views do not have to return response objects but can return a value that 
+    is converted into a response object by Flask itself, it becomes tricky to 
+    add headers to it.  This function can be called instead of using a return 
+    and you will get a response object which you can use to attach headers. 
+ 
+    If view looked like this and you want to add a new header:: 
+ 
+        def index(): 
+            return render_template('index.html', foo=42) 
+ 
+    You can now do something like this:: 
+ 
+        def index(): 
+            response = make_response(render_template('index.html', foo=42)) 
+            response.headers['X-Parachutes'] = 'parachutes are cool' 
+            return response 
+ 
+    This function accepts the very same arguments you can return from a 
+    view function.  This for example creates a response with a 404 error 
+    code:: 
+ 
+        response = make_response(render_template('not_found.html'), 404) 
+ 
+    The other use case of this function is to force the return value of a 
+    view function into a response which is helpful with view 
+    decorators:: 
+ 
+        response = make_response(view_function()) 
+        response.headers['X-Parachutes'] = 'parachutes are cool' 
+ 
+    Internally this function does the following things: 
+ 
+    -   if no arguments are passed, it creates a new response argument 
+    -   if one argument is passed, :meth:`flask.Flask.make_response` 
+        is invoked with it. 
+    -   if more than one argument is passed, the arguments are passed 
+        to the :meth:`flask.Flask.make_response` function as tuple. 
+ 
+    .. versionadded:: 0.6 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if not </span><span class="s1">args</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">response_class</span><span class="s2">()</span>
+    <span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">args</span><span class="s2">) == </span><span class="s6">1</span><span class="s2">:</span>
+        <span class="s1">args </span><span class="s2">= </span><span class="s1">args</span><span class="s2">[</span><span class="s6">0</span><span class="s2">]</span>
+    <span class="s0">return </span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">make_response</span><span class="s2">(</span><span class="s1">args</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">url_for</span><span class="s2">(</span>
+    <span class="s1">endpoint</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s2">*,</span>
+    <span class="s1">_anchor</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">_method</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">_scheme</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">_external</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">**</span><span class="s1">values</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">,</span>
+<span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Generate a URL to the given endpoint with the given values. 
+ 
+    This requires an active request or application context, and calls 
+    :meth:`current_app.url_for() &lt;flask.Flask.url_for&gt;`. See that method 
+    for full documentation. 
+ 
+    :param endpoint: The endpoint name associated with the URL to 
+        generate. If this starts with a ``.``, the current blueprint 
+        name (if any) will be used. 
+    :param _anchor: If given, append this as ``#anchor`` to the URL. 
+    :param _method: If given, generate the URL associated with this 
+        method for the endpoint. 
+    :param _scheme: If given, the URL will have this scheme if it is 
+        external. 
+    :param _external: If given, prefer the URL to be internal (False) or 
+        require it to be external (True). External URLs include the 
+        scheme and domain. When not in an active request, URLs are 
+        external by default. 
+    :param values: Values to use for the variable parts of the URL rule. 
+        Unknown keys are appended as query string arguments, like 
+        ``?a=b&amp;c=d``. 
+ 
+    .. versionchanged:: 2.2 
+        Calls ``current_app.url_for``, allowing an app to override the 
+        behavior. 
+ 
+    .. versionchanged:: 0.10 
+       The ``_scheme`` parameter was added. 
+ 
+    .. versionchanged:: 0.9 
+       The ``_anchor`` and ``_method`` parameters were added. 
+ 
+    .. versionchanged:: 0.9 
+       Calls ``app.handle_url_build_error`` on build errors. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">url_for</span><span class="s2">(</span>
+        <span class="s1">endpoint</span><span class="s2">,</span>
+        <span class="s1">_anchor</span><span class="s2">=</span><span class="s1">_anchor</span><span class="s2">,</span>
+        <span class="s1">_method</span><span class="s2">=</span><span class="s1">_method</span><span class="s2">,</span>
+        <span class="s1">_scheme</span><span class="s2">=</span><span class="s1">_scheme</span><span class="s2">,</span>
+        <span class="s1">_external</span><span class="s2">=</span><span class="s1">_external</span><span class="s2">,</span>
+        <span class="s2">**</span><span class="s1">values</span><span class="s2">,</span>
+    <span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">redirect</span><span class="s2">(</span>
+    <span class="s1">location</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">code</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s6">302</span><span class="s2">, </span><span class="s1">Response</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">BaseResponse</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+<span class="s2">) </span><span class="s1">-&gt; BaseResponse</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Create a redirect response object. 
+ 
+    If :data:`~flask.current_app` is available, it will use its 
+    :meth:`~flask.Flask.redirect` method, otherwise it will use 
+    :func:`werkzeug.utils.redirect`. 
+ 
+    :param location: The URL to redirect to. 
+    :param code: The status code for the redirect. 
+    :param Response: The response class to use. Not used when 
+        ``current_app`` is active, which uses ``app.response_class``. 
+ 
+    .. versionadded:: 2.2 
+        Calls ``current_app.redirect`` if available instead of always 
+        using Werkzeug's default ``redirect``. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">current_app</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">redirect</span><span class="s2">(</span><span class="s1">location</span><span class="s2">, </span><span class="s1">code</span><span class="s2">=</span><span class="s1">code</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">_wz_redirect</span><span class="s2">(</span><span class="s1">location</span><span class="s2">, </span><span class="s1">code</span><span class="s2">=</span><span class="s1">code</span><span class="s2">, </span><span class="s1">Response</span><span class="s2">=</span><span class="s1">Response</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">abort</span><span class="s2">(</span><span class="s1">code</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s1">BaseResponse</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">NoReturn</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Raise an :exc:`~werkzeug.exceptions.HTTPException` for the given 
+    status code. 
+ 
+    If :data:`~flask.current_app` is available, it will call its 
+    :attr:`~flask.Flask.aborter` object, otherwise it will use 
+    :func:`werkzeug.exceptions.abort`. 
+ 
+    :param code: The status code for the exception, which must be 
+        registered in ``app.aborter``. 
+    :param args: Passed to the exception. 
+    :param kwargs: Passed to the exception. 
+ 
+    .. versionadded:: 2.2 
+        Calls ``current_app.aborter`` if available instead of always 
+        using Werkzeug's default ``abort``. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">current_app</span><span class="s2">:</span>
+        <span class="s1">current_app</span><span class="s2">.</span><span class="s1">aborter</span><span class="s2">(</span><span class="s1">code</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+
+    <span class="s1">_wz_abort</span><span class="s2">(</span><span class="s1">code</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">get_template_attribute</span><span class="s2">(</span><span class="s1">template_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">attribute</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Loads a macro (or variable) a template exports.  This can be used to 
+    invoke a macro from within Python code.  If you for example have a 
+    template named :file:`_cider.html` with the following contents: 
+ 
+    .. sourcecode:: html+jinja 
+ 
+       {% macro hello(name) %}Hello {{ name }}!{% endmacro %} 
+ 
+    You can access this from Python code like this:: 
+ 
+        hello = get_template_attribute('_cider.html', 'hello') 
+        return hello('World') 
+ 
+    .. versionadded:: 0.2 
+ 
+    :param template_name: the name of the template 
+    :param attribute: the name of the variable of macro to access 
+    &quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">jinja_env</span><span class="s2">.</span><span class="s1">get_template</span><span class="s2">(</span><span class="s1">template_name</span><span class="s2">).</span><span class="s1">module</span><span class="s2">, </span><span class="s1">attribute</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">flash</span><span class="s2">(</span><span class="s1">message</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">category</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s5">&quot;message&quot;</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Flashes a message to the next request.  In order to remove the 
+    flashed message from the session and to display it to the user, 
+    the template has to call :func:`get_flashed_messages`. 
+ 
+    .. versionchanged:: 0.3 
+       `category` parameter added. 
+ 
+    :param message: the message to be flashed. 
+    :param category: the category for the message.  The following values 
+                     are recommended: ``'message'`` for any kind of message, 
+                     ``'error'`` for errors, ``'info'`` for information 
+                     messages and ``'warning'`` for warnings.  However any 
+                     kind of string can be used as category. 
+    &quot;&quot;&quot;</span>
+    <span class="s3"># Original implementation:</span>
+    <span class="s3">#</span>
+    <span class="s3">#     session.setdefault('_flashes', []).append((category, message))</span>
+    <span class="s3">#</span>
+    <span class="s3"># This assumed that changes made to mutable structures in the session are</span>
+    <span class="s3"># always in sync with the session object, which is not true for session</span>
+    <span class="s3"># implementations that use external storage for keeping their keys/values.</span>
+    <span class="s1">flashes </span><span class="s2">= </span><span class="s1">session</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;_flashes&quot;</span><span class="s2">, [])</span>
+    <span class="s1">flashes</span><span class="s2">.</span><span class="s1">append</span><span class="s2">((</span><span class="s1">category</span><span class="s2">, </span><span class="s1">message</span><span class="s2">))</span>
+    <span class="s1">session</span><span class="s2">[</span><span class="s5">&quot;_flashes&quot;</span><span class="s2">] = </span><span class="s1">flashes</span>
+    <span class="s1">app </span><span class="s2">= </span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">_get_current_object</span><span class="s2">()  </span><span class="s3"># type: ignore</span>
+    <span class="s1">message_flashed</span><span class="s2">.</span><span class="s1">send</span><span class="s2">(</span>
+        <span class="s1">app</span><span class="s2">,</span>
+        <span class="s1">_async_wrapper</span><span class="s2">=</span><span class="s1">app</span><span class="s2">.</span><span class="s1">ensure_sync</span><span class="s2">,</span>
+        <span class="s1">message</span><span class="s2">=</span><span class="s1">message</span><span class="s2">,</span>
+        <span class="s1">category</span><span class="s2">=</span><span class="s1">category</span><span class="s2">,</span>
+    <span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">get_flashed_messages</span><span class="s2">(</span>
+    <span class="s1">with_categories</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">, </span><span class="s1">category_filter</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = ()</span>
+<span class="s2">) </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s1">list</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]]:</span>
+    <span class="s4">&quot;&quot;&quot;Pulls all flashed messages from the session and returns them. 
+    Further calls in the same request to the function will return 
+    the same messages.  By default just the messages are returned, 
+    but when `with_categories` is set to ``True``, the return value will 
+    be a list of tuples in the form ``(category, message)`` instead. 
+ 
+    Filter the flashed messages to one or more categories by providing those 
+    categories in `category_filter`.  This allows rendering categories in 
+    separate html blocks.  The `with_categories` and `category_filter` 
+    arguments are distinct: 
+ 
+    * `with_categories` controls whether categories are returned with message 
+      text (``True`` gives a tuple, where ``False`` gives just the message text). 
+    * `category_filter` filters the messages down to only those matching the 
+      provided categories. 
+ 
+    See :doc:`/patterns/flashing` for examples. 
+ 
+    .. versionchanged:: 0.3 
+       `with_categories` parameter added. 
+ 
+    .. versionchanged:: 0.9 
+        `category_filter` parameter added. 
+ 
+    :param with_categories: set to ``True`` to also receive categories. 
+    :param category_filter: filter of categories to limit return values.  Only 
+                            categories in the list will be returned. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">flashes </span><span class="s2">= </span><span class="s1">request_ctx</span><span class="s2">.</span><span class="s1">flashes</span>
+    <span class="s0">if </span><span class="s1">flashes </span><span class="s0">is None</span><span class="s2">:</span>
+        <span class="s1">flashes </span><span class="s2">= </span><span class="s1">session</span><span class="s2">.</span><span class="s1">pop</span><span class="s2">(</span><span class="s5">&quot;_flashes&quot;</span><span class="s2">) </span><span class="s0">if </span><span class="s5">&quot;_flashes&quot; </span><span class="s0">in </span><span class="s1">session </span><span class="s0">else </span><span class="s2">[]</span>
+        <span class="s1">request_ctx</span><span class="s2">.</span><span class="s1">flashes </span><span class="s2">= </span><span class="s1">flashes</span>
+    <span class="s0">if </span><span class="s1">category_filter</span><span class="s2">:</span>
+        <span class="s1">flashes </span><span class="s2">= </span><span class="s1">list</span><span class="s2">(</span><span class="s1">filter</span><span class="s2">(</span><span class="s0">lambda </span><span class="s1">f</span><span class="s2">: </span><span class="s1">f</span><span class="s2">[</span><span class="s6">0</span><span class="s2">] </span><span class="s0">in </span><span class="s1">category_filter</span><span class="s2">, </span><span class="s1">flashes</span><span class="s2">))</span>
+    <span class="s0">if not </span><span class="s1">with_categories</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s2">[</span><span class="s1">x</span><span class="s2">[</span><span class="s6">1</span><span class="s2">] </span><span class="s0">for </span><span class="s1">x </span><span class="s0">in </span><span class="s1">flashes</span><span class="s2">]</span>
+    <span class="s0">return </span><span class="s1">flashes</span>
+
+
+<span class="s0">def </span><span class="s1">_prepare_send_file_kwargs</span><span class="s2">(**</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]:</span>
+    <span class="s0">if </span><span class="s1">kwargs</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;max_age&quot;</span><span class="s2">) </span><span class="s0">is None</span><span class="s2">:</span>
+        <span class="s1">kwargs</span><span class="s2">[</span><span class="s5">&quot;max_age&quot;</span><span class="s2">] = </span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">get_send_file_max_age</span>
+
+    <span class="s1">kwargs</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span>
+        <span class="s1">environ</span><span class="s2">=</span><span class="s1">request</span><span class="s2">.</span><span class="s1">environ</span><span class="s2">,</span>
+        <span class="s1">use_x_sendfile</span><span class="s2">=</span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">config</span><span class="s2">[</span><span class="s5">&quot;USE_X_SENDFILE&quot;</span><span class="s2">],</span>
+        <span class="s1">response_class</span><span class="s2">=</span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">response_class</span><span class="s2">,</span>
+        <span class="s1">_root_path</span><span class="s2">=</span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">root_path</span><span class="s2">,  </span><span class="s3"># type: ignore</span>
+    <span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">kwargs</span>
+
+
+<span class="s0">def </span><span class="s1">send_file</span><span class="s2">(</span>
+    <span class="s1">path_or_file</span><span class="s2">: </span><span class="s1">os</span><span class="s2">.</span><span class="s1">PathLike</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">AnyStr</span><span class="s2">] | </span><span class="s1">str </span><span class="s2">| </span><span class="s1">t</span><span class="s2">.</span><span class="s1">BinaryIO</span><span class="s2">,</span>
+    <span class="s1">mimetype</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">as_attachment</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">download_name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">conditional</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">,</span>
+    <span class="s1">etag</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s1">str </span><span class="s2">= </span><span class="s0">True</span><span class="s2">,</span>
+    <span class="s1">last_modified</span><span class="s2">: </span><span class="s1">datetime </span><span class="s2">| </span><span class="s1">int </span><span class="s2">| </span><span class="s1">float </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">max_age</span><span class="s2">: </span><span class="s0">None </span><span class="s2">| (</span><span class="s1">int </span><span class="s2">| </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">], </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None</span><span class="s2">]) = </span><span class="s0">None</span><span class="s2">,</span>
+<span class="s2">) </span><span class="s1">-&gt; Response</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Send the contents of a file to the client. 
+ 
+    The first argument can be a file path or a file-like object. Paths 
+    are preferred in most cases because Werkzeug can manage the file and 
+    get extra information from the path. Passing a file-like object 
+    requires that the file is opened in binary mode, and is mostly 
+    useful when building a file in memory with :class:`io.BytesIO`. 
+ 
+    Never pass file paths provided by a user. The path is assumed to be 
+    trusted, so a user could craft a path to access a file you didn't 
+    intend. Use :func:`send_from_directory` to safely serve 
+    user-requested paths from within a directory. 
+ 
+    If the WSGI server sets a ``file_wrapper`` in ``environ``, it is 
+    used, otherwise Werkzeug's built-in wrapper is used. Alternatively, 
+    if the HTTP server supports ``X-Sendfile``, configuring Flask with 
+    ``USE_X_SENDFILE = True`` will tell the server to send the given 
+    path, which is much more efficient than reading it in Python. 
+ 
+    :param path_or_file: The path to the file to send, relative to the 
+        current working directory if a relative path is given. 
+        Alternatively, a file-like object opened in binary mode. Make 
+        sure the file pointer is seeked to the start of the data. 
+    :param mimetype: The MIME type to send for the file. If not 
+        provided, it will try to detect it from the file name. 
+    :param as_attachment: Indicate to a browser that it should offer to 
+        save the file instead of displaying it. 
+    :param download_name: The default name browsers will use when saving 
+        the file. Defaults to the passed file name. 
+    :param conditional: Enable conditional and range responses based on 
+        request headers. Requires passing a file path and ``environ``. 
+    :param etag: Calculate an ETag for the file, which requires passing 
+        a file path. Can also be a string to use instead. 
+    :param last_modified: The last modified time to send for the file, 
+        in seconds. If not provided, it will try to detect it from the 
+        file path. 
+    :param max_age: How long the client should cache the file, in 
+        seconds. If set, ``Cache-Control`` will be ``public``, otherwise 
+        it will be ``no-cache`` to prefer conditional caching. 
+ 
+    .. versionchanged:: 2.0 
+        ``download_name`` replaces the ``attachment_filename`` 
+        parameter. If ``as_attachment=False``, it is passed with 
+        ``Content-Disposition: inline`` instead. 
+ 
+    .. versionchanged:: 2.0 
+        ``max_age`` replaces the ``cache_timeout`` parameter. 
+        ``conditional`` is enabled and ``max_age`` is not set by 
+        default. 
+ 
+    .. versionchanged:: 2.0 
+        ``etag`` replaces the ``add_etags`` parameter. It can be a 
+        string to use instead of generating one. 
+ 
+    .. versionchanged:: 2.0 
+        Passing a file-like object that inherits from 
+        :class:`~io.TextIOBase` will raise a :exc:`ValueError` rather 
+        than sending an empty file. 
+ 
+    .. versionadded:: 2.0 
+        Moved the implementation to Werkzeug. This is now a wrapper to 
+        pass some Flask-specific arguments. 
+ 
+    .. versionchanged:: 1.1 
+        ``filename`` may be a :class:`~os.PathLike` object. 
+ 
+    .. versionchanged:: 1.1 
+        Passing a :class:`~io.BytesIO` object supports range requests. 
+ 
+    .. versionchanged:: 1.0.3 
+        Filenames are encoded with ASCII instead of Latin-1 for broader 
+        compatibility with WSGI servers. 
+ 
+    .. versionchanged:: 1.0 
+        UTF-8 filenames as specified in :rfc:`2231` are supported. 
+ 
+    .. versionchanged:: 0.12 
+        The filename is no longer automatically inferred from file 
+        objects. If you want to use automatic MIME and etag support, 
+        pass a filename via ``filename_or_fp`` or 
+        ``attachment_filename``. 
+ 
+    .. versionchanged:: 0.12 
+        ``attachment_filename`` is preferred over ``filename`` for MIME 
+        detection. 
+ 
+    .. versionchanged:: 0.9 
+        ``cache_timeout`` defaults to 
+        :meth:`Flask.get_send_file_max_age`. 
+ 
+    .. versionchanged:: 0.7 
+        MIME guessing and etag support for file-like objects was 
+        removed because it was unreliable. Pass a filename if you are 
+        able to, otherwise attach an etag yourself. 
+ 
+    .. versionchanged:: 0.5 
+        The ``add_etags``, ``cache_timeout`` and ``conditional`` 
+        parameters were added. The default behavior is to add etags. 
+ 
+    .. versionadded:: 0.2 
+    &quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">utils</span><span class="s2">.</span><span class="s1">send_file</span><span class="s2">(  </span><span class="s3"># type: ignore[return-value]</span>
+        <span class="s2">**</span><span class="s1">_prepare_send_file_kwargs</span><span class="s2">(</span>
+            <span class="s1">path_or_file</span><span class="s2">=</span><span class="s1">path_or_file</span><span class="s2">,</span>
+            <span class="s1">environ</span><span class="s2">=</span><span class="s1">request</span><span class="s2">.</span><span class="s1">environ</span><span class="s2">,</span>
+            <span class="s1">mimetype</span><span class="s2">=</span><span class="s1">mimetype</span><span class="s2">,</span>
+            <span class="s1">as_attachment</span><span class="s2">=</span><span class="s1">as_attachment</span><span class="s2">,</span>
+            <span class="s1">download_name</span><span class="s2">=</span><span class="s1">download_name</span><span class="s2">,</span>
+            <span class="s1">conditional</span><span class="s2">=</span><span class="s1">conditional</span><span class="s2">,</span>
+            <span class="s1">etag</span><span class="s2">=</span><span class="s1">etag</span><span class="s2">,</span>
+            <span class="s1">last_modified</span><span class="s2">=</span><span class="s1">last_modified</span><span class="s2">,</span>
+            <span class="s1">max_age</span><span class="s2">=</span><span class="s1">max_age</span><span class="s2">,</span>
+        <span class="s2">)</span>
+    <span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">send_from_directory</span><span class="s2">(</span>
+    <span class="s1">directory</span><span class="s2">: </span><span class="s1">os</span><span class="s2">.</span><span class="s1">PathLike</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">path</span><span class="s2">: </span><span class="s1">os</span><span class="s2">.</span><span class="s1">PathLike</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s2">**</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">,</span>
+<span class="s2">) </span><span class="s1">-&gt; Response</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Send a file from within a directory using :func:`send_file`. 
+ 
+    .. code-block:: python 
+ 
+        @app.route(&quot;/uploads/&lt;path:name&gt;&quot;) 
+        def download_file(name): 
+            return send_from_directory( 
+                app.config['UPLOAD_FOLDER'], name, as_attachment=True 
+            ) 
+ 
+    This is a secure way to serve files from a folder, such as static 
+    files or uploads. Uses :func:`~werkzeug.security.safe_join` to 
+    ensure the path coming from the client is not maliciously crafted to 
+    point outside the specified directory. 
+ 
+    If the final path does not point to an existing regular file, 
+    raises a 404 :exc:`~werkzeug.exceptions.NotFound` error. 
+ 
+    :param directory: The directory that ``path`` must be located under, 
+        relative to the current application's root path. This *must not* 
+        be a value provided by the client, otherwise it becomes insecure. 
+    :param path: The path to the file to send, relative to 
+        ``directory``. 
+    :param kwargs: Arguments to pass to :func:`send_file`. 
+ 
+    .. versionchanged:: 2.0 
+        ``path`` replaces the ``filename`` parameter. 
+ 
+    .. versionadded:: 2.0 
+        Moved the implementation to Werkzeug. This is now a wrapper to 
+        pass some Flask-specific arguments. 
+ 
+    .. versionadded:: 0.5 
+    &quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">utils</span><span class="s2">.</span><span class="s1">send_from_directory</span><span class="s2">(  </span><span class="s3"># type: ignore[return-value]</span>
+        <span class="s1">directory</span><span class="s2">, </span><span class="s1">path</span><span class="s2">, **</span><span class="s1">_prepare_send_file_kwargs</span><span class="s2">(**</span><span class="s1">kwargs</span><span class="s2">)</span>
+    <span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">get_root_path</span><span class="s2">(</span><span class="s1">import_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Find the root path of a package, or the path that contains a 
+    module. If it cannot be found, returns the current working 
+    directory. 
+ 
+    Not to be confused with the value returned by :func:`find_package`. 
+ 
+    :meta private: 
+    &quot;&quot;&quot;</span>
+    <span class="s3"># Module already imported and has a file attribute. Use that first.</span>
+    <span class="s1">mod </span><span class="s2">= </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">modules</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">import_name</span><span class="s2">)</span>
+
+    <span class="s0">if </span><span class="s1">mod </span><span class="s0">is not None and </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">mod</span><span class="s2">, </span><span class="s5">&quot;__file__&quot;</span><span class="s2">) </span><span class="s0">and </span><span class="s1">mod</span><span class="s2">.</span><span class="s1">__file__ </span><span class="s0">is not None</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">dirname</span><span class="s2">(</span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">mod</span><span class="s2">.</span><span class="s1">__file__</span><span class="s2">))</span>
+
+    <span class="s3"># Next attempt: check the loader.</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s1">spec </span><span class="s2">= </span><span class="s1">importlib</span><span class="s2">.</span><span class="s1">util</span><span class="s2">.</span><span class="s1">find_spec</span><span class="s2">(</span><span class="s1">import_name</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">spec </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">ValueError</span>
+    <span class="s0">except </span><span class="s2">(</span><span class="s1">ImportError</span><span class="s2">, </span><span class="s1">ValueError</span><span class="s2">):</span>
+        <span class="s1">loader </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s1">loader </span><span class="s2">= </span><span class="s1">spec</span><span class="s2">.</span><span class="s1">loader</span>
+
+    <span class="s3"># Loader does not exist or we're referring to an unloaded main</span>
+    <span class="s3"># module or a main module without path (interactive sessions), go</span>
+    <span class="s3"># with the current working directory.</span>
+    <span class="s0">if </span><span class="s1">loader </span><span class="s0">is None</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">os</span><span class="s2">.</span><span class="s1">getcwd</span><span class="s2">()</span>
+
+    <span class="s0">if </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">loader</span><span class="s2">, </span><span class="s5">&quot;get_filename&quot;</span><span class="s2">):</span>
+        <span class="s1">filepath </span><span class="s2">= </span><span class="s1">loader</span><span class="s2">.</span><span class="s1">get_filename</span><span class="s2">(</span><span class="s1">import_name</span><span class="s2">)  </span><span class="s3"># pyright: ignore</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s3"># Fall back to imports.</span>
+        <span class="s1">__import__</span><span class="s2">(</span><span class="s1">import_name</span><span class="s2">)</span>
+        <span class="s1">mod </span><span class="s2">= </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">modules</span><span class="s2">[</span><span class="s1">import_name</span><span class="s2">]</span>
+        <span class="s1">filepath </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">mod</span><span class="s2">, </span><span class="s5">&quot;__file__&quot;</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+
+        <span class="s3"># If we don't have a file path it might be because it is a</span>
+        <span class="s3"># namespace package. In this case pick the root path from the</span>
+        <span class="s3"># first module that is contained in the package.</span>
+        <span class="s0">if </span><span class="s1">filepath </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span>
+                <span class="s5">&quot;No root path can be found for the provided module&quot;</span>
+                <span class="s5">f&quot; </span><span class="s0">{</span><span class="s1">import_name</span><span class="s0">!r}</span><span class="s5">. This can happen because the module&quot;</span>
+                <span class="s5">&quot; came from an import hook that does not provide file&quot;</span>
+                <span class="s5">&quot; name information or because it's a namespace package.&quot;</span>
+                <span class="s5">&quot; In this case the root path needs to be explicitly&quot;</span>
+                <span class="s5">&quot; provided.&quot;</span>
+            <span class="s2">)</span>
+
+    <span class="s3"># filepath is import_name.py for a module, or __init__.py for a package.</span>
+    <span class="s0">return </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">dirname</span><span class="s2">(</span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">filepath</span><span class="s2">))  </span><span class="s3"># type: ignore[no-any-return]</span>
+
+
+<span class="s2">@</span><span class="s1">cache</span>
+<span class="s0">def </span><span class="s1">_split_blueprint_path</span><span class="s2">(</span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s1">out</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = [</span><span class="s1">name</span><span class="s2">]</span>
+
+    <span class="s0">if </span><span class="s5">&quot;.&quot; </span><span class="s0">in </span><span class="s1">name</span><span class="s2">:</span>
+        <span class="s1">out</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">(</span><span class="s1">_split_blueprint_path</span><span class="s2">(</span><span class="s1">name</span><span class="s2">.</span><span class="s1">rpartition</span><span class="s2">(</span><span class="s5">&quot;.&quot;</span><span class="s2">)[</span><span class="s6">0</span><span class="s2">]))</span>
+
+    <span class="s0">return </span><span class="s1">out</span>
+</pre>
+</body>
+</html>

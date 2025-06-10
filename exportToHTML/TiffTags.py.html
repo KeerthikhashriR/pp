@@ -1,0 +1,585 @@
+<html>
+<head>
+<title>TiffTags.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #5f826b; font-style: italic;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+TiffTags.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># TIFF tags</span>
+<span class="s0">#</span>
+<span class="s0"># This module provides clear-text names for various well-known</span>
+<span class="s0"># TIFF tags.  the TIFF codec works just fine without it.</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) Secret Labs AB 1999.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s0">##</span>
+<span class="s0"># This module provides constants and clear-text names for various</span>
+<span class="s0"># well-known TIFF tags.</span>
+<span class="s0">##</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">NamedTuple</span>
+
+
+<span class="s2">class </span><span class="s1">_TagInfo</span><span class="s3">(</span><span class="s1">NamedTuple</span><span class="s3">):</span>
+    <span class="s1">value</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s2">None</span>
+    <span class="s1">name</span><span class="s3">: </span><span class="s1">str</span>
+    <span class="s1">type</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s2">None</span>
+    <span class="s1">length</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s2">None</span>
+    <span class="s1">enum</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]</span>
+
+
+<span class="s2">class </span><span class="s1">TagInfo</span><span class="s3">(</span><span class="s1">_TagInfo</span><span class="s3">):</span>
+    <span class="s1">__slots__</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">str</span><span class="s3">] = []</span>
+
+    <span class="s2">def </span><span class="s1">__new__</span><span class="s3">(</span>
+        <span class="s1">cls</span><span class="s3">,</span>
+        <span class="s1">value</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">name</span><span class="s3">: </span><span class="s1">str </span><span class="s3">= </span><span class="s4">&quot;unknown&quot;</span><span class="s3">,</span>
+        <span class="s1">type</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">length</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">enum</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">int</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; TagInfo</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">super</span><span class="s3">().</span><span class="s1">__new__</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">value</span><span class="s3">, </span><span class="s1">name</span><span class="s3">, </span><span class="s1">type</span><span class="s3">, </span><span class="s1">length</span><span class="s3">, </span><span class="s1">enum </span><span class="s2">or </span><span class="s3">{})</span>
+
+    <span class="s2">def </span><span class="s1">cvt_enum</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">value</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; int </span><span class="s3">| </span><span class="s1">str</span><span class="s3">:</span>
+        <span class="s0"># Using get will call hash(value), which can be expensive</span>
+        <span class="s0"># for some types (e.g. Fraction). Since self.enum is rarely</span>
+        <span class="s0"># used, it's usually better to test it first.</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">enum</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">value</span><span class="s3">, </span><span class="s1">value</span><span class="s3">) </span><span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">enum </span><span class="s2">else </span><span class="s1">value</span>
+
+
+<span class="s2">def </span><span class="s1">lookup</span><span class="s3">(</span><span class="s1">tag</span><span class="s3">: </span><span class="s1">int</span><span class="s3">, </span><span class="s1">group</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">) </span><span class="s1">-&gt; TagInfo</span><span class="s3">:</span>
+    <span class="s5">&quot;&quot;&quot; 
+    :param tag: Integer tag number 
+    :param group: Which :py:data:`~PIL.TiffTags.TAGS_V2_GROUPS` to look in 
+ 
+    .. versionadded:: 8.3.0 
+ 
+    :returns: Taginfo namedtuple, From the ``TAGS_V2`` info if possible, 
+        otherwise just populating the value and name from ``TAGS``. 
+        If the tag is not recognized, &quot;unknown&quot; is returned for the name 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">if </span><span class="s1">group </span><span class="s2">is not None</span><span class="s3">:</span>
+        <span class="s1">info </span><span class="s3">= </span><span class="s1">TAGS_V2_GROUPS</span><span class="s3">[</span><span class="s1">group</span><span class="s3">].</span><span class="s1">get</span><span class="s3">(</span><span class="s1">tag</span><span class="s3">) </span><span class="s2">if </span><span class="s1">group </span><span class="s2">in </span><span class="s1">TAGS_V2_GROUPS </span><span class="s2">else None</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">info </span><span class="s3">= </span><span class="s1">TAGS_V2</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">tag</span><span class="s3">)</span>
+    <span class="s2">return </span><span class="s1">info </span><span class="s2">or </span><span class="s1">TagInfo</span><span class="s3">(</span><span class="s1">tag</span><span class="s3">, </span><span class="s1">TAGS</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">tag</span><span class="s3">, </span><span class="s4">&quot;unknown&quot;</span><span class="s3">))</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Map tag numbers to tag info.</span>
+<span class="s0">#</span>
+<span class="s0">#  id: (Name, Type, Length[, enum_values])</span>
+<span class="s0">#</span>
+<span class="s0"># The length here differs from the length in the tiff spec.  For</span>
+<span class="s0"># numbers, the tiff spec is for the number of fields returned. We</span>
+<span class="s0"># agree here.  For string-like types, the tiff spec uses the length of</span>
+<span class="s0"># field in bytes.  In Pillow, we are using the number of expected</span>
+<span class="s0"># fields, in general 1 for string-like types.</span>
+
+
+<span class="s1">BYTE </span><span class="s3">= </span><span class="s6">1</span>
+<span class="s1">ASCII </span><span class="s3">= </span><span class="s6">2</span>
+<span class="s1">SHORT </span><span class="s3">= </span><span class="s6">3</span>
+<span class="s1">LONG </span><span class="s3">= </span><span class="s6">4</span>
+<span class="s1">RATIONAL </span><span class="s3">= </span><span class="s6">5</span>
+<span class="s1">SIGNED_BYTE </span><span class="s3">= </span><span class="s6">6</span>
+<span class="s1">UNDEFINED </span><span class="s3">= </span><span class="s6">7</span>
+<span class="s1">SIGNED_SHORT </span><span class="s3">= </span><span class="s6">8</span>
+<span class="s1">SIGNED_LONG </span><span class="s3">= </span><span class="s6">9</span>
+<span class="s1">SIGNED_RATIONAL </span><span class="s3">= </span><span class="s6">10</span>
+<span class="s1">FLOAT </span><span class="s3">= </span><span class="s6">11</span>
+<span class="s1">DOUBLE </span><span class="s3">= </span><span class="s6">12</span>
+<span class="s1">IFD </span><span class="s3">= </span><span class="s6">13</span>
+<span class="s1">LONG8 </span><span class="s3">= </span><span class="s6">16</span>
+
+<span class="s1">_tags_v2</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">] | </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]]] = {</span>
+    <span class="s6">254</span><span class="s3">: (</span><span class="s4">&quot;NewSubfileType&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">255</span><span class="s3">: (</span><span class="s4">&quot;SubfileType&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">256</span><span class="s3">: (</span><span class="s4">&quot;ImageWidth&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">257</span><span class="s3">: (</span><span class="s4">&quot;ImageLength&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">258</span><span class="s3">: (</span><span class="s4">&quot;BitsPerSample&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">259</span><span class="s3">: (</span>
+        <span class="s4">&quot;Compression&quot;</span><span class="s3">,</span>
+        <span class="s1">SHORT</span><span class="s3">,</span>
+        <span class="s6">1</span><span class="s3">,</span>
+        <span class="s3">{</span>
+            <span class="s4">&quot;Uncompressed&quot;</span><span class="s3">: </span><span class="s6">1</span><span class="s3">,</span>
+            <span class="s4">&quot;CCITT 1d&quot;</span><span class="s3">: </span><span class="s6">2</span><span class="s3">,</span>
+            <span class="s4">&quot;Group 3 Fax&quot;</span><span class="s3">: </span><span class="s6">3</span><span class="s3">,</span>
+            <span class="s4">&quot;Group 4 Fax&quot;</span><span class="s3">: </span><span class="s6">4</span><span class="s3">,</span>
+            <span class="s4">&quot;LZW&quot;</span><span class="s3">: </span><span class="s6">5</span><span class="s3">,</span>
+            <span class="s4">&quot;JPEG&quot;</span><span class="s3">: </span><span class="s6">6</span><span class="s3">,</span>
+            <span class="s4">&quot;PackBits&quot;</span><span class="s3">: </span><span class="s6">32773</span><span class="s3">,</span>
+        <span class="s3">},</span>
+    <span class="s3">),</span>
+    <span class="s6">262</span><span class="s3">: (</span>
+        <span class="s4">&quot;PhotometricInterpretation&quot;</span><span class="s3">,</span>
+        <span class="s1">SHORT</span><span class="s3">,</span>
+        <span class="s6">1</span><span class="s3">,</span>
+        <span class="s3">{</span>
+            <span class="s4">&quot;WhiteIsZero&quot;</span><span class="s3">: </span><span class="s6">0</span><span class="s3">,</span>
+            <span class="s4">&quot;BlackIsZero&quot;</span><span class="s3">: </span><span class="s6">1</span><span class="s3">,</span>
+            <span class="s4">&quot;RGB&quot;</span><span class="s3">: </span><span class="s6">2</span><span class="s3">,</span>
+            <span class="s4">&quot;RGB Palette&quot;</span><span class="s3">: </span><span class="s6">3</span><span class="s3">,</span>
+            <span class="s4">&quot;Transparency Mask&quot;</span><span class="s3">: </span><span class="s6">4</span><span class="s3">,</span>
+            <span class="s4">&quot;CMYK&quot;</span><span class="s3">: </span><span class="s6">5</span><span class="s3">,</span>
+            <span class="s4">&quot;YCbCr&quot;</span><span class="s3">: </span><span class="s6">6</span><span class="s3">,</span>
+            <span class="s4">&quot;CieLAB&quot;</span><span class="s3">: </span><span class="s6">8</span><span class="s3">,</span>
+            <span class="s4">&quot;CFA&quot;</span><span class="s3">: </span><span class="s6">32803</span><span class="s3">,  </span><span class="s0"># TIFF/EP, Adobe DNG</span>
+            <span class="s4">&quot;LinearRaw&quot;</span><span class="s3">: </span><span class="s6">32892</span><span class="s3">,  </span><span class="s0"># Adobe DNG</span>
+        <span class="s3">},</span>
+    <span class="s3">),</span>
+    <span class="s6">263</span><span class="s3">: (</span><span class="s4">&quot;Threshholding&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">264</span><span class="s3">: (</span><span class="s4">&quot;CellWidth&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">265</span><span class="s3">: (</span><span class="s4">&quot;CellLength&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">266</span><span class="s3">: (</span><span class="s4">&quot;FillOrder&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">269</span><span class="s3">: (</span><span class="s4">&quot;DocumentName&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">270</span><span class="s3">: (</span><span class="s4">&quot;ImageDescription&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">271</span><span class="s3">: (</span><span class="s4">&quot;Make&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">272</span><span class="s3">: (</span><span class="s4">&quot;Model&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">273</span><span class="s3">: (</span><span class="s4">&quot;StripOffsets&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">274</span><span class="s3">: (</span><span class="s4">&quot;Orientation&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">277</span><span class="s3">: (</span><span class="s4">&quot;SamplesPerPixel&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">278</span><span class="s3">: (</span><span class="s4">&quot;RowsPerStrip&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">279</span><span class="s3">: (</span><span class="s4">&quot;StripByteCounts&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">280</span><span class="s3">: (</span><span class="s4">&quot;MinSampleValue&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">281</span><span class="s3">: (</span><span class="s4">&quot;MaxSampleValue&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">282</span><span class="s3">: (</span><span class="s4">&quot;XResolution&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">283</span><span class="s3">: (</span><span class="s4">&quot;YResolution&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">284</span><span class="s3">: (</span><span class="s4">&quot;PlanarConfiguration&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">, {</span><span class="s4">&quot;Contiguous&quot;</span><span class="s3">: </span><span class="s6">1</span><span class="s3">, </span><span class="s4">&quot;Separate&quot;</span><span class="s3">: </span><span class="s6">2</span><span class="s3">}),</span>
+    <span class="s6">285</span><span class="s3">: (</span><span class="s4">&quot;PageName&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">286</span><span class="s3">: (</span><span class="s4">&quot;XPosition&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">287</span><span class="s3">: (</span><span class="s4">&quot;YPosition&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">288</span><span class="s3">: (</span><span class="s4">&quot;FreeOffsets&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">289</span><span class="s3">: (</span><span class="s4">&quot;FreeByteCounts&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">290</span><span class="s3">: (</span><span class="s4">&quot;GrayResponseUnit&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">291</span><span class="s3">: (</span><span class="s4">&quot;GrayResponseCurve&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">292</span><span class="s3">: (</span><span class="s4">&quot;T4Options&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">293</span><span class="s3">: (</span><span class="s4">&quot;T6Options&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">296</span><span class="s3">: (</span><span class="s4">&quot;ResolutionUnit&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">, {</span><span class="s4">&quot;none&quot;</span><span class="s3">: </span><span class="s6">1</span><span class="s3">, </span><span class="s4">&quot;inch&quot;</span><span class="s3">: </span><span class="s6">2</span><span class="s3">, </span><span class="s4">&quot;cm&quot;</span><span class="s3">: </span><span class="s6">3</span><span class="s3">}),</span>
+    <span class="s6">297</span><span class="s3">: (</span><span class="s4">&quot;PageNumber&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">2</span><span class="s3">),</span>
+    <span class="s6">301</span><span class="s3">: (</span><span class="s4">&quot;TransferFunction&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">305</span><span class="s3">: (</span><span class="s4">&quot;Software&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">306</span><span class="s3">: (</span><span class="s4">&quot;DateTime&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">315</span><span class="s3">: (</span><span class="s4">&quot;Artist&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">316</span><span class="s3">: (</span><span class="s4">&quot;HostComputer&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">317</span><span class="s3">: (</span><span class="s4">&quot;Predictor&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">, {</span><span class="s4">&quot;none&quot;</span><span class="s3">: </span><span class="s6">1</span><span class="s3">, </span><span class="s4">&quot;Horizontal Differencing&quot;</span><span class="s3">: </span><span class="s6">2</span><span class="s3">}),</span>
+    <span class="s6">318</span><span class="s3">: (</span><span class="s4">&quot;WhitePoint&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">2</span><span class="s3">),</span>
+    <span class="s6">319</span><span class="s3">: (</span><span class="s4">&quot;PrimaryChromaticities&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">6</span><span class="s3">),</span>
+    <span class="s6">320</span><span class="s3">: (</span><span class="s4">&quot;ColorMap&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">321</span><span class="s3">: (</span><span class="s4">&quot;HalftoneHints&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">2</span><span class="s3">),</span>
+    <span class="s6">322</span><span class="s3">: (</span><span class="s4">&quot;TileWidth&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">323</span><span class="s3">: (</span><span class="s4">&quot;TileLength&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">324</span><span class="s3">: (</span><span class="s4">&quot;TileOffsets&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">325</span><span class="s3">: (</span><span class="s4">&quot;TileByteCounts&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">330</span><span class="s3">: (</span><span class="s4">&quot;SubIFDs&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">332</span><span class="s3">: (</span><span class="s4">&quot;InkSet&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">333</span><span class="s3">: (</span><span class="s4">&quot;InkNames&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">334</span><span class="s3">: (</span><span class="s4">&quot;NumberOfInks&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">336</span><span class="s3">: (</span><span class="s4">&quot;DotRange&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">337</span><span class="s3">: (</span><span class="s4">&quot;TargetPrinter&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">338</span><span class="s3">: (</span><span class="s4">&quot;ExtraSamples&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">339</span><span class="s3">: (</span><span class="s4">&quot;SampleFormat&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">340</span><span class="s3">: (</span><span class="s4">&quot;SMinSampleValue&quot;</span><span class="s3">, </span><span class="s1">DOUBLE</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">341</span><span class="s3">: (</span><span class="s4">&quot;SMaxSampleValue&quot;</span><span class="s3">, </span><span class="s1">DOUBLE</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">342</span><span class="s3">: (</span><span class="s4">&quot;TransferRange&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">6</span><span class="s3">),</span>
+    <span class="s6">347</span><span class="s3">: (</span><span class="s4">&quot;JPEGTables&quot;</span><span class="s3">, </span><span class="s1">UNDEFINED</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s0"># obsolete JPEG tags</span>
+    <span class="s6">512</span><span class="s3">: (</span><span class="s4">&quot;JPEGProc&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">513</span><span class="s3">: (</span><span class="s4">&quot;JPEGInterchangeFormat&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">514</span><span class="s3">: (</span><span class="s4">&quot;JPEGInterchangeFormatLength&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">515</span><span class="s3">: (</span><span class="s4">&quot;JPEGRestartInterval&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">517</span><span class="s3">: (</span><span class="s4">&quot;JPEGLosslessPredictors&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">518</span><span class="s3">: (</span><span class="s4">&quot;JPEGPointTransforms&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">519</span><span class="s3">: (</span><span class="s4">&quot;JPEGQTables&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">520</span><span class="s3">: (</span><span class="s4">&quot;JPEGDCTables&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">521</span><span class="s3">: (</span><span class="s4">&quot;JPEGACTables&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">529</span><span class="s3">: (</span><span class="s4">&quot;YCbCrCoefficients&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">3</span><span class="s3">),</span>
+    <span class="s6">530</span><span class="s3">: (</span><span class="s4">&quot;YCbCrSubSampling&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">2</span><span class="s3">),</span>
+    <span class="s6">531</span><span class="s3">: (</span><span class="s4">&quot;YCbCrPositioning&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">532</span><span class="s3">: (</span><span class="s4">&quot;ReferenceBlackWhite&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">6</span><span class="s3">),</span>
+    <span class="s6">700</span><span class="s3">: (</span><span class="s4">&quot;XMP&quot;</span><span class="s3">, </span><span class="s1">BYTE</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s6">33432</span><span class="s3">: (</span><span class="s4">&quot;Copyright&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">33723</span><span class="s3">: (</span><span class="s4">&quot;IptcNaaInfo&quot;</span><span class="s3">, </span><span class="s1">UNDEFINED</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">34377</span><span class="s3">: (</span><span class="s4">&quot;PhotoshopInfo&quot;</span><span class="s3">, </span><span class="s1">BYTE</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+    <span class="s0"># FIXME add more tags here</span>
+    <span class="s6">34665</span><span class="s3">: (</span><span class="s4">&quot;ExifIFD&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">34675</span><span class="s3">: (</span><span class="s4">&quot;ICCProfile&quot;</span><span class="s3">, </span><span class="s1">UNDEFINED</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">34853</span><span class="s3">: (</span><span class="s4">&quot;GPSInfoIFD&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">36864</span><span class="s3">: (</span><span class="s4">&quot;ExifVersion&quot;</span><span class="s3">, </span><span class="s1">UNDEFINED</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">37724</span><span class="s3">: (</span><span class="s4">&quot;ImageSourceData&quot;</span><span class="s3">, </span><span class="s1">UNDEFINED</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">40965</span><span class="s3">: (</span><span class="s4">&quot;InteroperabilityIFD&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">41730</span><span class="s3">: (</span><span class="s4">&quot;CFAPattern&quot;</span><span class="s3">, </span><span class="s1">UNDEFINED</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s0"># MPInfo</span>
+    <span class="s6">45056</span><span class="s3">: (</span><span class="s4">&quot;MPFVersion&quot;</span><span class="s3">, </span><span class="s1">UNDEFINED</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">45057</span><span class="s3">: (</span><span class="s4">&quot;NumberOfImages&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">45058</span><span class="s3">: (</span><span class="s4">&quot;MPEntry&quot;</span><span class="s3">, </span><span class="s1">UNDEFINED</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">45059</span><span class="s3">: (</span><span class="s4">&quot;ImageUIDList&quot;</span><span class="s3">, </span><span class="s1">UNDEFINED</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),  </span><span class="s0"># UNDONE, check</span>
+    <span class="s6">45060</span><span class="s3">: (</span><span class="s4">&quot;TotalFrames&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">45313</span><span class="s3">: (</span><span class="s4">&quot;MPIndividualNum&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">45569</span><span class="s3">: (</span><span class="s4">&quot;PanOrientation&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">45570</span><span class="s3">: (</span><span class="s4">&quot;PanOverlap_H&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">45571</span><span class="s3">: (</span><span class="s4">&quot;PanOverlap_V&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">45572</span><span class="s3">: (</span><span class="s4">&quot;BaseViewpointNum&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">45573</span><span class="s3">: (</span><span class="s4">&quot;ConvergenceAngle&quot;</span><span class="s3">, </span><span class="s1">SIGNED_RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">45574</span><span class="s3">: (</span><span class="s4">&quot;BaselineLength&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">45575</span><span class="s3">: (</span><span class="s4">&quot;VerticalDivergence&quot;</span><span class="s3">, </span><span class="s1">SIGNED_RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">45576</span><span class="s3">: (</span><span class="s4">&quot;AxisDistance_X&quot;</span><span class="s3">, </span><span class="s1">SIGNED_RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">45577</span><span class="s3">: (</span><span class="s4">&quot;AxisDistance_Y&quot;</span><span class="s3">, </span><span class="s1">SIGNED_RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">45578</span><span class="s3">: (</span><span class="s4">&quot;AxisDistance_Z&quot;</span><span class="s3">, </span><span class="s1">SIGNED_RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">45579</span><span class="s3">: (</span><span class="s4">&quot;YawAngle&quot;</span><span class="s3">, </span><span class="s1">SIGNED_RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">45580</span><span class="s3">: (</span><span class="s4">&quot;PitchAngle&quot;</span><span class="s3">, </span><span class="s1">SIGNED_RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">45581</span><span class="s3">: (</span><span class="s4">&quot;RollAngle&quot;</span><span class="s3">, </span><span class="s1">SIGNED_RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">40960</span><span class="s3">: (</span><span class="s4">&quot;FlashPixVersion&quot;</span><span class="s3">, </span><span class="s1">UNDEFINED</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">50741</span><span class="s3">: (</span><span class="s4">&quot;MakerNoteSafety&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">, {</span><span class="s4">&quot;Unsafe&quot;</span><span class="s3">: </span><span class="s6">0</span><span class="s3">, </span><span class="s4">&quot;Safe&quot;</span><span class="s3">: </span><span class="s6">1</span><span class="s3">}),</span>
+    <span class="s6">50780</span><span class="s3">: (</span><span class="s4">&quot;BestQualityScale&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s6">50838</span><span class="s3">: (</span><span class="s4">&quot;ImageJMetaDataByteCounts&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),  </span><span class="s0"># Can be more than one</span>
+    <span class="s6">50839</span><span class="s3">: (</span><span class="s4">&quot;ImageJMetaData&quot;</span><span class="s3">, </span><span class="s1">UNDEFINED</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),  </span><span class="s0"># see Issue #2006</span>
+<span class="s3">}</span>
+<span class="s1">_tags_v2_groups </span><span class="s3">= {</span>
+    <span class="s0"># ExifIFD</span>
+    <span class="s6">34665</span><span class="s3">: {</span>
+        <span class="s6">36864</span><span class="s3">: (</span><span class="s4">&quot;ExifVersion&quot;</span><span class="s3">, </span><span class="s1">UNDEFINED</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+        <span class="s6">40960</span><span class="s3">: (</span><span class="s4">&quot;FlashPixVersion&quot;</span><span class="s3">, </span><span class="s1">UNDEFINED</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+        <span class="s6">40965</span><span class="s3">: (</span><span class="s4">&quot;InteroperabilityIFD&quot;</span><span class="s3">, </span><span class="s1">LONG</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+        <span class="s6">41730</span><span class="s3">: (</span><span class="s4">&quot;CFAPattern&quot;</span><span class="s3">, </span><span class="s1">UNDEFINED</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s3">},</span>
+    <span class="s0"># GPSInfoIFD</span>
+    <span class="s6">34853</span><span class="s3">: {</span>
+        <span class="s6">0</span><span class="s3">: (</span><span class="s4">&quot;GPSVersionID&quot;</span><span class="s3">, </span><span class="s1">BYTE</span><span class="s3">, </span><span class="s6">4</span><span class="s3">),</span>
+        <span class="s6">1</span><span class="s3">: (</span><span class="s4">&quot;GPSLatitudeRef&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">2</span><span class="s3">),</span>
+        <span class="s6">2</span><span class="s3">: (</span><span class="s4">&quot;GPSLatitude&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">3</span><span class="s3">),</span>
+        <span class="s6">3</span><span class="s3">: (</span><span class="s4">&quot;GPSLongitudeRef&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">2</span><span class="s3">),</span>
+        <span class="s6">4</span><span class="s3">: (</span><span class="s4">&quot;GPSLongitude&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">3</span><span class="s3">),</span>
+        <span class="s6">5</span><span class="s3">: (</span><span class="s4">&quot;GPSAltitudeRef&quot;</span><span class="s3">, </span><span class="s1">BYTE</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+        <span class="s6">6</span><span class="s3">: (</span><span class="s4">&quot;GPSAltitude&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+        <span class="s6">7</span><span class="s3">: (</span><span class="s4">&quot;GPSTimeStamp&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">3</span><span class="s3">),</span>
+        <span class="s6">8</span><span class="s3">: (</span><span class="s4">&quot;GPSSatellites&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+        <span class="s6">9</span><span class="s3">: (</span><span class="s4">&quot;GPSStatus&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">2</span><span class="s3">),</span>
+        <span class="s6">10</span><span class="s3">: (</span><span class="s4">&quot;GPSMeasureMode&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">2</span><span class="s3">),</span>
+        <span class="s6">11</span><span class="s3">: (</span><span class="s4">&quot;GPSDOP&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+        <span class="s6">12</span><span class="s3">: (</span><span class="s4">&quot;GPSSpeedRef&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">2</span><span class="s3">),</span>
+        <span class="s6">13</span><span class="s3">: (</span><span class="s4">&quot;GPSSpeed&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+        <span class="s6">14</span><span class="s3">: (</span><span class="s4">&quot;GPSTrackRef&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">2</span><span class="s3">),</span>
+        <span class="s6">15</span><span class="s3">: (</span><span class="s4">&quot;GPSTrack&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+        <span class="s6">16</span><span class="s3">: (</span><span class="s4">&quot;GPSImgDirectionRef&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">2</span><span class="s3">),</span>
+        <span class="s6">17</span><span class="s3">: (</span><span class="s4">&quot;GPSImgDirection&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+        <span class="s6">18</span><span class="s3">: (</span><span class="s4">&quot;GPSMapDatum&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+        <span class="s6">19</span><span class="s3">: (</span><span class="s4">&quot;GPSDestLatitudeRef&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">2</span><span class="s3">),</span>
+        <span class="s6">20</span><span class="s3">: (</span><span class="s4">&quot;GPSDestLatitude&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">3</span><span class="s3">),</span>
+        <span class="s6">21</span><span class="s3">: (</span><span class="s4">&quot;GPSDestLongitudeRef&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">2</span><span class="s3">),</span>
+        <span class="s6">22</span><span class="s3">: (</span><span class="s4">&quot;GPSDestLongitude&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">3</span><span class="s3">),</span>
+        <span class="s6">23</span><span class="s3">: (</span><span class="s4">&quot;GPSDestBearingRef&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">2</span><span class="s3">),</span>
+        <span class="s6">24</span><span class="s3">: (</span><span class="s4">&quot;GPSDestBearing&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+        <span class="s6">25</span><span class="s3">: (</span><span class="s4">&quot;GPSDestDistanceRef&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">2</span><span class="s3">),</span>
+        <span class="s6">26</span><span class="s3">: (</span><span class="s4">&quot;GPSDestDistance&quot;</span><span class="s3">, </span><span class="s1">RATIONAL</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+        <span class="s6">27</span><span class="s3">: (</span><span class="s4">&quot;GPSProcessingMethod&quot;</span><span class="s3">, </span><span class="s1">UNDEFINED</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+        <span class="s6">28</span><span class="s3">: (</span><span class="s4">&quot;GPSAreaInformation&quot;</span><span class="s3">, </span><span class="s1">UNDEFINED</span><span class="s3">, </span><span class="s6">0</span><span class="s3">),</span>
+        <span class="s6">29</span><span class="s3">: (</span><span class="s4">&quot;GPSDateStamp&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">11</span><span class="s3">),</span>
+        <span class="s6">30</span><span class="s3">: (</span><span class="s4">&quot;GPSDifferential&quot;</span><span class="s3">, </span><span class="s1">SHORT</span><span class="s3">, </span><span class="s6">1</span><span class="s3">),</span>
+    <span class="s3">},</span>
+    <span class="s0"># InteroperabilityIFD</span>
+    <span class="s6">40965</span><span class="s3">: {</span><span class="s6">1</span><span class="s3">: (</span><span class="s4">&quot;InteropIndex&quot;</span><span class="s3">, </span><span class="s1">ASCII</span><span class="s3">, </span><span class="s6">1</span><span class="s3">), </span><span class="s6">2</span><span class="s3">: (</span><span class="s4">&quot;InteropVersion&quot;</span><span class="s3">, </span><span class="s1">UNDEFINED</span><span class="s3">, </span><span class="s6">1</span><span class="s3">)},</span>
+<span class="s3">}</span>
+
+<span class="s0"># Legacy Tags structure</span>
+<span class="s0"># these tags aren't included above, but were in the previous versions</span>
+<span class="s1">TAGS</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">int </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">], </span><span class="s1">str</span><span class="s3">] = {</span>
+    <span class="s6">347</span><span class="s3">: </span><span class="s4">&quot;JPEGTables&quot;</span><span class="s3">,</span>
+    <span class="s6">700</span><span class="s3">: </span><span class="s4">&quot;XMP&quot;</span><span class="s3">,</span>
+    <span class="s0"># Additional Exif Info</span>
+    <span class="s6">32932</span><span class="s3">: </span><span class="s4">&quot;Wang Annotation&quot;</span><span class="s3">,</span>
+    <span class="s6">33434</span><span class="s3">: </span><span class="s4">&quot;ExposureTime&quot;</span><span class="s3">,</span>
+    <span class="s6">33437</span><span class="s3">: </span><span class="s4">&quot;FNumber&quot;</span><span class="s3">,</span>
+    <span class="s6">33445</span><span class="s3">: </span><span class="s4">&quot;MD FileTag&quot;</span><span class="s3">,</span>
+    <span class="s6">33446</span><span class="s3">: </span><span class="s4">&quot;MD ScalePixel&quot;</span><span class="s3">,</span>
+    <span class="s6">33447</span><span class="s3">: </span><span class="s4">&quot;MD ColorTable&quot;</span><span class="s3">,</span>
+    <span class="s6">33448</span><span class="s3">: </span><span class="s4">&quot;MD LabName&quot;</span><span class="s3">,</span>
+    <span class="s6">33449</span><span class="s3">: </span><span class="s4">&quot;MD SampleInfo&quot;</span><span class="s3">,</span>
+    <span class="s6">33450</span><span class="s3">: </span><span class="s4">&quot;MD PrepDate&quot;</span><span class="s3">,</span>
+    <span class="s6">33451</span><span class="s3">: </span><span class="s4">&quot;MD PrepTime&quot;</span><span class="s3">,</span>
+    <span class="s6">33452</span><span class="s3">: </span><span class="s4">&quot;MD FileUnits&quot;</span><span class="s3">,</span>
+    <span class="s6">33550</span><span class="s3">: </span><span class="s4">&quot;ModelPixelScaleTag&quot;</span><span class="s3">,</span>
+    <span class="s6">33723</span><span class="s3">: </span><span class="s4">&quot;IptcNaaInfo&quot;</span><span class="s3">,</span>
+    <span class="s6">33918</span><span class="s3">: </span><span class="s4">&quot;INGR Packet Data Tag&quot;</span><span class="s3">,</span>
+    <span class="s6">33919</span><span class="s3">: </span><span class="s4">&quot;INGR Flag Registers&quot;</span><span class="s3">,</span>
+    <span class="s6">33920</span><span class="s3">: </span><span class="s4">&quot;IrasB Transformation Matrix&quot;</span><span class="s3">,</span>
+    <span class="s6">33922</span><span class="s3">: </span><span class="s4">&quot;ModelTiepointTag&quot;</span><span class="s3">,</span>
+    <span class="s6">34264</span><span class="s3">: </span><span class="s4">&quot;ModelTransformationTag&quot;</span><span class="s3">,</span>
+    <span class="s6">34377</span><span class="s3">: </span><span class="s4">&quot;PhotoshopInfo&quot;</span><span class="s3">,</span>
+    <span class="s6">34735</span><span class="s3">: </span><span class="s4">&quot;GeoKeyDirectoryTag&quot;</span><span class="s3">,</span>
+    <span class="s6">34736</span><span class="s3">: </span><span class="s4">&quot;GeoDoubleParamsTag&quot;</span><span class="s3">,</span>
+    <span class="s6">34737</span><span class="s3">: </span><span class="s4">&quot;GeoAsciiParamsTag&quot;</span><span class="s3">,</span>
+    <span class="s6">34850</span><span class="s3">: </span><span class="s4">&quot;ExposureProgram&quot;</span><span class="s3">,</span>
+    <span class="s6">34852</span><span class="s3">: </span><span class="s4">&quot;SpectralSensitivity&quot;</span><span class="s3">,</span>
+    <span class="s6">34855</span><span class="s3">: </span><span class="s4">&quot;ISOSpeedRatings&quot;</span><span class="s3">,</span>
+    <span class="s6">34856</span><span class="s3">: </span><span class="s4">&quot;OECF&quot;</span><span class="s3">,</span>
+    <span class="s6">34864</span><span class="s3">: </span><span class="s4">&quot;SensitivityType&quot;</span><span class="s3">,</span>
+    <span class="s6">34865</span><span class="s3">: </span><span class="s4">&quot;StandardOutputSensitivity&quot;</span><span class="s3">,</span>
+    <span class="s6">34866</span><span class="s3">: </span><span class="s4">&quot;RecommendedExposureIndex&quot;</span><span class="s3">,</span>
+    <span class="s6">34867</span><span class="s3">: </span><span class="s4">&quot;ISOSpeed&quot;</span><span class="s3">,</span>
+    <span class="s6">34868</span><span class="s3">: </span><span class="s4">&quot;ISOSpeedLatitudeyyy&quot;</span><span class="s3">,</span>
+    <span class="s6">34869</span><span class="s3">: </span><span class="s4">&quot;ISOSpeedLatitudezzz&quot;</span><span class="s3">,</span>
+    <span class="s6">34908</span><span class="s3">: </span><span class="s4">&quot;HylaFAX FaxRecvParams&quot;</span><span class="s3">,</span>
+    <span class="s6">34909</span><span class="s3">: </span><span class="s4">&quot;HylaFAX FaxSubAddress&quot;</span><span class="s3">,</span>
+    <span class="s6">34910</span><span class="s3">: </span><span class="s4">&quot;HylaFAX FaxRecvTime&quot;</span><span class="s3">,</span>
+    <span class="s6">36864</span><span class="s3">: </span><span class="s4">&quot;ExifVersion&quot;</span><span class="s3">,</span>
+    <span class="s6">36867</span><span class="s3">: </span><span class="s4">&quot;DateTimeOriginal&quot;</span><span class="s3">,</span>
+    <span class="s6">36868</span><span class="s3">: </span><span class="s4">&quot;DateTimeDigitized&quot;</span><span class="s3">,</span>
+    <span class="s6">37121</span><span class="s3">: </span><span class="s4">&quot;ComponentsConfiguration&quot;</span><span class="s3">,</span>
+    <span class="s6">37122</span><span class="s3">: </span><span class="s4">&quot;CompressedBitsPerPixel&quot;</span><span class="s3">,</span>
+    <span class="s6">37724</span><span class="s3">: </span><span class="s4">&quot;ImageSourceData&quot;</span><span class="s3">,</span>
+    <span class="s6">37377</span><span class="s3">: </span><span class="s4">&quot;ShutterSpeedValue&quot;</span><span class="s3">,</span>
+    <span class="s6">37378</span><span class="s3">: </span><span class="s4">&quot;ApertureValue&quot;</span><span class="s3">,</span>
+    <span class="s6">37379</span><span class="s3">: </span><span class="s4">&quot;BrightnessValue&quot;</span><span class="s3">,</span>
+    <span class="s6">37380</span><span class="s3">: </span><span class="s4">&quot;ExposureBiasValue&quot;</span><span class="s3">,</span>
+    <span class="s6">37381</span><span class="s3">: </span><span class="s4">&quot;MaxApertureValue&quot;</span><span class="s3">,</span>
+    <span class="s6">37382</span><span class="s3">: </span><span class="s4">&quot;SubjectDistance&quot;</span><span class="s3">,</span>
+    <span class="s6">37383</span><span class="s3">: </span><span class="s4">&quot;MeteringMode&quot;</span><span class="s3">,</span>
+    <span class="s6">37384</span><span class="s3">: </span><span class="s4">&quot;LightSource&quot;</span><span class="s3">,</span>
+    <span class="s6">37385</span><span class="s3">: </span><span class="s4">&quot;Flash&quot;</span><span class="s3">,</span>
+    <span class="s6">37386</span><span class="s3">: </span><span class="s4">&quot;FocalLength&quot;</span><span class="s3">,</span>
+    <span class="s6">37396</span><span class="s3">: </span><span class="s4">&quot;SubjectArea&quot;</span><span class="s3">,</span>
+    <span class="s6">37500</span><span class="s3">: </span><span class="s4">&quot;MakerNote&quot;</span><span class="s3">,</span>
+    <span class="s6">37510</span><span class="s3">: </span><span class="s4">&quot;UserComment&quot;</span><span class="s3">,</span>
+    <span class="s6">37520</span><span class="s3">: </span><span class="s4">&quot;SubSec&quot;</span><span class="s3">,</span>
+    <span class="s6">37521</span><span class="s3">: </span><span class="s4">&quot;SubSecTimeOriginal&quot;</span><span class="s3">,</span>
+    <span class="s6">37522</span><span class="s3">: </span><span class="s4">&quot;SubsecTimeDigitized&quot;</span><span class="s3">,</span>
+    <span class="s6">40960</span><span class="s3">: </span><span class="s4">&quot;FlashPixVersion&quot;</span><span class="s3">,</span>
+    <span class="s6">40961</span><span class="s3">: </span><span class="s4">&quot;ColorSpace&quot;</span><span class="s3">,</span>
+    <span class="s6">40962</span><span class="s3">: </span><span class="s4">&quot;PixelXDimension&quot;</span><span class="s3">,</span>
+    <span class="s6">40963</span><span class="s3">: </span><span class="s4">&quot;PixelYDimension&quot;</span><span class="s3">,</span>
+    <span class="s6">40964</span><span class="s3">: </span><span class="s4">&quot;RelatedSoundFile&quot;</span><span class="s3">,</span>
+    <span class="s6">40965</span><span class="s3">: </span><span class="s4">&quot;InteroperabilityIFD&quot;</span><span class="s3">,</span>
+    <span class="s6">41483</span><span class="s3">: </span><span class="s4">&quot;FlashEnergy&quot;</span><span class="s3">,</span>
+    <span class="s6">41484</span><span class="s3">: </span><span class="s4">&quot;SpatialFrequencyResponse&quot;</span><span class="s3">,</span>
+    <span class="s6">41486</span><span class="s3">: </span><span class="s4">&quot;FocalPlaneXResolution&quot;</span><span class="s3">,</span>
+    <span class="s6">41487</span><span class="s3">: </span><span class="s4">&quot;FocalPlaneYResolution&quot;</span><span class="s3">,</span>
+    <span class="s6">41488</span><span class="s3">: </span><span class="s4">&quot;FocalPlaneResolutionUnit&quot;</span><span class="s3">,</span>
+    <span class="s6">41492</span><span class="s3">: </span><span class="s4">&quot;SubjectLocation&quot;</span><span class="s3">,</span>
+    <span class="s6">41493</span><span class="s3">: </span><span class="s4">&quot;ExposureIndex&quot;</span><span class="s3">,</span>
+    <span class="s6">41495</span><span class="s3">: </span><span class="s4">&quot;SensingMethod&quot;</span><span class="s3">,</span>
+    <span class="s6">41728</span><span class="s3">: </span><span class="s4">&quot;FileSource&quot;</span><span class="s3">,</span>
+    <span class="s6">41729</span><span class="s3">: </span><span class="s4">&quot;SceneType&quot;</span><span class="s3">,</span>
+    <span class="s6">41730</span><span class="s3">: </span><span class="s4">&quot;CFAPattern&quot;</span><span class="s3">,</span>
+    <span class="s6">41985</span><span class="s3">: </span><span class="s4">&quot;CustomRendered&quot;</span><span class="s3">,</span>
+    <span class="s6">41986</span><span class="s3">: </span><span class="s4">&quot;ExposureMode&quot;</span><span class="s3">,</span>
+    <span class="s6">41987</span><span class="s3">: </span><span class="s4">&quot;WhiteBalance&quot;</span><span class="s3">,</span>
+    <span class="s6">41988</span><span class="s3">: </span><span class="s4">&quot;DigitalZoomRatio&quot;</span><span class="s3">,</span>
+    <span class="s6">41989</span><span class="s3">: </span><span class="s4">&quot;FocalLengthIn35mmFilm&quot;</span><span class="s3">,</span>
+    <span class="s6">41990</span><span class="s3">: </span><span class="s4">&quot;SceneCaptureType&quot;</span><span class="s3">,</span>
+    <span class="s6">41991</span><span class="s3">: </span><span class="s4">&quot;GainControl&quot;</span><span class="s3">,</span>
+    <span class="s6">41992</span><span class="s3">: </span><span class="s4">&quot;Contrast&quot;</span><span class="s3">,</span>
+    <span class="s6">41993</span><span class="s3">: </span><span class="s4">&quot;Saturation&quot;</span><span class="s3">,</span>
+    <span class="s6">41994</span><span class="s3">: </span><span class="s4">&quot;Sharpness&quot;</span><span class="s3">,</span>
+    <span class="s6">41995</span><span class="s3">: </span><span class="s4">&quot;DeviceSettingDescription&quot;</span><span class="s3">,</span>
+    <span class="s6">41996</span><span class="s3">: </span><span class="s4">&quot;SubjectDistanceRange&quot;</span><span class="s3">,</span>
+    <span class="s6">42016</span><span class="s3">: </span><span class="s4">&quot;ImageUniqueID&quot;</span><span class="s3">,</span>
+    <span class="s6">42032</span><span class="s3">: </span><span class="s4">&quot;CameraOwnerName&quot;</span><span class="s3">,</span>
+    <span class="s6">42033</span><span class="s3">: </span><span class="s4">&quot;BodySerialNumber&quot;</span><span class="s3">,</span>
+    <span class="s6">42034</span><span class="s3">: </span><span class="s4">&quot;LensSpecification&quot;</span><span class="s3">,</span>
+    <span class="s6">42035</span><span class="s3">: </span><span class="s4">&quot;LensMake&quot;</span><span class="s3">,</span>
+    <span class="s6">42036</span><span class="s3">: </span><span class="s4">&quot;LensModel&quot;</span><span class="s3">,</span>
+    <span class="s6">42037</span><span class="s3">: </span><span class="s4">&quot;LensSerialNumber&quot;</span><span class="s3">,</span>
+    <span class="s6">42112</span><span class="s3">: </span><span class="s4">&quot;GDAL_METADATA&quot;</span><span class="s3">,</span>
+    <span class="s6">42113</span><span class="s3">: </span><span class="s4">&quot;GDAL_NODATA&quot;</span><span class="s3">,</span>
+    <span class="s6">42240</span><span class="s3">: </span><span class="s4">&quot;Gamma&quot;</span><span class="s3">,</span>
+    <span class="s6">50215</span><span class="s3">: </span><span class="s4">&quot;Oce Scanjob Description&quot;</span><span class="s3">,</span>
+    <span class="s6">50216</span><span class="s3">: </span><span class="s4">&quot;Oce Application Selector&quot;</span><span class="s3">,</span>
+    <span class="s6">50217</span><span class="s3">: </span><span class="s4">&quot;Oce Identification Number&quot;</span><span class="s3">,</span>
+    <span class="s6">50218</span><span class="s3">: </span><span class="s4">&quot;Oce ImageLogic Characteristics&quot;</span><span class="s3">,</span>
+    <span class="s0"># Adobe DNG</span>
+    <span class="s6">50706</span><span class="s3">: </span><span class="s4">&quot;DNGVersion&quot;</span><span class="s3">,</span>
+    <span class="s6">50707</span><span class="s3">: </span><span class="s4">&quot;DNGBackwardVersion&quot;</span><span class="s3">,</span>
+    <span class="s6">50708</span><span class="s3">: </span><span class="s4">&quot;UniqueCameraModel&quot;</span><span class="s3">,</span>
+    <span class="s6">50709</span><span class="s3">: </span><span class="s4">&quot;LocalizedCameraModel&quot;</span><span class="s3">,</span>
+    <span class="s6">50710</span><span class="s3">: </span><span class="s4">&quot;CFAPlaneColor&quot;</span><span class="s3">,</span>
+    <span class="s6">50711</span><span class="s3">: </span><span class="s4">&quot;CFALayout&quot;</span><span class="s3">,</span>
+    <span class="s6">50712</span><span class="s3">: </span><span class="s4">&quot;LinearizationTable&quot;</span><span class="s3">,</span>
+    <span class="s6">50713</span><span class="s3">: </span><span class="s4">&quot;BlackLevelRepeatDim&quot;</span><span class="s3">,</span>
+    <span class="s6">50714</span><span class="s3">: </span><span class="s4">&quot;BlackLevel&quot;</span><span class="s3">,</span>
+    <span class="s6">50715</span><span class="s3">: </span><span class="s4">&quot;BlackLevelDeltaH&quot;</span><span class="s3">,</span>
+    <span class="s6">50716</span><span class="s3">: </span><span class="s4">&quot;BlackLevelDeltaV&quot;</span><span class="s3">,</span>
+    <span class="s6">50717</span><span class="s3">: </span><span class="s4">&quot;WhiteLevel&quot;</span><span class="s3">,</span>
+    <span class="s6">50718</span><span class="s3">: </span><span class="s4">&quot;DefaultScale&quot;</span><span class="s3">,</span>
+    <span class="s6">50719</span><span class="s3">: </span><span class="s4">&quot;DefaultCropOrigin&quot;</span><span class="s3">,</span>
+    <span class="s6">50720</span><span class="s3">: </span><span class="s4">&quot;DefaultCropSize&quot;</span><span class="s3">,</span>
+    <span class="s6">50721</span><span class="s3">: </span><span class="s4">&quot;ColorMatrix1&quot;</span><span class="s3">,</span>
+    <span class="s6">50722</span><span class="s3">: </span><span class="s4">&quot;ColorMatrix2&quot;</span><span class="s3">,</span>
+    <span class="s6">50723</span><span class="s3">: </span><span class="s4">&quot;CameraCalibration1&quot;</span><span class="s3">,</span>
+    <span class="s6">50724</span><span class="s3">: </span><span class="s4">&quot;CameraCalibration2&quot;</span><span class="s3">,</span>
+    <span class="s6">50725</span><span class="s3">: </span><span class="s4">&quot;ReductionMatrix1&quot;</span><span class="s3">,</span>
+    <span class="s6">50726</span><span class="s3">: </span><span class="s4">&quot;ReductionMatrix2&quot;</span><span class="s3">,</span>
+    <span class="s6">50727</span><span class="s3">: </span><span class="s4">&quot;AnalogBalance&quot;</span><span class="s3">,</span>
+    <span class="s6">50728</span><span class="s3">: </span><span class="s4">&quot;AsShotNeutral&quot;</span><span class="s3">,</span>
+    <span class="s6">50729</span><span class="s3">: </span><span class="s4">&quot;AsShotWhiteXY&quot;</span><span class="s3">,</span>
+    <span class="s6">50730</span><span class="s3">: </span><span class="s4">&quot;BaselineExposure&quot;</span><span class="s3">,</span>
+    <span class="s6">50731</span><span class="s3">: </span><span class="s4">&quot;BaselineNoise&quot;</span><span class="s3">,</span>
+    <span class="s6">50732</span><span class="s3">: </span><span class="s4">&quot;BaselineSharpness&quot;</span><span class="s3">,</span>
+    <span class="s6">50733</span><span class="s3">: </span><span class="s4">&quot;BayerGreenSplit&quot;</span><span class="s3">,</span>
+    <span class="s6">50734</span><span class="s3">: </span><span class="s4">&quot;LinearResponseLimit&quot;</span><span class="s3">,</span>
+    <span class="s6">50735</span><span class="s3">: </span><span class="s4">&quot;CameraSerialNumber&quot;</span><span class="s3">,</span>
+    <span class="s6">50736</span><span class="s3">: </span><span class="s4">&quot;LensInfo&quot;</span><span class="s3">,</span>
+    <span class="s6">50737</span><span class="s3">: </span><span class="s4">&quot;ChromaBlurRadius&quot;</span><span class="s3">,</span>
+    <span class="s6">50738</span><span class="s3">: </span><span class="s4">&quot;AntiAliasStrength&quot;</span><span class="s3">,</span>
+    <span class="s6">50740</span><span class="s3">: </span><span class="s4">&quot;DNGPrivateData&quot;</span><span class="s3">,</span>
+    <span class="s6">50778</span><span class="s3">: </span><span class="s4">&quot;CalibrationIlluminant1&quot;</span><span class="s3">,</span>
+    <span class="s6">50779</span><span class="s3">: </span><span class="s4">&quot;CalibrationIlluminant2&quot;</span><span class="s3">,</span>
+    <span class="s6">50784</span><span class="s3">: </span><span class="s4">&quot;Alias Layer Metadata&quot;</span><span class="s3">,</span>
+<span class="s3">}</span>
+
+<span class="s1">TAGS_V2</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">TagInfo</span><span class="s3">] = {}</span>
+<span class="s1">TAGS_V2_GROUPS</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">TagInfo</span><span class="s3">]] = {}</span>
+
+
+<span class="s2">def </span><span class="s1">_populate</span><span class="s3">() </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">_tags_v2</span><span class="s3">.</span><span class="s1">items</span><span class="s3">():</span>
+        <span class="s0"># Populate legacy structure.</span>
+        <span class="s1">TAGS</span><span class="s3">[</span><span class="s1">k</span><span class="s3">] = </span><span class="s1">v</span><span class="s3">[</span><span class="s6">0</span><span class="s3">]</span>
+        <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">v</span><span class="s3">) == </span><span class="s6">4</span><span class="s3">:</span>
+            <span class="s2">for </span><span class="s1">sk</span><span class="s3">, </span><span class="s1">sv </span><span class="s2">in </span><span class="s1">v</span><span class="s3">[</span><span class="s6">3</span><span class="s3">].</span><span class="s1">items</span><span class="s3">():</span>
+                <span class="s1">TAGS</span><span class="s3">[(</span><span class="s1">k</span><span class="s3">, </span><span class="s1">sv</span><span class="s3">)] = </span><span class="s1">sk</span>
+
+        <span class="s1">TAGS_V2</span><span class="s3">[</span><span class="s1">k</span><span class="s3">] = </span><span class="s1">TagInfo</span><span class="s3">(</span><span class="s1">k</span><span class="s3">, *</span><span class="s1">v</span><span class="s3">)</span>
+
+    <span class="s2">for </span><span class="s1">group</span><span class="s3">, </span><span class="s1">tags </span><span class="s2">in </span><span class="s1">_tags_v2_groups</span><span class="s3">.</span><span class="s1">items</span><span class="s3">():</span>
+        <span class="s1">TAGS_V2_GROUPS</span><span class="s3">[</span><span class="s1">group</span><span class="s3">] = {</span><span class="s1">k</span><span class="s3">: </span><span class="s1">TagInfo</span><span class="s3">(</span><span class="s1">k</span><span class="s3">, *</span><span class="s1">v</span><span class="s3">) </span><span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">tags</span><span class="s3">.</span><span class="s1">items</span><span class="s3">()}</span>
+
+
+<span class="s1">_populate</span><span class="s3">()</span>
+<span class="s0">##</span>
+<span class="s0"># Map type numbers to type names -- defined in ImageFileDirectory.</span>
+
+<span class="s1">TYPES</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">str</span><span class="s3">] = {}</span>
+
+<span class="s0">#</span>
+<span class="s0"># These tags are handled by default in libtiff, without</span>
+<span class="s0"># adding to the custom dictionary. From tif_dir.c, searching for</span>
+<span class="s0"># case TIFFTAG in the _TIFFVSetField function:</span>
+<span class="s0"># Line: item.</span>
+<span class="s0"># 148: case TIFFTAG_SUBFILETYPE:</span>
+<span class="s0"># 151: case TIFFTAG_IMAGEWIDTH:</span>
+<span class="s0"># 154: case TIFFTAG_IMAGELENGTH:</span>
+<span class="s0"># 157: case TIFFTAG_BITSPERSAMPLE:</span>
+<span class="s0"># 181: case TIFFTAG_COMPRESSION:</span>
+<span class="s0"># 202: case TIFFTAG_PHOTOMETRIC:</span>
+<span class="s0"># 205: case TIFFTAG_THRESHHOLDING:</span>
+<span class="s0"># 208: case TIFFTAG_FILLORDER:</span>
+<span class="s0"># 214: case TIFFTAG_ORIENTATION:</span>
+<span class="s0"># 221: case TIFFTAG_SAMPLESPERPIXEL:</span>
+<span class="s0"># 228: case TIFFTAG_ROWSPERSTRIP:</span>
+<span class="s0"># 238: case TIFFTAG_MINSAMPLEVALUE:</span>
+<span class="s0"># 241: case TIFFTAG_MAXSAMPLEVALUE:</span>
+<span class="s0"># 244: case TIFFTAG_SMINSAMPLEVALUE:</span>
+<span class="s0"># 247: case TIFFTAG_SMAXSAMPLEVALUE:</span>
+<span class="s0"># 250: case TIFFTAG_XRESOLUTION:</span>
+<span class="s0"># 256: case TIFFTAG_YRESOLUTION:</span>
+<span class="s0"># 262: case TIFFTAG_PLANARCONFIG:</span>
+<span class="s0"># 268: case TIFFTAG_XPOSITION:</span>
+<span class="s0"># 271: case TIFFTAG_YPOSITION:</span>
+<span class="s0"># 274: case TIFFTAG_RESOLUTIONUNIT:</span>
+<span class="s0"># 280: case TIFFTAG_PAGENUMBER:</span>
+<span class="s0"># 284: case TIFFTAG_HALFTONEHINTS:</span>
+<span class="s0"># 288: case TIFFTAG_COLORMAP:</span>
+<span class="s0"># 294: case TIFFTAG_EXTRASAMPLES:</span>
+<span class="s0"># 298: case TIFFTAG_MATTEING:</span>
+<span class="s0"># 305: case TIFFTAG_TILEWIDTH:</span>
+<span class="s0"># 316: case TIFFTAG_TILELENGTH:</span>
+<span class="s0"># 327: case TIFFTAG_TILEDEPTH:</span>
+<span class="s0"># 333: case TIFFTAG_DATATYPE:</span>
+<span class="s0"># 344: case TIFFTAG_SAMPLEFORMAT:</span>
+<span class="s0"># 361: case TIFFTAG_IMAGEDEPTH:</span>
+<span class="s0"># 364: case TIFFTAG_SUBIFD:</span>
+<span class="s0"># 376: case TIFFTAG_YCBCRPOSITIONING:</span>
+<span class="s0"># 379: case TIFFTAG_YCBCRSUBSAMPLING:</span>
+<span class="s0"># 383: case TIFFTAG_TRANSFERFUNCTION:</span>
+<span class="s0"># 389: case TIFFTAG_REFERENCEBLACKWHITE:</span>
+<span class="s0"># 393: case TIFFTAG_INKNAMES:</span>
+
+<span class="s0"># Following pseudo-tags are also handled by default in libtiff:</span>
+<span class="s0"># TIFFTAG_JPEGQUALITY 65537</span>
+
+<span class="s0"># some of these are not in our TAGS_V2 dict and were included from tiff.h</span>
+
+<span class="s0"># This list also exists in encode.c</span>
+<span class="s1">LIBTIFF_CORE </span><span class="s3">= {</span>
+    <span class="s6">255</span><span class="s3">,</span>
+    <span class="s6">256</span><span class="s3">,</span>
+    <span class="s6">257</span><span class="s3">,</span>
+    <span class="s6">258</span><span class="s3">,</span>
+    <span class="s6">259</span><span class="s3">,</span>
+    <span class="s6">262</span><span class="s3">,</span>
+    <span class="s6">263</span><span class="s3">,</span>
+    <span class="s6">266</span><span class="s3">,</span>
+    <span class="s6">274</span><span class="s3">,</span>
+    <span class="s6">277</span><span class="s3">,</span>
+    <span class="s6">278</span><span class="s3">,</span>
+    <span class="s6">280</span><span class="s3">,</span>
+    <span class="s6">281</span><span class="s3">,</span>
+    <span class="s6">340</span><span class="s3">,</span>
+    <span class="s6">341</span><span class="s3">,</span>
+    <span class="s6">282</span><span class="s3">,</span>
+    <span class="s6">283</span><span class="s3">,</span>
+    <span class="s6">284</span><span class="s3">,</span>
+    <span class="s6">286</span><span class="s3">,</span>
+    <span class="s6">287</span><span class="s3">,</span>
+    <span class="s6">296</span><span class="s3">,</span>
+    <span class="s6">297</span><span class="s3">,</span>
+    <span class="s6">321</span><span class="s3">,</span>
+    <span class="s6">320</span><span class="s3">,</span>
+    <span class="s6">338</span><span class="s3">,</span>
+    <span class="s6">32995</span><span class="s3">,</span>
+    <span class="s6">322</span><span class="s3">,</span>
+    <span class="s6">323</span><span class="s3">,</span>
+    <span class="s6">32998</span><span class="s3">,</span>
+    <span class="s6">32996</span><span class="s3">,</span>
+    <span class="s6">339</span><span class="s3">,</span>
+    <span class="s6">32997</span><span class="s3">,</span>
+    <span class="s6">330</span><span class="s3">,</span>
+    <span class="s6">531</span><span class="s3">,</span>
+    <span class="s6">530</span><span class="s3">,</span>
+    <span class="s6">301</span><span class="s3">,</span>
+    <span class="s6">532</span><span class="s3">,</span>
+    <span class="s6">333</span><span class="s3">,</span>
+    <span class="s0"># as above</span>
+    <span class="s6">269</span><span class="s3">,  </span><span class="s0"># this has been in our tests forever, and works</span>
+    <span class="s6">65537</span><span class="s3">,</span>
+<span class="s3">}</span>
+
+<span class="s1">LIBTIFF_CORE</span><span class="s3">.</span><span class="s1">remove</span><span class="s3">(</span><span class="s6">255</span><span class="s3">)  </span><span class="s0"># We don't have support for subfiletypes</span>
+<span class="s1">LIBTIFF_CORE</span><span class="s3">.</span><span class="s1">remove</span><span class="s3">(</span><span class="s6">322</span><span class="s3">)  </span><span class="s0"># We don't have support for writing tiled images with libtiff</span>
+<span class="s1">LIBTIFF_CORE</span><span class="s3">.</span><span class="s1">remove</span><span class="s3">(</span><span class="s6">323</span><span class="s3">)  </span><span class="s0"># Tiled images</span>
+<span class="s1">LIBTIFF_CORE</span><span class="s3">.</span><span class="s1">remove</span><span class="s3">(</span><span class="s6">333</span><span class="s3">)  </span><span class="s0"># Ink Names either</span>
+
+<span class="s0"># Note to advanced users: There may be combinations of these</span>
+<span class="s0"># parameters and values that when added properly, will work and</span>
+<span class="s0"># produce valid tiff images that may work in your application.</span>
+<span class="s0"># It is safe to add and remove tags from this set from Pillow's point</span>
+<span class="s0"># of view so long as you test against libtiff.</span>
+</pre>
+</body>
+</html>

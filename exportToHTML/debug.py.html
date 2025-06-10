@@ -1,0 +1,222 @@
+<html>
+<head>
+<title>debug.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #2aacb8;}
+.s6 { color: #5f826b; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+debug.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">importlib</span><span class="s2">.</span><span class="s1">resources</span>
+<span class="s0">import </span><span class="s1">locale</span>
+<span class="s0">import </span><span class="s1">logging</span>
+<span class="s0">import </span><span class="s1">os</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">from </span><span class="s1">optparse </span><span class="s0">import </span><span class="s1">Values</span>
+<span class="s0">from </span><span class="s1">types </span><span class="s0">import </span><span class="s1">ModuleType</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Dict</span><span class="s2">, </span><span class="s1">List</span><span class="s2">, </span><span class="s1">Optional</span>
+
+<span class="s0">import </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_vendor</span>
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_vendor</span><span class="s2">.</span><span class="s1">certifi </span><span class="s0">import </span><span class="s1">where</span>
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_vendor</span><span class="s2">.</span><span class="s1">packaging</span><span class="s2">.</span><span class="s1">version </span><span class="s0">import </span><span class="s1">parse </span><span class="s0">as </span><span class="s1">parse_version</span>
+
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">cli </span><span class="s0">import </span><span class="s1">cmdoptions</span>
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">cli</span><span class="s2">.</span><span class="s1">base_command </span><span class="s0">import </span><span class="s1">Command</span>
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">cli</span><span class="s2">.</span><span class="s1">cmdoptions </span><span class="s0">import </span><span class="s1">make_target_python</span>
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">cli</span><span class="s2">.</span><span class="s1">status_codes </span><span class="s0">import </span><span class="s1">SUCCESS</span>
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">configuration </span><span class="s0">import </span><span class="s1">Configuration</span>
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">metadata </span><span class="s0">import </span><span class="s1">get_environment</span>
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">utils</span><span class="s2">.</span><span class="s1">logging </span><span class="s0">import </span><span class="s1">indent_log</span>
+<span class="s0">from </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">utils</span><span class="s2">.</span><span class="s1">misc </span><span class="s0">import </span><span class="s1">get_pip_version</span>
+
+<span class="s1">logger </span><span class="s2">= </span><span class="s1">logging</span><span class="s2">.</span><span class="s1">getLogger</span><span class="s2">(</span><span class="s1">__name__</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">show_value</span><span class="s2">(</span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s1">logger</span><span class="s2">.</span><span class="s1">info</span><span class="s2">(</span><span class="s3">&quot;%s: %s&quot;</span><span class="s2">, </span><span class="s1">name</span><span class="s2">, </span><span class="s1">value</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">show_sys_implementation</span><span class="s2">() </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s1">logger</span><span class="s2">.</span><span class="s1">info</span><span class="s2">(</span><span class="s3">&quot;sys.implementation:&quot;</span><span class="s2">)</span>
+    <span class="s1">implementation_name </span><span class="s2">= </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">implementation</span><span class="s2">.</span><span class="s1">name</span>
+    <span class="s0">with </span><span class="s1">indent_log</span><span class="s2">():</span>
+        <span class="s1">show_value</span><span class="s2">(</span><span class="s3">&quot;name&quot;</span><span class="s2">, </span><span class="s1">implementation_name</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">create_vendor_txt_map</span><span class="s2">() </span><span class="s1">-&gt; Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s0">with </span><span class="s1">importlib</span><span class="s2">.</span><span class="s1">resources</span><span class="s2">.</span><span class="s1">open_text</span><span class="s2">(</span><span class="s3">&quot;pip._vendor&quot;</span><span class="s2">, </span><span class="s3">&quot;vendor.txt&quot;</span><span class="s2">) </span><span class="s0">as </span><span class="s1">f</span><span class="s2">:</span>
+        <span class="s4"># Purge non version specifying lines.</span>
+        <span class="s4"># Also, remove any space prefix or suffixes (including comments).</span>
+        <span class="s1">lines </span><span class="s2">= [</span>
+            <span class="s1">line</span><span class="s2">.</span><span class="s1">strip</span><span class="s2">().</span><span class="s1">split</span><span class="s2">(</span><span class="s3">&quot; &quot;</span><span class="s2">, </span><span class="s5">1</span><span class="s2">)[</span><span class="s5">0</span><span class="s2">] </span><span class="s0">for </span><span class="s1">line </span><span class="s0">in </span><span class="s1">f</span><span class="s2">.</span><span class="s1">readlines</span><span class="s2">() </span><span class="s0">if </span><span class="s3">&quot;==&quot; </span><span class="s0">in </span><span class="s1">line</span>
+        <span class="s2">]</span>
+
+    <span class="s4"># Transform into &quot;module&quot; -&gt; version dict.</span>
+    <span class="s0">return </span><span class="s1">dict</span><span class="s2">(</span><span class="s1">line</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s3">&quot;==&quot;</span><span class="s2">, </span><span class="s5">1</span><span class="s2">) </span><span class="s0">for </span><span class="s1">line </span><span class="s0">in </span><span class="s1">lines</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">get_module_from_module_name</span><span class="s2">(</span><span class="s1">module_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; ModuleType</span><span class="s2">:</span>
+    <span class="s4"># Module name can be uppercase in vendor.txt for some reason...</span>
+    <span class="s1">module_name </span><span class="s2">= </span><span class="s1">module_name</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">().</span><span class="s1">replace</span><span class="s2">(</span><span class="s3">&quot;-&quot;</span><span class="s2">, </span><span class="s3">&quot;_&quot;</span><span class="s2">)</span>
+    <span class="s4"># PATCH: setuptools is actually only pkg_resources.</span>
+    <span class="s0">if </span><span class="s1">module_name </span><span class="s2">== </span><span class="s3">&quot;setuptools&quot;</span><span class="s2">:</span>
+        <span class="s1">module_name </span><span class="s2">= </span><span class="s3">&quot;pkg_resources&quot;</span>
+
+    <span class="s1">__import__</span><span class="s2">(</span><span class="s3">f&quot;pip._vendor.</span><span class="s0">{</span><span class="s1">module_name</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s2">, </span><span class="s1">globals</span><span class="s2">(), </span><span class="s1">locals</span><span class="s2">(), </span><span class="s1">level</span><span class="s2">=</span><span class="s5">0</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_vendor</span><span class="s2">, </span><span class="s1">module_name</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">get_vendor_version_from_module</span><span class="s2">(</span><span class="s1">module_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s1">module </span><span class="s2">= </span><span class="s1">get_module_from_module_name</span><span class="s2">(</span><span class="s1">module_name</span><span class="s2">)</span>
+    <span class="s1">version </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">module</span><span class="s2">, </span><span class="s3">&quot;__version__&quot;</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+
+    <span class="s0">if not </span><span class="s1">version</span><span class="s2">:</span>
+        <span class="s4"># Try to find version in debundled module info.</span>
+        <span class="s0">assert </span><span class="s1">module</span><span class="s2">.</span><span class="s1">__file__ </span><span class="s0">is not None</span>
+        <span class="s1">env </span><span class="s2">= </span><span class="s1">get_environment</span><span class="s2">([</span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">dirname</span><span class="s2">(</span><span class="s1">module</span><span class="s2">.</span><span class="s1">__file__</span><span class="s2">)])</span>
+        <span class="s1">dist </span><span class="s2">= </span><span class="s1">env</span><span class="s2">.</span><span class="s1">get_distribution</span><span class="s2">(</span><span class="s1">module_name</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">dist</span><span class="s2">:</span>
+            <span class="s1">version </span><span class="s2">= </span><span class="s1">str</span><span class="s2">(</span><span class="s1">dist</span><span class="s2">.</span><span class="s1">version</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">version</span>
+
+
+<span class="s0">def </span><span class="s1">show_actual_vendor_versions</span><span class="s2">(</span><span class="s1">vendor_txt_versions</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot;Log the actual version and print extra info if there is 
+    a conflict or if the actual version could not be imported. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">for </span><span class="s1">module_name</span><span class="s2">, </span><span class="s1">expected_version </span><span class="s0">in </span><span class="s1">vendor_txt_versions</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+        <span class="s1">extra_message </span><span class="s2">= </span><span class="s3">&quot;&quot;</span>
+        <span class="s1">actual_version </span><span class="s2">= </span><span class="s1">get_vendor_version_from_module</span><span class="s2">(</span><span class="s1">module_name</span><span class="s2">)</span>
+        <span class="s0">if not </span><span class="s1">actual_version</span><span class="s2">:</span>
+            <span class="s1">extra_message </span><span class="s2">= (</span>
+                <span class="s3">&quot; (Unable to locate actual module version, using&quot;</span>
+                <span class="s3">&quot; vendor.txt specified version)&quot;</span>
+            <span class="s2">)</span>
+            <span class="s1">actual_version </span><span class="s2">= </span><span class="s1">expected_version</span>
+        <span class="s0">elif </span><span class="s1">parse_version</span><span class="s2">(</span><span class="s1">actual_version</span><span class="s2">) != </span><span class="s1">parse_version</span><span class="s2">(</span><span class="s1">expected_version</span><span class="s2">):</span>
+            <span class="s1">extra_message </span><span class="s2">= (</span>
+                <span class="s3">&quot; (CONFLICT: vendor.txt suggests version should&quot;</span>
+                <span class="s3">&quot; be {})&quot;</span><span class="s2">.</span><span class="s1">format</span><span class="s2">(</span><span class="s1">expected_version</span><span class="s2">)</span>
+            <span class="s2">)</span>
+        <span class="s1">logger</span><span class="s2">.</span><span class="s1">info</span><span class="s2">(</span><span class="s3">&quot;%s==%s%s&quot;</span><span class="s2">, </span><span class="s1">module_name</span><span class="s2">, </span><span class="s1">actual_version</span><span class="s2">, </span><span class="s1">extra_message</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">show_vendor_versions</span><span class="s2">() </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s1">logger</span><span class="s2">.</span><span class="s1">info</span><span class="s2">(</span><span class="s3">&quot;vendored library versions:&quot;</span><span class="s2">)</span>
+
+    <span class="s1">vendor_txt_versions </span><span class="s2">= </span><span class="s1">create_vendor_txt_map</span><span class="s2">()</span>
+    <span class="s0">with </span><span class="s1">indent_log</span><span class="s2">():</span>
+        <span class="s1">show_actual_vendor_versions</span><span class="s2">(</span><span class="s1">vendor_txt_versions</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">show_tags</span><span class="s2">(</span><span class="s1">options</span><span class="s2">: </span><span class="s1">Values</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s1">tag_limit </span><span class="s2">= </span><span class="s5">10</span>
+
+    <span class="s1">target_python </span><span class="s2">= </span><span class="s1">make_target_python</span><span class="s2">(</span><span class="s1">options</span><span class="s2">)</span>
+    <span class="s1">tags </span><span class="s2">= </span><span class="s1">target_python</span><span class="s2">.</span><span class="s1">get_tags</span><span class="s2">()</span>
+
+    <span class="s4"># Display the target options that were explicitly provided.</span>
+    <span class="s1">formatted_target </span><span class="s2">= </span><span class="s1">target_python</span><span class="s2">.</span><span class="s1">format_given</span><span class="s2">()</span>
+    <span class="s1">suffix </span><span class="s2">= </span><span class="s3">&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">formatted_target</span><span class="s2">:</span>
+        <span class="s1">suffix </span><span class="s2">= </span><span class="s3">f&quot; (target: </span><span class="s0">{</span><span class="s1">formatted_target</span><span class="s0">}</span><span class="s3">)&quot;</span>
+
+    <span class="s1">msg </span><span class="s2">= </span><span class="s3">&quot;Compatible tags: {}{}&quot;</span><span class="s2">.</span><span class="s1">format</span><span class="s2">(</span><span class="s1">len</span><span class="s2">(</span><span class="s1">tags</span><span class="s2">), </span><span class="s1">suffix</span><span class="s2">)</span>
+    <span class="s1">logger</span><span class="s2">.</span><span class="s1">info</span><span class="s2">(</span><span class="s1">msg</span><span class="s2">)</span>
+
+    <span class="s0">if </span><span class="s1">options</span><span class="s2">.</span><span class="s1">verbose </span><span class="s2">&lt; </span><span class="s5">1 </span><span class="s0">and </span><span class="s1">len</span><span class="s2">(</span><span class="s1">tags</span><span class="s2">) &gt; </span><span class="s1">tag_limit</span><span class="s2">:</span>
+        <span class="s1">tags_limited </span><span class="s2">= </span><span class="s0">True</span>
+        <span class="s1">tags </span><span class="s2">= </span><span class="s1">tags</span><span class="s2">[:</span><span class="s1">tag_limit</span><span class="s2">]</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s1">tags_limited </span><span class="s2">= </span><span class="s0">False</span>
+
+    <span class="s0">with </span><span class="s1">indent_log</span><span class="s2">():</span>
+        <span class="s0">for </span><span class="s1">tag </span><span class="s0">in </span><span class="s1">tags</span><span class="s2">:</span>
+            <span class="s1">logger</span><span class="s2">.</span><span class="s1">info</span><span class="s2">(</span><span class="s1">str</span><span class="s2">(</span><span class="s1">tag</span><span class="s2">))</span>
+
+        <span class="s0">if </span><span class="s1">tags_limited</span><span class="s2">:</span>
+            <span class="s1">msg </span><span class="s2">= (</span>
+                <span class="s3">&quot;...</span><span class="s0">\n</span><span class="s3">[First {tag_limit} tags shown. Pass --verbose to show all.]&quot;</span>
+            <span class="s2">).</span><span class="s1">format</span><span class="s2">(</span><span class="s1">tag_limit</span><span class="s2">=</span><span class="s1">tag_limit</span><span class="s2">)</span>
+            <span class="s1">logger</span><span class="s2">.</span><span class="s1">info</span><span class="s2">(</span><span class="s1">msg</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">ca_bundle_info</span><span class="s2">(</span><span class="s1">config</span><span class="s2">: </span><span class="s1">Configuration</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+    <span class="s1">levels </span><span class="s2">= </span><span class="s1">set</span><span class="s2">()</span>
+    <span class="s0">for </span><span class="s1">key</span><span class="s2">, </span><span class="s1">_ </span><span class="s0">in </span><span class="s1">config</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+        <span class="s1">levels</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">key</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s3">&quot;.&quot;</span><span class="s2">)[</span><span class="s5">0</span><span class="s2">])</span>
+
+    <span class="s0">if not </span><span class="s1">levels</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s3">&quot;Not specified&quot;</span>
+
+    <span class="s1">levels_that_override_global </span><span class="s2">= [</span><span class="s3">&quot;install&quot;</span><span class="s2">, </span><span class="s3">&quot;wheel&quot;</span><span class="s2">, </span><span class="s3">&quot;download&quot;</span><span class="s2">]</span>
+    <span class="s1">global_overriding_level </span><span class="s2">= [</span>
+        <span class="s1">level </span><span class="s0">for </span><span class="s1">level </span><span class="s0">in </span><span class="s1">levels </span><span class="s0">if </span><span class="s1">level </span><span class="s0">in </span><span class="s1">levels_that_override_global</span>
+    <span class="s2">]</span>
+    <span class="s0">if not </span><span class="s1">global_overriding_level</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s3">&quot;global&quot;</span>
+
+    <span class="s0">if </span><span class="s3">&quot;global&quot; </span><span class="s0">in </span><span class="s1">levels</span><span class="s2">:</span>
+        <span class="s1">levels</span><span class="s2">.</span><span class="s1">remove</span><span class="s2">(</span><span class="s3">&quot;global&quot;</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s3">&quot;, &quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">levels</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">DebugCommand</span><span class="s2">(</span><span class="s1">Command</span><span class="s2">):</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Display debug information. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">usage </span><span class="s2">= </span><span class="s3">&quot;&quot;&quot; 
+      %prog &lt;options&gt;&quot;&quot;&quot;</span>
+    <span class="s1">ignore_require_venv </span><span class="s2">= </span><span class="s0">True</span>
+
+    <span class="s0">def </span><span class="s1">add_options</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">cmdoptions</span><span class="s2">.</span><span class="s1">add_target_python_options</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">cmd_opts</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">parser</span><span class="s2">.</span><span class="s1">insert_option_group</span><span class="s2">(</span><span class="s5">0</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cmd_opts</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">parser</span><span class="s2">.</span><span class="s1">config</span><span class="s2">.</span><span class="s1">load</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">run</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">options</span><span class="s2">: </span><span class="s1">Values</span><span class="s2">, </span><span class="s1">args</span><span class="s2">: </span><span class="s1">List</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]) </span><span class="s1">-&gt; int</span><span class="s2">:</span>
+        <span class="s1">logger</span><span class="s2">.</span><span class="s1">warning</span><span class="s2">(</span>
+            <span class="s3">&quot;This command is only meant for debugging. &quot;</span>
+            <span class="s3">&quot;Do not use this with automation for parsing and getting these &quot;</span>
+            <span class="s3">&quot;details, since the output and options of this command may &quot;</span>
+            <span class="s3">&quot;change without notice.&quot;</span>
+        <span class="s2">)</span>
+        <span class="s1">show_value</span><span class="s2">(</span><span class="s3">&quot;pip version&quot;</span><span class="s2">, </span><span class="s1">get_pip_version</span><span class="s2">())</span>
+        <span class="s1">show_value</span><span class="s2">(</span><span class="s3">&quot;sys.version&quot;</span><span class="s2">, </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">version</span><span class="s2">)</span>
+        <span class="s1">show_value</span><span class="s2">(</span><span class="s3">&quot;sys.executable&quot;</span><span class="s2">, </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">executable</span><span class="s2">)</span>
+        <span class="s1">show_value</span><span class="s2">(</span><span class="s3">&quot;sys.getdefaultencoding&quot;</span><span class="s2">, </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">getdefaultencoding</span><span class="s2">())</span>
+        <span class="s1">show_value</span><span class="s2">(</span><span class="s3">&quot;sys.getfilesystemencoding&quot;</span><span class="s2">, </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">getfilesystemencoding</span><span class="s2">())</span>
+        <span class="s1">show_value</span><span class="s2">(</span>
+            <span class="s3">&quot;locale.getpreferredencoding&quot;</span><span class="s2">,</span>
+            <span class="s1">locale</span><span class="s2">.</span><span class="s1">getpreferredencoding</span><span class="s2">(),</span>
+        <span class="s2">)</span>
+        <span class="s1">show_value</span><span class="s2">(</span><span class="s3">&quot;sys.platform&quot;</span><span class="s2">, </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">platform</span><span class="s2">)</span>
+        <span class="s1">show_sys_implementation</span><span class="s2">()</span>
+
+        <span class="s1">show_value</span><span class="s2">(</span><span class="s3">&quot;'cert' config value&quot;</span><span class="s2">, </span><span class="s1">ca_bundle_info</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">parser</span><span class="s2">.</span><span class="s1">config</span><span class="s2">))</span>
+        <span class="s1">show_value</span><span class="s2">(</span><span class="s3">&quot;REQUESTS_CA_BUNDLE&quot;</span><span class="s2">, </span><span class="s1">os</span><span class="s2">.</span><span class="s1">environ</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;REQUESTS_CA_BUNDLE&quot;</span><span class="s2">))</span>
+        <span class="s1">show_value</span><span class="s2">(</span><span class="s3">&quot;CURL_CA_BUNDLE&quot;</span><span class="s2">, </span><span class="s1">os</span><span class="s2">.</span><span class="s1">environ</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;CURL_CA_BUNDLE&quot;</span><span class="s2">))</span>
+        <span class="s1">show_value</span><span class="s2">(</span><span class="s3">&quot;pip._vendor.certifi.where()&quot;</span><span class="s2">, </span><span class="s1">where</span><span class="s2">())</span>
+        <span class="s1">show_value</span><span class="s2">(</span><span class="s3">&quot;pip._vendor.DEBUNDLED&quot;</span><span class="s2">, </span><span class="s1">pip</span><span class="s2">.</span><span class="s1">_vendor</span><span class="s2">.</span><span class="s1">DEBUNDLED</span><span class="s2">)</span>
+
+        <span class="s1">show_vendor_versions</span><span class="s2">()</span>
+
+        <span class="s1">show_tags</span><span class="s2">(</span><span class="s1">options</span><span class="s2">)</span>
+
+        <span class="s0">return </span><span class="s1">SUCCESS</span>
+</pre>
+</body>
+</html>

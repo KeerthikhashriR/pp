@@ -1,0 +1,136 @@
+<html>
+<head>
+<title>ImageEnhance.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #6aab73;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageEnhance.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># image enhancement classes</span>
+<span class="s0">#</span>
+<span class="s0"># For a background, see &quot;Image Processing By Interpolation and</span>
+<span class="s0"># Extrapolation&quot;, Paul Haeberli and Douglas Voorhies.  Available</span>
+<span class="s0"># at http://www.graficaobscura.com/interp/index.html</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1996-03-23 fl  Created</span>
+<span class="s0"># 2009-06-16 fl  Fixed mean calculation</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) Secret Labs AB 1997.</span>
+<span class="s0"># Copyright (c) Fredrik Lundh 1996.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">ImageFilter</span><span class="s3">, </span><span class="s1">ImageStat</span>
+
+
+<span class="s2">class </span><span class="s1">_Enhance</span><span class="s3">:</span>
+    <span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span>
+    <span class="s1">degenerate</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span>
+
+    <span class="s2">def </span><span class="s1">enhance</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">factor</span><span class="s3">: </span><span class="s1">float</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Returns an enhanced image. 
+ 
+        :param factor: A floating point value controlling the enhancement. 
+                       Factor 1.0 always returns a copy of the original image, 
+                       lower factors mean less color (brightness, contrast, 
+                       etc), and higher values more. There are no restrictions 
+                       on this value. 
+        :rtype: :py:class:`~PIL.Image.Image` 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">blend</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">degenerate</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">image</span><span class="s3">, </span><span class="s1">factor</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">Color</span><span class="s3">(</span><span class="s1">_Enhance</span><span class="s3">):</span>
+    <span class="s4">&quot;&quot;&quot;Adjust image color balance. 
+ 
+    This class can be used to adjust the colour balance of an image, in 
+    a manner similar to the controls on a colour TV set. An enhancement 
+    factor of 0.0 gives a black and white image. A factor of 1.0 gives 
+    the original image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">image </span><span class="s3">= </span><span class="s1">image</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">intermediate_mode </span><span class="s3">= </span><span class="s5">&quot;L&quot;</span>
+        <span class="s2">if </span><span class="s5">&quot;A&quot; </span><span class="s2">in </span><span class="s1">image</span><span class="s3">.</span><span class="s1">getbands</span><span class="s3">():</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">intermediate_mode </span><span class="s3">= </span><span class="s5">&quot;LA&quot;</span>
+
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">intermediate_mode </span><span class="s3">!= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">:</span>
+            <span class="s1">image </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">intermediate_mode</span><span class="s3">).</span><span class="s1">convert</span><span class="s3">(</span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">degenerate </span><span class="s3">= </span><span class="s1">image</span>
+
+
+<span class="s2">class </span><span class="s1">Contrast</span><span class="s3">(</span><span class="s1">_Enhance</span><span class="s3">):</span>
+    <span class="s4">&quot;&quot;&quot;Adjust image contrast. 
+ 
+    This class can be used to control the contrast of an image, similar 
+    to the contrast control on a TV set. An enhancement factor of 0.0 
+    gives a solid gray image. A factor of 1.0 gives the original image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">image </span><span class="s3">= </span><span class="s1">image</span>
+        <span class="s2">if </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">!= </span><span class="s5">&quot;L&quot;</span><span class="s3">:</span>
+            <span class="s1">image </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s5">&quot;L&quot;</span><span class="s3">)</span>
+        <span class="s1">mean </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">ImageStat</span><span class="s3">.</span><span class="s1">Stat</span><span class="s3">(</span><span class="s1">image</span><span class="s3">).</span><span class="s1">mean</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] + </span><span class="s6">0.5</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">degenerate </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">new</span><span class="s3">(</span><span class="s5">&quot;L&quot;</span><span class="s3">, </span><span class="s1">image</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">mean</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">degenerate</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">!= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">degenerate </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">degenerate</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s5">&quot;A&quot; </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">image</span><span class="s3">.</span><span class="s1">getbands</span><span class="s3">():</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">degenerate</span><span class="s3">.</span><span class="s1">putalpha</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">image</span><span class="s3">.</span><span class="s1">getchannel</span><span class="s3">(</span><span class="s5">&quot;A&quot;</span><span class="s3">))</span>
+
+
+<span class="s2">class </span><span class="s1">Brightness</span><span class="s3">(</span><span class="s1">_Enhance</span><span class="s3">):</span>
+    <span class="s4">&quot;&quot;&quot;Adjust image brightness. 
+ 
+    This class can be used to control the brightness of an image.  An 
+    enhancement factor of 0.0 gives a black image. A factor of 1.0 gives the 
+    original image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">image </span><span class="s3">= </span><span class="s1">image</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">degenerate </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">new</span><span class="s3">(</span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">, </span><span class="s1">image</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s6">0</span><span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s5">&quot;A&quot; </span><span class="s2">in </span><span class="s1">image</span><span class="s3">.</span><span class="s1">getbands</span><span class="s3">():</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">degenerate</span><span class="s3">.</span><span class="s1">putalpha</span><span class="s3">(</span><span class="s1">image</span><span class="s3">.</span><span class="s1">getchannel</span><span class="s3">(</span><span class="s5">&quot;A&quot;</span><span class="s3">))</span>
+
+
+<span class="s2">class </span><span class="s1">Sharpness</span><span class="s3">(</span><span class="s1">_Enhance</span><span class="s3">):</span>
+    <span class="s4">&quot;&quot;&quot;Adjust image sharpness. 
+ 
+    This class can be used to adjust the sharpness of an image. An 
+    enhancement factor of 0.0 gives a blurred image, a factor of 1.0 gives the 
+    original image, and a factor of 2.0 gives a sharpened image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">image </span><span class="s3">= </span><span class="s1">image</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">degenerate </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">filter</span><span class="s3">(</span><span class="s1">ImageFilter</span><span class="s3">.</span><span class="s1">SMOOTH</span><span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s5">&quot;A&quot; </span><span class="s2">in </span><span class="s1">image</span><span class="s3">.</span><span class="s1">getbands</span><span class="s3">():</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">degenerate</span><span class="s3">.</span><span class="s1">putalpha</span><span class="s3">(</span><span class="s1">image</span><span class="s3">.</span><span class="s1">getchannel</span><span class="s3">(</span><span class="s5">&quot;A&quot;</span><span class="s3">))</span>
+</pre>
+</body>
+</html>

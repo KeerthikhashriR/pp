@@ -1,0 +1,544 @@
+<html>
+<head>
+<title>latex.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #7a7e85;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+latex.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot; 
+    pygments.formatters.latex 
+    ~~~~~~~~~~~~~~~~~~~~~~~~~ 
+ 
+    Formatter for LaTeX fancyvrb output. 
+ 
+    :copyright: Copyright 2006-2023 by the Pygments team, see AUTHORS. 
+    :license: BSD, see LICENSE for details. 
+&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">io </span><span class="s2">import </span><span class="s1">StringIO</span>
+
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">formatter </span><span class="s2">import </span><span class="s1">Formatter</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">lexer </span><span class="s2">import </span><span class="s1">Lexer</span><span class="s3">, </span><span class="s1">do_insertions</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">token </span><span class="s2">import </span><span class="s1">Token</span><span class="s3">, </span><span class="s1">STANDARD_TYPES</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">util </span><span class="s2">import </span><span class="s1">get_bool_opt</span><span class="s3">, </span><span class="s1">get_int_opt</span>
+
+
+<span class="s1">__all__ </span><span class="s3">= [</span><span class="s4">'LatexFormatter'</span><span class="s3">]</span>
+
+
+<span class="s2">def </span><span class="s1">escape_tex</span><span class="s3">(</span><span class="s1">text</span><span class="s3">, </span><span class="s1">commandprefix</span><span class="s3">):</span>
+    <span class="s2">return </span><span class="s1">text</span><span class="s3">.</span><span class="s1">replace</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\\</span><span class="s4">'</span><span class="s3">, </span><span class="s4">'</span><span class="s2">\x00</span><span class="s4">'</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'{'</span><span class="s3">, </span><span class="s4">'</span><span class="s2">\x01</span><span class="s4">'</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'}'</span><span class="s3">, </span><span class="s4">'</span><span class="s2">\x02</span><span class="s4">'</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\x00</span><span class="s4">'</span><span class="s3">, </span><span class="s4">r'\%sZbs{}' </span><span class="s3">% </span><span class="s1">commandprefix</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\x01</span><span class="s4">'</span><span class="s3">, </span><span class="s4">r'\%sZob{}' </span><span class="s3">% </span><span class="s1">commandprefix</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\x02</span><span class="s4">'</span><span class="s3">, </span><span class="s4">r'\%sZcb{}' </span><span class="s3">% </span><span class="s1">commandprefix</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'^'</span><span class="s3">, </span><span class="s4">r'\%sZca{}' </span><span class="s3">% </span><span class="s1">commandprefix</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'_'</span><span class="s3">, </span><span class="s4">r'\%sZus{}' </span><span class="s3">% </span><span class="s1">commandprefix</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'&amp;'</span><span class="s3">, </span><span class="s4">r'\%sZam{}' </span><span class="s3">% </span><span class="s1">commandprefix</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'&lt;'</span><span class="s3">, </span><span class="s4">r'\%sZlt{}' </span><span class="s3">% </span><span class="s1">commandprefix</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'&gt;'</span><span class="s3">, </span><span class="s4">r'\%sZgt{}' </span><span class="s3">% </span><span class="s1">commandprefix</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'#'</span><span class="s3">, </span><span class="s4">r'\%sZsh{}' </span><span class="s3">% </span><span class="s1">commandprefix</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'%'</span><span class="s3">, </span><span class="s4">r'\%sZpc{}' </span><span class="s3">% </span><span class="s1">commandprefix</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'$'</span><span class="s3">, </span><span class="s4">r'\%sZdl{}' </span><span class="s3">% </span><span class="s1">commandprefix</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'-'</span><span class="s3">, </span><span class="s4">r'\%sZhy{}' </span><span class="s3">% </span><span class="s1">commandprefix</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">&quot;'&quot;</span><span class="s3">, </span><span class="s4">r'\%sZsq{}' </span><span class="s3">% </span><span class="s1">commandprefix</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'&quot;'</span><span class="s3">, </span><span class="s4">r'\%sZdq{}' </span><span class="s3">% </span><span class="s1">commandprefix</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'~'</span><span class="s3">, </span><span class="s4">r'\%sZti{}' </span><span class="s3">% </span><span class="s1">commandprefix</span><span class="s3">)</span>
+
+
+<span class="s1">DOC_TEMPLATE </span><span class="s3">= </span><span class="s4">r''' 
+\documentclass{%(docclass)s} 
+\usepackage{fancyvrb} 
+\usepackage{color} 
+\usepackage[%(encoding)s]{inputenc} 
+%(preamble)s 
+ 
+%(styledefs)s 
+ 
+\begin{document} 
+ 
+\section*{%(title)s} 
+ 
+%(code)s 
+\end{document} 
+'''</span>
+
+<span class="s5">## Small explanation of the mess below :)</span>
+<span class="s5">#</span>
+<span class="s5"># The previous version of the LaTeX formatter just assigned a command to</span>
+<span class="s5"># each token type defined in the current style.  That obviously is</span>
+<span class="s5"># problematic if the highlighted code is produced for a different style</span>
+<span class="s5"># than the style commands themselves.</span>
+<span class="s5">#</span>
+<span class="s5"># This version works much like the HTML formatter which assigns multiple</span>
+<span class="s5"># CSS classes to each &lt;span&gt; tag, from the most specific to the least</span>
+<span class="s5"># specific token type, thus falling back to the parent token type if one</span>
+<span class="s5"># is not defined.  Here, the classes are there too and use the same short</span>
+<span class="s5"># forms given in token.STANDARD_TYPES.</span>
+<span class="s5">#</span>
+<span class="s5"># Highlighted code now only uses one custom command, which by default is</span>
+<span class="s5"># \PY and selectable by the commandprefix option (and in addition the</span>
+<span class="s5"># escapes \PYZat, \PYZlb and \PYZrb which haven't been renamed for</span>
+<span class="s5"># backwards compatibility purposes).</span>
+<span class="s5">#</span>
+<span class="s5"># \PY has two arguments: the classes, separated by +, and the text to</span>
+<span class="s5"># render in that style.  The classes are resolved into the respective</span>
+<span class="s5"># style commands by magic, which serves to ignore unknown classes.</span>
+<span class="s5">#</span>
+<span class="s5"># The magic macros are:</span>
+<span class="s5"># * \PY@it, \PY@bf, etc. are unconditionally wrapped around the text</span>
+<span class="s5">#   to render in \PY@do.  Their definition determines the style.</span>
+<span class="s5"># * \PY@reset resets \PY@it etc. to do nothing.</span>
+<span class="s5"># * \PY@toks parses the list of classes, using magic inspired by the</span>
+<span class="s5">#   keyval package (but modified to use plusses instead of commas</span>
+<span class="s5">#   because fancyvrb redefines commas inside its environments).</span>
+<span class="s5"># * \PY@tok processes one class, calling the \PY@tok@classname command</span>
+<span class="s5">#   if it exists.</span>
+<span class="s5"># * \PY@tok@classname sets the \PY@it etc. to reflect the chosen style</span>
+<span class="s5">#   for its class.</span>
+<span class="s5"># * \PY resets the style, parses the classnames and then calls \PY@do.</span>
+<span class="s5">#</span>
+<span class="s5"># Tip: to read this code, print it out in substituted form using e.g.</span>
+<span class="s5"># &gt;&gt;&gt; print STYLE_TEMPLATE % {'cp': 'PY'}</span>
+
+<span class="s1">STYLE_TEMPLATE </span><span class="s3">= </span><span class="s4">r''' 
+\makeatletter 
+\def\%(cp)s@reset{\let\%(cp)s@it=\relax \let\%(cp)s@bf=\relax%% 
+    \let\%(cp)s@ul=\relax \let\%(cp)s@tc=\relax%% 
+    \let\%(cp)s@bc=\relax \let\%(cp)s@ff=\relax} 
+\def\%(cp)s@tok#1{\csname %(cp)s@tok@#1\endcsname} 
+\def\%(cp)s@toks#1+{\ifx\relax#1\empty\else%% 
+    \%(cp)s@tok{#1}\expandafter\%(cp)s@toks\fi} 
+\def\%(cp)s@do#1{\%(cp)s@bc{\%(cp)s@tc{\%(cp)s@ul{%% 
+    \%(cp)s@it{\%(cp)s@bf{\%(cp)s@ff{#1}}}}}}} 
+\def\%(cp)s#1#2{\%(cp)s@reset\%(cp)s@toks#1+\relax+\%(cp)s@do{#2}} 
+ 
+%(styles)s 
+ 
+\def\%(cp)sZbs{\char`\\} 
+\def\%(cp)sZus{\char`\_} 
+\def\%(cp)sZob{\char`\{} 
+\def\%(cp)sZcb{\char`\}} 
+\def\%(cp)sZca{\char`\^} 
+\def\%(cp)sZam{\char`\&amp;} 
+\def\%(cp)sZlt{\char`\&lt;} 
+\def\%(cp)sZgt{\char`\&gt;} 
+\def\%(cp)sZsh{\char`\#} 
+\def\%(cp)sZpc{\char`\%%} 
+\def\%(cp)sZdl{\char`\$} 
+\def\%(cp)sZhy{\char`\-} 
+\def\%(cp)sZsq{\char`\'} 
+\def\%(cp)sZdq{\char`\&quot;} 
+\def\%(cp)sZti{\char`\~} 
+%% for compatibility with earlier versions 
+\def\%(cp)sZat{@} 
+\def\%(cp)sZlb{[} 
+\def\%(cp)sZrb{]} 
+\makeatother 
+'''</span>
+
+
+<span class="s2">def </span><span class="s1">_get_ttype_name</span><span class="s3">(</span><span class="s1">ttype</span><span class="s3">):</span>
+    <span class="s1">fname </span><span class="s3">= </span><span class="s1">STANDARD_TYPES</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">ttype</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">fname</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">fname</span>
+    <span class="s1">aname </span><span class="s3">= </span><span class="s4">''</span>
+    <span class="s2">while </span><span class="s1">fname </span><span class="s2">is None</span><span class="s3">:</span>
+        <span class="s1">aname </span><span class="s3">= </span><span class="s1">ttype</span><span class="s3">[-</span><span class="s6">1</span><span class="s3">] + </span><span class="s1">aname</span>
+        <span class="s1">ttype </span><span class="s3">= </span><span class="s1">ttype</span><span class="s3">.</span><span class="s1">parent</span>
+        <span class="s1">fname </span><span class="s3">= </span><span class="s1">STANDARD_TYPES</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">ttype</span><span class="s3">)</span>
+    <span class="s2">return </span><span class="s1">fname </span><span class="s3">+ </span><span class="s1">aname</span>
+
+
+<span class="s2">class </span><span class="s1">LatexFormatter</span><span class="s3">(</span><span class="s1">Formatter</span><span class="s3">):</span>
+    <span class="s0">r&quot;&quot;&quot; 
+    Format tokens as LaTeX code. This needs the `fancyvrb` and `color` 
+    standard packages. 
+ 
+    Without the `full` option, code is formatted as one ``Verbatim`` 
+    environment, like this: 
+ 
+    .. sourcecode:: latex 
+ 
+        \begin{Verbatim}[commandchars=\\\{\}] 
+        \PY{k}{def }\PY{n+nf}{foo}(\PY{n}{bar}): 
+            \PY{k}{pass} 
+        \end{Verbatim} 
+ 
+    Wrapping can be disabled using the `nowrap` option. 
+ 
+    The special command used here (``\PY``) and all the other macros it needs 
+    are output by the `get_style_defs` method. 
+ 
+    With the `full` option, a complete LaTeX document is output, including 
+    the command definitions in the preamble. 
+ 
+    The `get_style_defs()` method of a `LatexFormatter` returns a string 
+    containing ``\def`` commands defining the macros needed inside the 
+    ``Verbatim`` environments. 
+ 
+    Additional options accepted: 
+ 
+    `nowrap` 
+        If set to ``True``, don't wrap the tokens at all, not even inside a 
+        ``\begin{Verbatim}`` environment. This disables most other options 
+        (default: ``False``). 
+ 
+    `style` 
+        The style to use, can be a string or a Style subclass (default: 
+        ``'default'``). 
+ 
+    `full` 
+        Tells the formatter to output a &quot;full&quot; document, i.e. a complete 
+        self-contained document (default: ``False``). 
+ 
+    `title` 
+        If `full` is true, the title that should be used to caption the 
+        document (default: ``''``). 
+ 
+    `docclass` 
+        If the `full` option is enabled, this is the document class to use 
+        (default: ``'article'``). 
+ 
+    `preamble` 
+        If the `full` option is enabled, this can be further preamble commands, 
+        e.g. ``\usepackage`` (default: ``''``). 
+ 
+    `linenos` 
+        If set to ``True``, output line numbers (default: ``False``). 
+ 
+    `linenostart` 
+        The line number for the first line (default: ``1``). 
+ 
+    `linenostep` 
+        If set to a number n &gt; 1, only every nth line number is printed. 
+ 
+    `verboptions` 
+        Additional options given to the Verbatim environment (see the *fancyvrb* 
+        docs for possible values) (default: ``''``). 
+ 
+    `commandprefix` 
+        The LaTeX commands used to produce colored output are constructed 
+        using this prefix and some letters (default: ``'PY'``). 
+ 
+        .. versionadded:: 0.7 
+        .. versionchanged:: 0.10 
+           The default is now ``'PY'`` instead of ``'C'``. 
+ 
+    `texcomments` 
+        If set to ``True``, enables LaTeX comment lines.  That is, LaTex markup 
+        in comment tokens is not escaped so that LaTeX can render it (default: 
+        ``False``). 
+ 
+        .. versionadded:: 1.2 
+ 
+    `mathescape` 
+        If set to ``True``, enables LaTeX math mode escape in comments. That 
+        is, ``'$...$'`` inside a comment will trigger math mode (default: 
+        ``False``). 
+ 
+        .. versionadded:: 1.2 
+ 
+    `escapeinside` 
+        If set to a string of length 2, enables escaping to LaTeX. Text 
+        delimited by these 2 characters is read as LaTeX code and 
+        typeset accordingly. It has no effect in string literals. It has 
+        no effect in comments if `texcomments` or `mathescape` is 
+        set. (default: ``''``). 
+ 
+        .. versionadded:: 2.0 
+ 
+    `envname` 
+        Allows you to pick an alternative environment name replacing Verbatim. 
+        The alternate environment still has to support Verbatim's option syntax. 
+        (default: ``'Verbatim'``). 
+ 
+        .. versionadded:: 2.0 
+    &quot;&quot;&quot;</span>
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">'LaTeX'</span>
+    <span class="s1">aliases </span><span class="s3">= [</span><span class="s4">'latex'</span><span class="s3">, </span><span class="s4">'tex'</span><span class="s3">]</span>
+    <span class="s1">filenames </span><span class="s3">= [</span><span class="s4">'*.tex'</span><span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">):</span>
+        <span class="s1">Formatter</span><span class="s3">.</span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">nowrap </span><span class="s3">= </span><span class="s1">get_bool_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'nowrap'</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">docclass </span><span class="s3">= </span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'docclass'</span><span class="s3">, </span><span class="s4">'article'</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">preamble </span><span class="s3">= </span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'preamble'</span><span class="s3">, </span><span class="s4">''</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">linenos </span><span class="s3">= </span><span class="s1">get_bool_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'linenos'</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">linenostart </span><span class="s3">= </span><span class="s1">abs</span><span class="s3">(</span><span class="s1">get_int_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'linenostart'</span><span class="s3">, </span><span class="s6">1</span><span class="s3">))</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">linenostep </span><span class="s3">= </span><span class="s1">abs</span><span class="s3">(</span><span class="s1">get_int_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'linenostep'</span><span class="s3">, </span><span class="s6">1</span><span class="s3">))</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">verboptions </span><span class="s3">= </span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'verboptions'</span><span class="s3">, </span><span class="s4">''</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">nobackground </span><span class="s3">= </span><span class="s1">get_bool_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'nobackground'</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">commandprefix </span><span class="s3">= </span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'commandprefix'</span><span class="s3">, </span><span class="s4">'PY'</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">texcomments </span><span class="s3">= </span><span class="s1">get_bool_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'texcomments'</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">mathescape </span><span class="s3">= </span><span class="s1">get_bool_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'mathescape'</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">escapeinside </span><span class="s3">= </span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'escapeinside'</span><span class="s3">, </span><span class="s4">''</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">escapeinside</span><span class="s3">) == </span><span class="s6">2</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">left </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">escapeinside</span><span class="s3">[</span><span class="s6">0</span><span class="s3">]</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">right </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">escapeinside</span><span class="s3">[</span><span class="s6">1</span><span class="s3">]</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">escapeinside </span><span class="s3">= </span><span class="s4">''</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">envname </span><span class="s3">= </span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'envname'</span><span class="s3">, </span><span class="s4">'Verbatim'</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_create_stylesheet</span><span class="s3">()</span>
+
+    <span class="s2">def </span><span class="s1">_create_stylesheet</span><span class="s3">(</span><span class="s1">self</span><span class="s3">):</span>
+        <span class="s1">t2n </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">ttype2name </span><span class="s3">= {</span><span class="s1">Token</span><span class="s3">: </span><span class="s4">''</span><span class="s3">}</span>
+        <span class="s1">c2d </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">cmd2def </span><span class="s3">= {}</span>
+        <span class="s1">cp </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">commandprefix</span>
+
+        <span class="s2">def </span><span class="s1">rgbcolor</span><span class="s3">(</span><span class="s1">col</span><span class="s3">):</span>
+            <span class="s2">if </span><span class="s1">col</span><span class="s3">:</span>
+                <span class="s2">return </span><span class="s4">','</span><span class="s3">.</span><span class="s1">join</span><span class="s3">([</span><span class="s4">'%.2f' </span><span class="s3">% (</span><span class="s1">int</span><span class="s3">(</span><span class="s1">col</span><span class="s3">[</span><span class="s1">i</span><span class="s3">] + </span><span class="s1">col</span><span class="s3">[</span><span class="s1">i </span><span class="s3">+ </span><span class="s6">1</span><span class="s3">], </span><span class="s6">16</span><span class="s3">) / </span><span class="s6">255.0</span><span class="s3">)</span>
+                                 <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s3">(</span><span class="s6">0</span><span class="s3">, </span><span class="s6">2</span><span class="s3">, </span><span class="s6">4</span><span class="s3">)])</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s2">return </span><span class="s4">'1,1,1'</span>
+
+        <span class="s2">for </span><span class="s1">ttype</span><span class="s3">, </span><span class="s1">ndef </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">style</span><span class="s3">:</span>
+            <span class="s1">name </span><span class="s3">= </span><span class="s1">_get_ttype_name</span><span class="s3">(</span><span class="s1">ttype</span><span class="s3">)</span>
+            <span class="s1">cmndef </span><span class="s3">= </span><span class="s4">''</span>
+            <span class="s2">if </span><span class="s1">ndef</span><span class="s3">[</span><span class="s4">'bold'</span><span class="s3">]:</span>
+                <span class="s1">cmndef </span><span class="s3">+= </span><span class="s4">r'\let\$$@bf=\textbf'</span>
+            <span class="s2">if </span><span class="s1">ndef</span><span class="s3">[</span><span class="s4">'italic'</span><span class="s3">]:</span>
+                <span class="s1">cmndef </span><span class="s3">+= </span><span class="s4">r'\let\$$@it=\textit'</span>
+            <span class="s2">if </span><span class="s1">ndef</span><span class="s3">[</span><span class="s4">'underline'</span><span class="s3">]:</span>
+                <span class="s1">cmndef </span><span class="s3">+= </span><span class="s4">r'\let\$$@ul=\underline'</span>
+            <span class="s2">if </span><span class="s1">ndef</span><span class="s3">[</span><span class="s4">'roman'</span><span class="s3">]:</span>
+                <span class="s1">cmndef </span><span class="s3">+= </span><span class="s4">r'\let\$$@ff=\textrm'</span>
+            <span class="s2">if </span><span class="s1">ndef</span><span class="s3">[</span><span class="s4">'sans'</span><span class="s3">]:</span>
+                <span class="s1">cmndef </span><span class="s3">+= </span><span class="s4">r'\let\$$@ff=\textsf'</span>
+            <span class="s2">if </span><span class="s1">ndef</span><span class="s3">[</span><span class="s4">'mono'</span><span class="s3">]:</span>
+                <span class="s1">cmndef </span><span class="s3">+= </span><span class="s4">r'\let\$$@ff=\textsf'</span>
+            <span class="s2">if </span><span class="s1">ndef</span><span class="s3">[</span><span class="s4">'color'</span><span class="s3">]:</span>
+                <span class="s1">cmndef </span><span class="s3">+= (</span><span class="s4">r'\def\$$@tc##1{\textcolor[rgb]{%s}{##1}}' </span><span class="s3">%</span>
+                           <span class="s1">rgbcolor</span><span class="s3">(</span><span class="s1">ndef</span><span class="s3">[</span><span class="s4">'color'</span><span class="s3">]))</span>
+            <span class="s2">if </span><span class="s1">ndef</span><span class="s3">[</span><span class="s4">'border'</span><span class="s3">]:</span>
+                <span class="s1">cmndef </span><span class="s3">+= (</span><span class="s4">r'\def\$$@bc##1{{\setlength{\fboxsep}{\string -\fboxrule}'</span>
+                           <span class="s4">r'\fcolorbox[rgb]{%s}{%s}{\strut ##1}}}' </span><span class="s3">%</span>
+                           <span class="s3">(</span><span class="s1">rgbcolor</span><span class="s3">(</span><span class="s1">ndef</span><span class="s3">[</span><span class="s4">'border'</span><span class="s3">]),</span>
+                            <span class="s1">rgbcolor</span><span class="s3">(</span><span class="s1">ndef</span><span class="s3">[</span><span class="s4">'bgcolor'</span><span class="s3">])))</span>
+            <span class="s2">elif </span><span class="s1">ndef</span><span class="s3">[</span><span class="s4">'bgcolor'</span><span class="s3">]:</span>
+                <span class="s1">cmndef </span><span class="s3">+= (</span><span class="s4">r'\def\$$@bc##1{{\setlength{\fboxsep}{0pt}'</span>
+                           <span class="s4">r'\colorbox[rgb]{%s}{\strut ##1}}}' </span><span class="s3">%</span>
+                           <span class="s1">rgbcolor</span><span class="s3">(</span><span class="s1">ndef</span><span class="s3">[</span><span class="s4">'bgcolor'</span><span class="s3">]))</span>
+            <span class="s2">if </span><span class="s1">cmndef </span><span class="s3">== </span><span class="s4">''</span><span class="s3">:</span>
+                <span class="s2">continue</span>
+            <span class="s1">cmndef </span><span class="s3">= </span><span class="s1">cmndef</span><span class="s3">.</span><span class="s1">replace</span><span class="s3">(</span><span class="s4">'$$'</span><span class="s3">, </span><span class="s1">cp</span><span class="s3">)</span>
+            <span class="s1">t2n</span><span class="s3">[</span><span class="s1">ttype</span><span class="s3">] = </span><span class="s1">name</span>
+            <span class="s1">c2d</span><span class="s3">[</span><span class="s1">name</span><span class="s3">] = </span><span class="s1">cmndef</span>
+
+    <span class="s2">def </span><span class="s1">get_style_defs</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">arg</span><span class="s3">=</span><span class="s4">''</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Return the command sequences needed to define the commands 
+        used to format text in the verbatim environment. ``arg`` is ignored. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">cp </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">commandprefix</span>
+        <span class="s1">styles </span><span class="s3">= []</span>
+        <span class="s2">for </span><span class="s1">name</span><span class="s3">, </span><span class="s1">definition </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">cmd2def</span><span class="s3">.</span><span class="s1">items</span><span class="s3">():</span>
+            <span class="s1">styles</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s4">r'\@namedef{%s@tok@%s}{%s}' </span><span class="s3">% (</span><span class="s1">cp</span><span class="s3">, </span><span class="s1">name</span><span class="s3">, </span><span class="s1">definition</span><span class="s3">))</span>
+        <span class="s2">return </span><span class="s1">STYLE_TEMPLATE </span><span class="s3">% {</span><span class="s4">'cp'</span><span class="s3">: </span><span class="s1">self</span><span class="s3">.</span><span class="s1">commandprefix</span><span class="s3">,</span>
+                                 <span class="s4">'styles'</span><span class="s3">: </span><span class="s4">'</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">styles</span><span class="s3">)}</span>
+
+    <span class="s2">def </span><span class="s1">format_unencoded</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">tokensource</span><span class="s3">, </span><span class="s1">outfile</span><span class="s3">):</span>
+        <span class="s5"># TODO: add support for background colors</span>
+        <span class="s1">t2n </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">ttype2name</span>
+        <span class="s1">cp </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">commandprefix</span>
+
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">full</span><span class="s3">:</span>
+            <span class="s1">realoutfile </span><span class="s3">= </span><span class="s1">outfile</span>
+            <span class="s1">outfile </span><span class="s3">= </span><span class="s1">StringIO</span><span class="s3">()</span>
+
+        <span class="s2">if not </span><span class="s1">self</span><span class="s3">.</span><span class="s1">nowrap</span><span class="s3">:</span>
+            <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\\</span><span class="s4">begin{' </span><span class="s3">+ </span><span class="s1">self</span><span class="s3">.</span><span class="s1">envname </span><span class="s3">+ </span><span class="s4">'}[commandchars=</span><span class="s2">\\\\\\</span><span class="s4">{</span><span class="s2">\\</span><span class="s4">}'</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">linenos</span><span class="s3">:</span>
+                <span class="s1">start</span><span class="s3">, </span><span class="s1">step </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">linenostart</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">linenostep</span>
+                <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">',numbers=left' </span><span class="s3">+</span>
+                              <span class="s3">(</span><span class="s1">start </span><span class="s2">and </span><span class="s4">',firstnumber=%d' </span><span class="s3">% </span><span class="s1">start </span><span class="s2">or </span><span class="s4">''</span><span class="s3">) +</span>
+                              <span class="s3">(</span><span class="s1">step </span><span class="s2">and </span><span class="s4">',stepnumber=%d' </span><span class="s3">% </span><span class="s1">step </span><span class="s2">or </span><span class="s4">''</span><span class="s3">))</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mathescape </span><span class="s2">or </span><span class="s1">self</span><span class="s3">.</span><span class="s1">texcomments </span><span class="s2">or </span><span class="s1">self</span><span class="s3">.</span><span class="s1">escapeinside</span><span class="s3">:</span>
+                <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">',codes={</span><span class="s2">\\</span><span class="s4">catcode`</span><span class="s2">\\</span><span class="s4">$=3</span><span class="s2">\\</span><span class="s4">catcode`</span><span class="s2">\\</span><span class="s4">^=7'</span>
+                              <span class="s4">'</span><span class="s2">\\</span><span class="s4">catcode`</span><span class="s2">\\</span><span class="s4">_=8</span><span class="s2">\\</span><span class="s4">relax}'</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">verboptions</span><span class="s3">:</span>
+                <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">',' </span><span class="s3">+ </span><span class="s1">self</span><span class="s3">.</span><span class="s1">verboptions</span><span class="s3">)</span>
+            <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">']</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">)</span>
+
+        <span class="s2">for </span><span class="s1">ttype</span><span class="s3">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">tokensource</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">ttype </span><span class="s2">in </span><span class="s1">Token</span><span class="s3">.</span><span class="s1">Comment</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">texcomments</span><span class="s3">:</span>
+                    <span class="s5"># Try to guess comment starting lexeme and escape it ...</span>
+                    <span class="s1">start </span><span class="s3">= </span><span class="s1">value</span><span class="s3">[</span><span class="s6">0</span><span class="s3">:</span><span class="s6">1</span><span class="s3">]</span>
+                    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s6">1</span><span class="s3">, </span><span class="s1">len</span><span class="s3">(</span><span class="s1">value</span><span class="s3">)):</span>
+                        <span class="s2">if </span><span class="s1">start</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] != </span><span class="s1">value</span><span class="s3">[</span><span class="s1">i</span><span class="s3">]:</span>
+                            <span class="s2">break</span>
+                        <span class="s1">start </span><span class="s3">+= </span><span class="s1">value</span><span class="s3">[</span><span class="s1">i</span><span class="s3">]</span>
+
+                    <span class="s1">value </span><span class="s3">= </span><span class="s1">value</span><span class="s3">[</span><span class="s1">len</span><span class="s3">(</span><span class="s1">start</span><span class="s3">):]</span>
+                    <span class="s1">start </span><span class="s3">= </span><span class="s1">escape_tex</span><span class="s3">(</span><span class="s1">start</span><span class="s3">, </span><span class="s1">cp</span><span class="s3">)</span>
+
+                    <span class="s5"># ... but do not escape inside comment.</span>
+                    <span class="s1">value </span><span class="s3">= </span><span class="s1">start </span><span class="s3">+ </span><span class="s1">value</span>
+                <span class="s2">elif </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mathescape</span><span class="s3">:</span>
+                    <span class="s5"># Only escape parts not inside a math environment.</span>
+                    <span class="s1">parts </span><span class="s3">= </span><span class="s1">value</span><span class="s3">.</span><span class="s1">split</span><span class="s3">(</span><span class="s4">'$'</span><span class="s3">)</span>
+                    <span class="s1">in_math </span><span class="s3">= </span><span class="s2">False</span>
+                    <span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">part </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">parts</span><span class="s3">):</span>
+                        <span class="s2">if not </span><span class="s1">in_math</span><span class="s3">:</span>
+                            <span class="s1">parts</span><span class="s3">[</span><span class="s1">i</span><span class="s3">] = </span><span class="s1">escape_tex</span><span class="s3">(</span><span class="s1">part</span><span class="s3">, </span><span class="s1">cp</span><span class="s3">)</span>
+                        <span class="s1">in_math </span><span class="s3">= </span><span class="s2">not </span><span class="s1">in_math</span>
+                    <span class="s1">value </span><span class="s3">= </span><span class="s4">'$'</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">parts</span><span class="s3">)</span>
+                <span class="s2">elif </span><span class="s1">self</span><span class="s3">.</span><span class="s1">escapeinside</span><span class="s3">:</span>
+                    <span class="s1">text </span><span class="s3">= </span><span class="s1">value</span>
+                    <span class="s1">value </span><span class="s3">= </span><span class="s4">''</span>
+                    <span class="s2">while </span><span class="s1">text</span><span class="s3">:</span>
+                        <span class="s1">a</span><span class="s3">, </span><span class="s1">sep1</span><span class="s3">, </span><span class="s1">text </span><span class="s3">= </span><span class="s1">text</span><span class="s3">.</span><span class="s1">partition</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">left</span><span class="s3">)</span>
+                        <span class="s2">if </span><span class="s1">sep1</span><span class="s3">:</span>
+                            <span class="s1">b</span><span class="s3">, </span><span class="s1">sep2</span><span class="s3">, </span><span class="s1">text </span><span class="s3">= </span><span class="s1">text</span><span class="s3">.</span><span class="s1">partition</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">right</span><span class="s3">)</span>
+                            <span class="s2">if </span><span class="s1">sep2</span><span class="s3">:</span>
+                                <span class="s1">value </span><span class="s3">+= </span><span class="s1">escape_tex</span><span class="s3">(</span><span class="s1">a</span><span class="s3">, </span><span class="s1">cp</span><span class="s3">) + </span><span class="s1">b</span>
+                            <span class="s2">else</span><span class="s3">:</span>
+                                <span class="s1">value </span><span class="s3">+= </span><span class="s1">escape_tex</span><span class="s3">(</span><span class="s1">a </span><span class="s3">+ </span><span class="s1">sep1 </span><span class="s3">+ </span><span class="s1">b</span><span class="s3">, </span><span class="s1">cp</span><span class="s3">)</span>
+                        <span class="s2">else</span><span class="s3">:</span>
+                            <span class="s1">value </span><span class="s3">+= </span><span class="s1">escape_tex</span><span class="s3">(</span><span class="s1">a</span><span class="s3">, </span><span class="s1">cp</span><span class="s3">)</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">value </span><span class="s3">= </span><span class="s1">escape_tex</span><span class="s3">(</span><span class="s1">value</span><span class="s3">, </span><span class="s1">cp</span><span class="s3">)</span>
+            <span class="s2">elif </span><span class="s1">ttype </span><span class="s2">not in </span><span class="s1">Token</span><span class="s3">.</span><span class="s1">Escape</span><span class="s3">:</span>
+                <span class="s1">value </span><span class="s3">= </span><span class="s1">escape_tex</span><span class="s3">(</span><span class="s1">value</span><span class="s3">, </span><span class="s1">cp</span><span class="s3">)</span>
+            <span class="s1">styles </span><span class="s3">= []</span>
+            <span class="s2">while </span><span class="s1">ttype </span><span class="s2">is not </span><span class="s1">Token</span><span class="s3">:</span>
+                <span class="s2">try</span><span class="s3">:</span>
+                    <span class="s1">styles</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">t2n</span><span class="s3">[</span><span class="s1">ttype</span><span class="s3">])</span>
+                <span class="s2">except </span><span class="s1">KeyError</span><span class="s3">:</span>
+                    <span class="s5"># not in current style</span>
+                    <span class="s1">styles</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">_get_ttype_name</span><span class="s3">(</span><span class="s1">ttype</span><span class="s3">))</span>
+                <span class="s1">ttype </span><span class="s3">= </span><span class="s1">ttype</span><span class="s3">.</span><span class="s1">parent</span>
+            <span class="s1">styleval </span><span class="s3">= </span><span class="s4">'+'</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">reversed</span><span class="s3">(</span><span class="s1">styles</span><span class="s3">))</span>
+            <span class="s2">if </span><span class="s1">styleval</span><span class="s3">:</span>
+                <span class="s1">spl </span><span class="s3">= </span><span class="s1">value</span><span class="s3">.</span><span class="s1">split</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">)</span>
+                <span class="s2">for </span><span class="s1">line </span><span class="s2">in </span><span class="s1">spl</span><span class="s3">[:-</span><span class="s6">1</span><span class="s3">]:</span>
+                    <span class="s2">if </span><span class="s1">line</span><span class="s3">:</span>
+                        <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">&quot;</span><span class="s2">\\</span><span class="s4">%s{%s}{%s}&quot; </span><span class="s3">% (</span><span class="s1">cp</span><span class="s3">, </span><span class="s1">styleval</span><span class="s3">, </span><span class="s1">line</span><span class="s3">))</span>
+                    <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">spl</span><span class="s3">[-</span><span class="s6">1</span><span class="s3">]:</span>
+                    <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">&quot;</span><span class="s2">\\</span><span class="s4">%s{%s}{%s}&quot; </span><span class="s3">% (</span><span class="s1">cp</span><span class="s3">, </span><span class="s1">styleval</span><span class="s3">, </span><span class="s1">spl</span><span class="s3">[-</span><span class="s6">1</span><span class="s3">]))</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">value</span><span class="s3">)</span>
+
+        <span class="s2">if not </span><span class="s1">self</span><span class="s3">.</span><span class="s1">nowrap</span><span class="s3">:</span>
+            <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\\</span><span class="s4">end{' </span><span class="s3">+ </span><span class="s1">self</span><span class="s3">.</span><span class="s1">envname </span><span class="s3">+ </span><span class="s4">'}</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">full</span><span class="s3">:</span>
+            <span class="s1">encoding </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">encoding </span><span class="s2">or </span><span class="s4">'utf8'</span>
+            <span class="s5"># map known existings encodings from LaTeX distribution</span>
+            <span class="s1">encoding </span><span class="s3">= {</span>
+                <span class="s4">'utf_8'</span><span class="s3">: </span><span class="s4">'utf8'</span><span class="s3">,</span>
+                <span class="s4">'latin_1'</span><span class="s3">: </span><span class="s4">'latin1'</span><span class="s3">,</span>
+                <span class="s4">'iso_8859_1'</span><span class="s3">: </span><span class="s4">'latin1'</span><span class="s3">,</span>
+            <span class="s3">}.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">encoding</span><span class="s3">.</span><span class="s1">replace</span><span class="s3">(</span><span class="s4">'-'</span><span class="s3">, </span><span class="s4">'_'</span><span class="s3">), </span><span class="s1">encoding</span><span class="s3">)</span>
+            <span class="s1">realoutfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">DOC_TEMPLATE </span><span class="s3">%</span>
+                <span class="s1">dict</span><span class="s3">(</span><span class="s1">docclass  </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">docclass</span><span class="s3">,</span>
+                     <span class="s1">preamble  </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">preamble</span><span class="s3">,</span>
+                     <span class="s1">title     </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">title</span><span class="s3">,</span>
+                     <span class="s1">encoding  </span><span class="s3">= </span><span class="s1">encoding</span><span class="s3">,</span>
+                     <span class="s1">styledefs </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">get_style_defs</span><span class="s3">(),</span>
+                     <span class="s1">code      </span><span class="s3">= </span><span class="s1">outfile</span><span class="s3">.</span><span class="s1">getvalue</span><span class="s3">()))</span>
+
+
+<span class="s2">class </span><span class="s1">LatexEmbeddedLexer</span><span class="s3">(</span><span class="s1">Lexer</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    This lexer takes one lexer as argument, the lexer for the language 
+    being formatted, and the left and right delimiters for escaped text. 
+ 
+    First everything is scanned using the language lexer to obtain 
+    strings and comments. All other consecutive tokens are merged and 
+    the resulting text is scanned for escaped segments, which are given 
+    the Token.Escape type. Finally text that is not escaped is scanned 
+    again with the language lexer. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">left</span><span class="s3">, </span><span class="s1">right</span><span class="s3">, </span><span class="s1">lang</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">):</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">left </span><span class="s3">= </span><span class="s1">left</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">right </span><span class="s3">= </span><span class="s1">right</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">lang </span><span class="s3">= </span><span class="s1">lang</span>
+        <span class="s1">Lexer</span><span class="s3">.</span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">get_tokens_unprocessed</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">text</span><span class="s3">):</span>
+        <span class="s5"># find and remove all the escape tokens (replace with an empty string)</span>
+        <span class="s5"># this is very similar to DelegatingLexer.get_tokens_unprocessed.</span>
+        <span class="s1">buffered </span><span class="s3">= </span><span class="s4">''</span>
+        <span class="s1">insertions </span><span class="s3">= []</span>
+        <span class="s1">insertion_buf </span><span class="s3">= []</span>
+        <span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">t</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_find_safe_escape_tokens</span><span class="s3">(</span><span class="s1">text</span><span class="s3">):</span>
+            <span class="s2">if </span><span class="s1">t </span><span class="s2">is None</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s1">insertion_buf</span><span class="s3">:</span>
+                    <span class="s1">insertions</span><span class="s3">.</span><span class="s1">append</span><span class="s3">((</span><span class="s1">len</span><span class="s3">(</span><span class="s1">buffered</span><span class="s3">), </span><span class="s1">insertion_buf</span><span class="s3">))</span>
+                    <span class="s1">insertion_buf </span><span class="s3">= []</span>
+                <span class="s1">buffered </span><span class="s3">+= </span><span class="s1">v</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">insertion_buf</span><span class="s3">.</span><span class="s1">append</span><span class="s3">((</span><span class="s1">i</span><span class="s3">, </span><span class="s1">t</span><span class="s3">, </span><span class="s1">v</span><span class="s3">))</span>
+        <span class="s2">if </span><span class="s1">insertion_buf</span><span class="s3">:</span>
+            <span class="s1">insertions</span><span class="s3">.</span><span class="s1">append</span><span class="s3">((</span><span class="s1">len</span><span class="s3">(</span><span class="s1">buffered</span><span class="s3">), </span><span class="s1">insertion_buf</span><span class="s3">))</span>
+        <span class="s2">return </span><span class="s1">do_insertions</span><span class="s3">(</span><span class="s1">insertions</span><span class="s3">,</span>
+                             <span class="s1">self</span><span class="s3">.</span><span class="s1">lang</span><span class="s3">.</span><span class="s1">get_tokens_unprocessed</span><span class="s3">(</span><span class="s1">buffered</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">_find_safe_escape_tokens</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">text</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; find escape tokens that are not in strings or comments &quot;&quot;&quot;</span>
+        <span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">t</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_filter_to</span><span class="s3">(</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">lang</span><span class="s3">.</span><span class="s1">get_tokens_unprocessed</span><span class="s3">(</span><span class="s1">text</span><span class="s3">),</span>
+            <span class="s2">lambda </span><span class="s1">t</span><span class="s3">: </span><span class="s1">t </span><span class="s2">in </span><span class="s1">Token</span><span class="s3">.</span><span class="s1">Comment </span><span class="s2">or </span><span class="s1">t </span><span class="s2">in </span><span class="s1">Token</span><span class="s3">.</span><span class="s1">String</span>
+        <span class="s3">):</span>
+            <span class="s2">if </span><span class="s1">t </span><span class="s2">is None</span><span class="s3">:</span>
+                <span class="s2">for </span><span class="s1">i2</span><span class="s3">, </span><span class="s1">t2</span><span class="s3">, </span><span class="s1">v2 </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_find_escape_tokens</span><span class="s3">(</span><span class="s1">v</span><span class="s3">):</span>
+                    <span class="s2">yield </span><span class="s1">i </span><span class="s3">+ </span><span class="s1">i2</span><span class="s3">, </span><span class="s1">t2</span><span class="s3">, </span><span class="s1">v2</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s2">yield </span><span class="s1">i</span><span class="s3">, </span><span class="s2">None</span><span class="s3">, </span><span class="s1">v</span>
+
+    <span class="s2">def </span><span class="s1">_filter_to</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">it</span><span class="s3">, </span><span class="s1">pred</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; Keep only the tokens that match `pred`, merge the others together &quot;&quot;&quot;</span>
+        <span class="s1">buf </span><span class="s3">= </span><span class="s4">''</span>
+        <span class="s1">idx </span><span class="s3">= </span><span class="s6">0</span>
+        <span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">t</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">it</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">pred</span><span class="s3">(</span><span class="s1">t</span><span class="s3">):</span>
+                <span class="s2">if </span><span class="s1">buf</span><span class="s3">:</span>
+                    <span class="s2">yield </span><span class="s1">idx</span><span class="s3">, </span><span class="s2">None</span><span class="s3">, </span><span class="s1">buf</span>
+                    <span class="s1">buf </span><span class="s3">= </span><span class="s4">''</span>
+                <span class="s2">yield </span><span class="s1">i</span><span class="s3">, </span><span class="s1">t</span><span class="s3">, </span><span class="s1">v</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s2">if not </span><span class="s1">buf</span><span class="s3">:</span>
+                    <span class="s1">idx </span><span class="s3">= </span><span class="s1">i</span>
+                <span class="s1">buf </span><span class="s3">+= </span><span class="s1">v</span>
+        <span class="s2">if </span><span class="s1">buf</span><span class="s3">:</span>
+            <span class="s2">yield </span><span class="s1">idx</span><span class="s3">, </span><span class="s2">None</span><span class="s3">, </span><span class="s1">buf</span>
+
+    <span class="s2">def </span><span class="s1">_find_escape_tokens</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">text</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; Find escape tokens within text, give token=None otherwise &quot;&quot;&quot;</span>
+        <span class="s1">index </span><span class="s3">= </span><span class="s6">0</span>
+        <span class="s2">while </span><span class="s1">text</span><span class="s3">:</span>
+            <span class="s1">a</span><span class="s3">, </span><span class="s1">sep1</span><span class="s3">, </span><span class="s1">text </span><span class="s3">= </span><span class="s1">text</span><span class="s3">.</span><span class="s1">partition</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">left</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">a</span><span class="s3">:</span>
+                <span class="s2">yield </span><span class="s1">index</span><span class="s3">, </span><span class="s2">None</span><span class="s3">, </span><span class="s1">a</span>
+                <span class="s1">index </span><span class="s3">+= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">a</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">sep1</span><span class="s3">:</span>
+                <span class="s1">b</span><span class="s3">, </span><span class="s1">sep2</span><span class="s3">, </span><span class="s1">text </span><span class="s3">= </span><span class="s1">text</span><span class="s3">.</span><span class="s1">partition</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">right</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">sep2</span><span class="s3">:</span>
+                    <span class="s2">yield </span><span class="s1">index </span><span class="s3">+ </span><span class="s1">len</span><span class="s3">(</span><span class="s1">sep1</span><span class="s3">), </span><span class="s1">Token</span><span class="s3">.</span><span class="s1">Escape</span><span class="s3">, </span><span class="s1">b</span>
+                    <span class="s1">index </span><span class="s3">+= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">sep1</span><span class="s3">) + </span><span class="s1">len</span><span class="s3">(</span><span class="s1">b</span><span class="s3">) + </span><span class="s1">len</span><span class="s3">(</span><span class="s1">sep2</span><span class="s3">)</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s2">yield </span><span class="s1">index</span><span class="s3">, </span><span class="s1">Token</span><span class="s3">.</span><span class="s1">Error</span><span class="s3">, </span><span class="s1">sep1</span>
+                    <span class="s1">index </span><span class="s3">+= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">sep1</span><span class="s3">)</span>
+                    <span class="s1">text </span><span class="s3">= </span><span class="s1">b</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,232 @@
+<html>
+<head>
+<title>file_storage.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #5f826b; font-style: italic;}
+.s4 { color: #7a7e85;}
+.s5 { color: #6aab73;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+file_storage.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">collections</span><span class="s2">.</span><span class="s1">abc </span><span class="s0">as </span><span class="s1">cabc</span>
+<span class="s0">import </span><span class="s1">mimetypes</span>
+<span class="s0">import </span><span class="s1">os</span>
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+<span class="s0">from </span><span class="s1">io </span><span class="s0">import </span><span class="s1">BytesIO</span>
+<span class="s0">from </span><span class="s1">os </span><span class="s0">import </span><span class="s1">fsdecode</span>
+<span class="s0">from </span><span class="s1">os </span><span class="s0">import </span><span class="s1">fspath</span>
+
+<span class="s0">from </span><span class="s2">..</span><span class="s1">_internal </span><span class="s0">import </span><span class="s1">_plain_int</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">headers </span><span class="s0">import </span><span class="s1">Headers</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">structures </span><span class="s0">import </span><span class="s1">MultiDict</span>
+
+
+<span class="s0">class </span><span class="s1">FileStorage</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;The :class:`FileStorage` class is a thin wrapper over incoming files. 
+    It is used by the request object to represent uploaded files.  All the 
+    attributes of the wrapper stream are proxied by the file storage so 
+    it's possible to do ``storage.read()`` instead of the long form 
+    ``storage.stream.read()``. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">stream</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">IO</span><span class="s2">[</span><span class="s1">bytes</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">filename</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">content_type</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">content_length</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">headers</span><span class="s2">: </span><span class="s1">Headers </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">):</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">name </span><span class="s2">= </span><span class="s1">name</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">stream </span><span class="s2">= </span><span class="s1">stream </span><span class="s0">or </span><span class="s1">BytesIO</span><span class="s2">()</span>
+
+        <span class="s4"># If no filename is provided, attempt to get the filename from</span>
+        <span class="s4"># the stream object. Python names special streams like</span>
+        <span class="s4"># ``&lt;stderr&gt;`` with angular brackets, skip these streams.</span>
+        <span class="s0">if </span><span class="s1">filename </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">filename </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">stream</span><span class="s2">, </span><span class="s5">&quot;name&quot;</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+
+            <span class="s0">if </span><span class="s1">filename </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s1">filename </span><span class="s2">= </span><span class="s1">fsdecode</span><span class="s2">(</span><span class="s1">filename</span><span class="s2">)</span>
+
+            <span class="s0">if </span><span class="s1">filename </span><span class="s0">and </span><span class="s1">filename</span><span class="s2">[</span><span class="s6">0</span><span class="s2">] == </span><span class="s5">&quot;&lt;&quot; </span><span class="s0">and </span><span class="s1">filename</span><span class="s2">[-</span><span class="s6">1</span><span class="s2">] == </span><span class="s5">&quot;&gt;&quot;</span><span class="s2">:</span>
+                <span class="s1">filename </span><span class="s2">= </span><span class="s0">None</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">filename </span><span class="s2">= </span><span class="s1">fsdecode</span><span class="s2">(</span><span class="s1">filename</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">filename </span><span class="s2">= </span><span class="s1">filename</span>
+
+        <span class="s0">if </span><span class="s1">headers </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">headers </span><span class="s2">= </span><span class="s1">Headers</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">headers </span><span class="s2">= </span><span class="s1">headers</span>
+        <span class="s0">if </span><span class="s1">content_type </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">headers</span><span class="s2">[</span><span class="s5">&quot;Content-Type&quot;</span><span class="s2">] = </span><span class="s1">content_type</span>
+        <span class="s0">if </span><span class="s1">content_length </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">headers</span><span class="s2">[</span><span class="s5">&quot;Content-Length&quot;</span><span class="s2">] = </span><span class="s1">str</span><span class="s2">(</span><span class="s1">content_length</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_parse_content_type</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if not </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s5">&quot;_parsed_content_type&quot;</span><span class="s2">):</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_parsed_content_type </span><span class="s2">= </span><span class="s1">http</span><span class="s2">.</span><span class="s1">parse_options_header</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">content_type</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">content_type</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;The content-type sent in the header.  Usually not available&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">headers</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;content-type&quot;</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">content_length</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; int</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;The content-length sent in the header.  Usually not available&quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s5">&quot;content-length&quot; </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">headers</span><span class="s2">:</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">_plain_int</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">headers</span><span class="s2">[</span><span class="s5">&quot;content-length&quot;</span><span class="s2">])</span>
+            <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+                <span class="s0">pass</span>
+
+        <span class="s0">return </span><span class="s6">0</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">mimetype</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Like :attr:`content_type`, but without parameters (eg, without 
+        charset, type etc.) and always lowercase.  For example if the content 
+        type is ``text/HTML; charset=utf-8`` the mimetype would be 
+        ``'text/html'``. 
+ 
+        .. versionadded:: 0.7 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_parse_content_type</span><span class="s2">()</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_parsed_content_type</span><span class="s2">[</span><span class="s6">0</span><span class="s2">].</span><span class="s1">lower</span><span class="s2">()</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">mimetype_params</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]:</span>
+        <span class="s3">&quot;&quot;&quot;The mimetype parameters as dict.  For example if the content 
+        type is ``text/html; charset=utf-8`` the params would be 
+        ``{'charset': 'utf-8'}``. 
+ 
+        .. versionadded:: 0.7 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_parse_content_type</span><span class="s2">()</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_parsed_content_type</span><span class="s2">[</span><span class="s6">1</span><span class="s2">]</span>
+
+    <span class="s0">def </span><span class="s1">save</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">dst</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s1">os</span><span class="s2">.</span><span class="s1">PathLike</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s1">t</span><span class="s2">.</span><span class="s1">IO</span><span class="s2">[</span><span class="s1">bytes</span><span class="s2">], </span><span class="s1">buffer_size</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s6">16384</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Save the file to a destination path or file object.  If the 
+        destination is a file object you have to close it yourself after the 
+        call.  The buffer size is the number of bytes held in memory during 
+        the copy process.  It defaults to 16KB. 
+ 
+        For secure file saving also have a look at :func:`secure_filename`. 
+ 
+        :param dst: a filename, :class:`os.PathLike`, or open file 
+            object to write to. 
+        :param buffer_size: Passed as the ``length`` parameter of 
+            :func:`shutil.copyfileobj`. 
+ 
+        .. versionchanged:: 1.0 
+            Supports :mod:`pathlib`. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">from </span><span class="s1">shutil </span><span class="s0">import </span><span class="s1">copyfileobj</span>
+
+        <span class="s1">close_dst </span><span class="s2">= </span><span class="s0">False</span>
+
+        <span class="s0">if </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">dst</span><span class="s2">, </span><span class="s5">&quot;__fspath__&quot;</span><span class="s2">):</span>
+            <span class="s1">dst </span><span class="s2">= </span><span class="s1">fspath</span><span class="s2">(</span><span class="s1">dst</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">dst</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+            <span class="s1">dst </span><span class="s2">= </span><span class="s1">open</span><span class="s2">(</span><span class="s1">dst</span><span class="s2">, </span><span class="s5">&quot;wb&quot;</span><span class="s2">)</span>
+            <span class="s1">close_dst </span><span class="s2">= </span><span class="s0">True</span>
+
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">copyfileobj</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">stream</span><span class="s2">, </span><span class="s1">dst</span><span class="s2">, </span><span class="s1">buffer_size</span><span class="s2">)</span>
+        <span class="s0">finally</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">close_dst</span><span class="s2">:</span>
+                <span class="s1">dst</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">close</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Close the underlying file if possible.&quot;&quot;&quot;</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">stream</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+        <span class="s0">except </span><span class="s1">Exception</span><span class="s2">:</span>
+            <span class="s0">pass</span>
+
+    <span class="s0">def </span><span class="s1">__bool__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">bool</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">filename</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">__getattr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">:</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">stream</span><span class="s2">, </span><span class="s1">name</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">AttributeError</span><span class="s2">:</span>
+            <span class="s4"># SpooledTemporaryFile on Python &lt; 3.11 doesn't implement IOBase,</span>
+            <span class="s4"># get the attribute from its backing file instead.</span>
+            <span class="s0">if </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">stream</span><span class="s2">, </span><span class="s5">&quot;_file&quot;</span><span class="s2">):</span>
+                <span class="s0">return </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">stream</span><span class="s2">.</span><span class="s1">_file</span><span class="s2">, </span><span class="s1">name</span><span class="s2">)</span>
+            <span class="s0">raise</span>
+
+    <span class="s0">def </span><span class="s1">__iter__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; cabc</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">bytes</span><span class="s2">]:</span>
+        <span class="s0">return </span><span class="s1">iter</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">stream</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">__repr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s5">f&quot;&lt;</span><span class="s0">{</span><span class="s1">type</span><span class="s2">(</span><span class="s1">self</span><span class="s2">).</span><span class="s1">__name__</span><span class="s0">}</span><span class="s5">: </span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">filename</span><span class="s0">!r} </span><span class="s5">(</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">content_type</span><span class="s0">!r}</span><span class="s5">)&gt;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">FileMultiDict</span><span class="s2">(</span><span class="s1">MultiDict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">FileStorage</span><span class="s2">]):</span>
+    <span class="s3">&quot;&quot;&quot;A special :class:`MultiDict` that has convenience methods to add 
+    files to it.  This is used for :class:`EnvironBuilder` and generally 
+    useful for unittesting. 
+ 
+    .. versionadded:: 0.5 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">add_file</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">file</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s1">os</span><span class="s2">.</span><span class="s1">PathLike</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s1">t</span><span class="s2">.</span><span class="s1">IO</span><span class="s2">[</span><span class="s1">bytes</span><span class="s2">] | </span><span class="s1">FileStorage</span><span class="s2">,</span>
+        <span class="s1">filename</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">content_type</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Adds a new file to the dict.  `file` can be a file name or 
+        a :class:`file`-like or a :class:`FileStorage` object. 
+ 
+        :param name: the name of the field. 
+        :param file: a filename or :class:`file`-like object 
+        :param filename: an optional filename 
+        :param content_type: an optional content type 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">file</span><span class="s2">, </span><span class="s1">FileStorage</span><span class="s2">):</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">name</span><span class="s2">, </span><span class="s1">file</span><span class="s2">)</span>
+            <span class="s0">return</span>
+
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">file</span><span class="s2">, (</span><span class="s1">str</span><span class="s2">, </span><span class="s1">os</span><span class="s2">.</span><span class="s1">PathLike</span><span class="s2">)):</span>
+            <span class="s0">if </span><span class="s1">filename </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s1">filename </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">fspath</span><span class="s2">(</span><span class="s1">file</span><span class="s2">)</span>
+
+            <span class="s1">file_obj</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">IO</span><span class="s2">[</span><span class="s1">bytes</span><span class="s2">] = </span><span class="s1">open</span><span class="s2">(</span><span class="s1">file</span><span class="s2">, </span><span class="s5">&quot;rb&quot;</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">file_obj </span><span class="s2">= </span><span class="s1">file  </span><span class="s4"># type: ignore[assignment]</span>
+
+        <span class="s0">if </span><span class="s1">filename </span><span class="s0">and </span><span class="s1">content_type </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">content_type </span><span class="s2">= (</span>
+                <span class="s1">mimetypes</span><span class="s2">.</span><span class="s1">guess_type</span><span class="s2">(</span><span class="s1">filename</span><span class="s2">)[</span><span class="s6">0</span><span class="s2">] </span><span class="s0">or </span><span class="s5">&quot;application/octet-stream&quot;</span>
+            <span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">name</span><span class="s2">, </span><span class="s1">FileStorage</span><span class="s2">(</span><span class="s1">file_obj</span><span class="s2">, </span><span class="s1">filename</span><span class="s2">, </span><span class="s1">name</span><span class="s2">, </span><span class="s1">content_type</span><span class="s2">))</span>
+
+
+<span class="s4"># circular dependencies</span>
+<span class="s0">from </span><span class="s2">.. </span><span class="s0">import </span><span class="s1">http</span>
+</pre>
+</body>
+</html>

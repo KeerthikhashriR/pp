@@ -1,0 +1,861 @@
+<html>
+<head>
+<title>_decorators.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #7a7e85;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_decorators.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;Logic related to validators applied to models etc. via the `@field_validator` and `@model_validator` decorators.&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations </span><span class="s2">as </span><span class="s1">_annotations</span>
+
+<span class="s2">import </span><span class="s1">types</span>
+<span class="s2">from </span><span class="s1">collections </span><span class="s2">import </span><span class="s1">deque</span>
+<span class="s2">from </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">abc </span><span class="s2">import </span><span class="s1">Iterable</span>
+<span class="s2">from </span><span class="s1">dataclasses </span><span class="s2">import </span><span class="s1">dataclass</span><span class="s3">, </span><span class="s1">field</span>
+<span class="s2">from </span><span class="s1">functools </span><span class="s2">import </span><span class="s1">cached_property</span><span class="s3">, </span><span class="s1">partial</span><span class="s3">, </span><span class="s1">partialmethod</span>
+<span class="s2">from </span><span class="s1">inspect </span><span class="s2">import </span><span class="s1">Parameter</span><span class="s3">, </span><span class="s1">Signature</span><span class="s3">, </span><span class="s1">isdatadescriptor</span><span class="s3">, </span><span class="s1">ismethoddescriptor</span><span class="s3">, </span><span class="s1">signature</span>
+<span class="s2">from </span><span class="s1">itertools </span><span class="s2">import </span><span class="s1">islice</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Callable</span><span class="s3">, </span><span class="s1">ClassVar</span><span class="s3">, </span><span class="s1">Generic</span><span class="s3">, </span><span class="s1">Literal</span><span class="s3">, </span><span class="s1">TypeVar</span><span class="s3">, </span><span class="s1">Union</span>
+
+<span class="s2">from </span><span class="s1">pydantic_core </span><span class="s2">import </span><span class="s1">PydanticUndefined</span><span class="s3">, </span><span class="s1">PydanticUndefinedType</span><span class="s3">, </span><span class="s1">core_schema</span>
+<span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">TypeAlias</span><span class="s3">, </span><span class="s1">is_typeddict</span>
+
+<span class="s2">from </span><span class="s3">..</span><span class="s1">errors </span><span class="s2">import </span><span class="s1">PydanticUserError</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_core_utils </span><span class="s2">import </span><span class="s1">get_type_ref</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_internal_dataclass </span><span class="s2">import </span><span class="s1">slots_true</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_namespace_utils </span><span class="s2">import </span><span class="s1">GlobalsNamespace</span><span class="s3">, </span><span class="s1">MappingNamespace</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_typing_extra </span><span class="s2">import </span><span class="s1">get_function_type_hints</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_utils </span><span class="s2">import </span><span class="s1">can_be_positional</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s3">..</span><span class="s1">fields </span><span class="s2">import </span><span class="s1">ComputedFieldInfo</span>
+    <span class="s2">from </span><span class="s3">..</span><span class="s1">functional_validators </span><span class="s2">import </span><span class="s1">FieldValidatorModes</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">slots_true</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">ValidatorDecoratorInfo</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;A container for data from `@validator` so that we can access it 
+    while building the pydantic-core schema. 
+ 
+    Attributes: 
+        decorator_repr: A class variable representing the decorator string, '@validator'. 
+        fields: A tuple of field names the validator should be called on. 
+        mode: The proposed validator mode. 
+        each_item: For complex objects (sets, lists etc.) whether to validate individual 
+            elements rather than the whole object. 
+        always: Whether this method and other validators should be called even if the value is missing. 
+        check_fields: Whether to check that the fields actually exist on the model. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">decorator_repr</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">str</span><span class="s3">] = </span><span class="s4">'@validator'</span>
+
+    <span class="s1">fields</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, ...]</span>
+    <span class="s1">mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'before'</span><span class="s3">, </span><span class="s4">'after'</span><span class="s3">]</span>
+    <span class="s1">each_item</span><span class="s3">: </span><span class="s1">bool</span>
+    <span class="s1">always</span><span class="s3">: </span><span class="s1">bool</span>
+    <span class="s1">check_fields</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">slots_true</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">FieldValidatorDecoratorInfo</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;A container for data from `@field_validator` so that we can access it 
+    while building the pydantic-core schema. 
+ 
+    Attributes: 
+        decorator_repr: A class variable representing the decorator string, '@field_validator'. 
+        fields: A tuple of field names the validator should be called on. 
+        mode: The proposed validator mode. 
+        check_fields: Whether to check that the fields actually exist on the model. 
+        json_schema_input_type: The input type of the function. This is only used to generate 
+            the appropriate JSON Schema (in validation mode) and can only specified 
+            when `mode` is either `'before'`, `'plain'` or `'wrap'`. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">decorator_repr</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">str</span><span class="s3">] = </span><span class="s4">'@field_validator'</span>
+
+    <span class="s1">fields</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, ...]</span>
+    <span class="s1">mode</span><span class="s3">: </span><span class="s1">FieldValidatorModes</span>
+    <span class="s1">check_fields</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None</span>
+    <span class="s1">json_schema_input_type</span><span class="s3">: </span><span class="s1">Any</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">slots_true</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">RootValidatorDecoratorInfo</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;A container for data from `@root_validator` so that we can access it 
+    while building the pydantic-core schema. 
+ 
+    Attributes: 
+        decorator_repr: A class variable representing the decorator string, '@root_validator'. 
+        mode: The proposed validator mode. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">decorator_repr</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">str</span><span class="s3">] = </span><span class="s4">'@root_validator'</span>
+    <span class="s1">mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'before'</span><span class="s3">, </span><span class="s4">'after'</span><span class="s3">]</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">slots_true</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">FieldSerializerDecoratorInfo</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;A container for data from `@field_serializer` so that we can access it 
+    while building the pydantic-core schema. 
+ 
+    Attributes: 
+        decorator_repr: A class variable representing the decorator string, '@field_serializer'. 
+        fields: A tuple of field names the serializer should be called on. 
+        mode: The proposed serializer mode. 
+        return_type: The type of the serializer's return value. 
+        when_used: The serialization condition. Accepts a string with values `'always'`, `'unless-none'`, `'json'`, 
+            and `'json-unless-none'`. 
+        check_fields: Whether to check that the fields actually exist on the model. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">decorator_repr</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">str</span><span class="s3">] = </span><span class="s4">'@field_serializer'</span>
+    <span class="s1">fields</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, ...]</span>
+    <span class="s1">mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'plain'</span><span class="s3">, </span><span class="s4">'wrap'</span><span class="s3">]</span>
+    <span class="s1">return_type</span><span class="s3">: </span><span class="s1">Any</span>
+    <span class="s1">when_used</span><span class="s3">: </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">WhenUsed</span>
+    <span class="s1">check_fields</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">slots_true</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">ModelSerializerDecoratorInfo</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;A container for data from `@model_serializer` so that we can access it 
+    while building the pydantic-core schema. 
+ 
+    Attributes: 
+        decorator_repr: A class variable representing the decorator string, '@model_serializer'. 
+        mode: The proposed serializer mode. 
+        return_type: The type of the serializer's return value. 
+        when_used: The serialization condition. Accepts a string with values `'always'`, `'unless-none'`, `'json'`, 
+            and `'json-unless-none'`. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">decorator_repr</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">str</span><span class="s3">] = </span><span class="s4">'@model_serializer'</span>
+    <span class="s1">mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'plain'</span><span class="s3">, </span><span class="s4">'wrap'</span><span class="s3">]</span>
+    <span class="s1">return_type</span><span class="s3">: </span><span class="s1">Any</span>
+    <span class="s1">when_used</span><span class="s3">: </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">WhenUsed</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">slots_true</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">ModelValidatorDecoratorInfo</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;A container for data from `@model_validator` so that we can access it 
+    while building the pydantic-core schema. 
+ 
+    Attributes: 
+        decorator_repr: A class variable representing the decorator string, '@model_validator'. 
+        mode: The proposed serializer mode. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">decorator_repr</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">str</span><span class="s3">] = </span><span class="s4">'@model_validator'</span>
+    <span class="s1">mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'wrap'</span><span class="s3">, </span><span class="s4">'before'</span><span class="s3">, </span><span class="s4">'after'</span><span class="s3">]</span>
+
+
+<span class="s1">DecoratorInfo</span><span class="s3">: </span><span class="s1">TypeAlias </span><span class="s3">= </span><span class="s4">&quot;&quot;&quot;Union[ 
+    ValidatorDecoratorInfo, 
+    FieldValidatorDecoratorInfo, 
+    RootValidatorDecoratorInfo, 
+    FieldSerializerDecoratorInfo, 
+    ModelSerializerDecoratorInfo, 
+    ModelValidatorDecoratorInfo, 
+    ComputedFieldInfo, 
+]&quot;&quot;&quot;</span>
+
+<span class="s1">ReturnType </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s4">'ReturnType'</span><span class="s3">)</span>
+<span class="s1">DecoratedType</span><span class="s3">: </span><span class="s1">TypeAlias </span><span class="s3">= (</span>
+    <span class="s4">'Union[classmethod[Any, Any, ReturnType], staticmethod[Any, ReturnType], Callable[..., ReturnType], property]'</span>
+<span class="s3">)</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass  </span><span class="s5"># can't use slots here since we set attributes on `__post_init__`</span>
+<span class="s2">class </span><span class="s1">PydanticDescriptorProxy</span><span class="s3">(</span><span class="s1">Generic</span><span class="s3">[</span><span class="s1">ReturnType</span><span class="s3">]):</span>
+    <span class="s0">&quot;&quot;&quot;Wrap a classmethod, staticmethod, property or unbound function 
+    and act as a descriptor that allows us to detect decorated items 
+    from the class' attributes. 
+ 
+    This class' __get__ returns the wrapped item's __get__ result, 
+    which makes it transparent for classmethods and staticmethods. 
+ 
+    Attributes: 
+        wrapped: The decorator that has to be wrapped. 
+        decorator_info: The decorator info. 
+        shim: A wrapper function to wrap V1 style function. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">wrapped</span><span class="s3">: </span><span class="s1">DecoratedType</span><span class="s3">[</span><span class="s1">ReturnType</span><span class="s3">]</span>
+    <span class="s1">decorator_info</span><span class="s3">: </span><span class="s1">DecoratorInfo</span>
+    <span class="s1">shim</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">Callable</span><span class="s3">[..., </span><span class="s1">Any</span><span class="s3">]], </span><span class="s1">Callable</span><span class="s3">[..., </span><span class="s1">Any</span><span class="s3">]] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+
+    <span class="s2">def </span><span class="s1">__post_init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">):</span>
+        <span class="s2">for </span><span class="s1">attr </span><span class="s2">in </span><span class="s4">'setter'</span><span class="s3">, </span><span class="s4">'deleter'</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">wrapped</span><span class="s3">, </span><span class="s1">attr</span><span class="s3">):</span>
+                <span class="s1">f </span><span class="s3">= </span><span class="s1">partial</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_call_wrapped_attr</span><span class="s3">, </span><span class="s1">name</span><span class="s3">=</span><span class="s1">attr</span><span class="s3">)</span>
+                <span class="s1">setattr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">attr</span><span class="s3">, </span><span class="s1">f</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">_call_wrapped_attr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">func</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">Any</span><span class="s3">], </span><span class="s2">None</span><span class="s3">], *, </span><span class="s1">name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; PydanticDescriptorProxy</span><span class="s3">[</span><span class="s1">ReturnType</span><span class="s3">]:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">wrapped </span><span class="s3">= </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">wrapped</span><span class="s3">, </span><span class="s1">name</span><span class="s3">)(</span><span class="s1">func</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">wrapped</span><span class="s3">, </span><span class="s1">property</span><span class="s3">):</span>
+            <span class="s5"># update ComputedFieldInfo.wrapped_property</span>
+            <span class="s2">from </span><span class="s3">..</span><span class="s1">fields </span><span class="s2">import </span><span class="s1">ComputedFieldInfo</span>
+
+            <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">decorator_info</span><span class="s3">, </span><span class="s1">ComputedFieldInfo</span><span class="s3">):</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">decorator_info</span><span class="s3">.</span><span class="s1">wrapped_property </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">wrapped</span>
+        <span class="s2">return </span><span class="s1">self</span>
+
+    <span class="s2">def </span><span class="s1">__get__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">obj</span><span class="s3">: </span><span class="s1">object </span><span class="s3">| </span><span class="s2">None</span><span class="s3">, </span><span class="s1">obj_type</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">object</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">) </span><span class="s1">-&gt; PydanticDescriptorProxy</span><span class="s3">[</span><span class="s1">ReturnType</span><span class="s3">]:</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">wrapped</span><span class="s3">.</span><span class="s1">__get__</span><span class="s3">(</span><span class="s1">obj</span><span class="s3">, </span><span class="s1">obj_type</span><span class="s3">)</span>
+        <span class="s2">except </span><span class="s1">AttributeError</span><span class="s3">:</span>
+            <span class="s5"># not a descriptor, e.g. a partial object</span>
+            <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">wrapped  </span><span class="s5"># type: ignore[return-value]</span>
+
+    <span class="s2">def </span><span class="s1">__set_name__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">instance</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">wrapped</span><span class="s3">, </span><span class="s4">'__set_name__'</span><span class="s3">):</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">wrapped</span><span class="s3">.</span><span class="s1">__set_name__</span><span class="s3">(</span><span class="s1">instance</span><span class="s3">, </span><span class="s1">name</span><span class="s3">)  </span><span class="s5"># pyright: ignore[reportFunctionMemberAccess]</span>
+
+    <span class="s2">def </span><span class="s1">__getattr__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, /) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+        <span class="s0">&quot;&quot;&quot;Forward checks for __isabstractmethod__ and such.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">wrapped</span><span class="s3">, </span><span class="s1">name</span><span class="s3">)</span>
+
+
+<span class="s1">DecoratorInfoType </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s4">'DecoratorInfoType'</span><span class="s3">, </span><span class="s1">bound</span><span class="s3">=</span><span class="s1">DecoratorInfo</span><span class="s3">)</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">slots_true</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">Decorator</span><span class="s3">(</span><span class="s1">Generic</span><span class="s3">[</span><span class="s1">DecoratorInfoType</span><span class="s3">]):</span>
+    <span class="s0">&quot;&quot;&quot;A generic container class to join together the decorator metadata 
+    (metadata from decorator itself, which we have when the 
+    decorator is called but not when we are building the core-schema) 
+    and the bound function (which we have after the class itself is created). 
+ 
+    Attributes: 
+        cls_ref: The class ref. 
+        cls_var_name: The decorated function name. 
+        func: The decorated function. 
+        shim: A wrapper function to wrap V1 style function. 
+        info: The decorator info. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">cls_ref</span><span class="s3">: </span><span class="s1">str</span>
+    <span class="s1">cls_var_name</span><span class="s3">: </span><span class="s1">str</span>
+    <span class="s1">func</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[..., </span><span class="s1">Any</span><span class="s3">]</span>
+    <span class="s1">shim</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">Any</span><span class="s3">], </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None</span>
+    <span class="s1">info</span><span class="s3">: </span><span class="s1">DecoratorInfoType</span>
+
+    <span class="s3">@</span><span class="s1">staticmethod</span>
+    <span class="s2">def </span><span class="s1">build</span><span class="s3">(</span>
+        <span class="s1">cls_</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+        <span class="s3">*,</span>
+        <span class="s1">cls_var_name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">,</span>
+        <span class="s1">shim</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">Any</span><span class="s3">], </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">info</span><span class="s3">: </span><span class="s1">DecoratorInfoType</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; Decorator</span><span class="s3">[</span><span class="s1">DecoratorInfoType</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Build a new decorator. 
+ 
+        Args: 
+            cls_: The class. 
+            cls_var_name: The decorated function name. 
+            shim: A wrapper function to wrap V1 style function. 
+            info: The decorator info. 
+ 
+        Returns: 
+            The new decorator instance. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">func </span><span class="s3">= </span><span class="s1">get_attribute_from_bases</span><span class="s3">(</span><span class="s1">cls_</span><span class="s3">, </span><span class="s1">cls_var_name</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">shim </span><span class="s2">is not None</span><span class="s3">:</span>
+            <span class="s1">func </span><span class="s3">= </span><span class="s1">shim</span><span class="s3">(</span><span class="s1">func</span><span class="s3">)</span>
+        <span class="s1">func </span><span class="s3">= </span><span class="s1">unwrap_wrapped_function</span><span class="s3">(</span><span class="s1">func</span><span class="s3">, </span><span class="s1">unwrap_partial</span><span class="s3">=</span><span class="s2">False</span><span class="s3">)</span>
+        <span class="s2">if not </span><span class="s1">callable</span><span class="s3">(</span><span class="s1">func</span><span class="s3">):</span>
+            <span class="s5"># This branch will get hit for classmethod properties</span>
+            <span class="s1">attribute </span><span class="s3">= </span><span class="s1">get_attribute_from_base_dicts</span><span class="s3">(</span><span class="s1">cls_</span><span class="s3">, </span><span class="s1">cls_var_name</span><span class="s3">)  </span><span class="s5"># prevents the binding call to `__get__`</span>
+            <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">attribute</span><span class="s3">, </span><span class="s1">PydanticDescriptorProxy</span><span class="s3">):</span>
+                <span class="s1">func </span><span class="s3">= </span><span class="s1">unwrap_wrapped_function</span><span class="s3">(</span><span class="s1">attribute</span><span class="s3">.</span><span class="s1">wrapped</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">Decorator</span><span class="s3">(</span>
+            <span class="s1">cls_ref</span><span class="s3">=</span><span class="s1">get_type_ref</span><span class="s3">(</span><span class="s1">cls_</span><span class="s3">),</span>
+            <span class="s1">cls_var_name</span><span class="s3">=</span><span class="s1">cls_var_name</span><span class="s3">,</span>
+            <span class="s1">func</span><span class="s3">=</span><span class="s1">func</span><span class="s3">,</span>
+            <span class="s1">shim</span><span class="s3">=</span><span class="s1">shim</span><span class="s3">,</span>
+            <span class="s1">info</span><span class="s3">=</span><span class="s1">info</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">bind_to_cls</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Decorator</span><span class="s3">[</span><span class="s1">DecoratorInfoType</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Bind the decorator to a class. 
+ 
+        Args: 
+            cls: the class. 
+ 
+        Returns: 
+            The new decorator instance. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">build</span><span class="s3">(</span>
+            <span class="s1">cls</span><span class="s3">,</span>
+            <span class="s1">cls_var_name</span><span class="s3">=</span><span class="s1">self</span><span class="s3">.</span><span class="s1">cls_var_name</span><span class="s3">,</span>
+            <span class="s1">shim</span><span class="s3">=</span><span class="s1">self</span><span class="s3">.</span><span class="s1">shim</span><span class="s3">,</span>
+            <span class="s1">info</span><span class="s3">=</span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">get_bases</span><span class="s3">(</span><span class="s1">tp</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">], ...]:</span>
+    <span class="s0">&quot;&quot;&quot;Get the base classes of a class or typeddict. 
+ 
+    Args: 
+        tp: The type or class to get the bases. 
+ 
+    Returns: 
+        The base classes. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">is_typeddict</span><span class="s3">(</span><span class="s1">tp</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">tp</span><span class="s3">.</span><span class="s1">__orig_bases__  </span><span class="s5"># type: ignore</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">tp</span><span class="s3">.</span><span class="s1">__bases__</span>
+    <span class="s2">except </span><span class="s1">AttributeError</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s3">()</span>
+
+
+<span class="s2">def </span><span class="s1">mro</span><span class="s3">(</span><span class="s1">tp</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">], ...]:</span>
+    <span class="s0">&quot;&quot;&quot;Calculate the Method Resolution Order of bases using the C3 algorithm. 
+ 
+    See https://www.python.org/download/releases/2.3/mro/ 
+    &quot;&quot;&quot;</span>
+    <span class="s5"># try to use the existing mro, for performance mainly</span>
+    <span class="s5"># but also because it helps verify the implementation below</span>
+    <span class="s2">if not </span><span class="s1">is_typeddict</span><span class="s3">(</span><span class="s1">tp</span><span class="s3">):</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">tp</span><span class="s3">.</span><span class="s1">__mro__</span>
+        <span class="s2">except </span><span class="s1">AttributeError</span><span class="s3">:</span>
+            <span class="s5"># GenericAlias and some other cases</span>
+            <span class="s2">pass</span>
+
+    <span class="s1">bases </span><span class="s3">= </span><span class="s1">get_bases</span><span class="s3">(</span><span class="s1">tp</span><span class="s3">)</span>
+    <span class="s2">return </span><span class="s3">(</span><span class="s1">tp</span><span class="s3">,) + </span><span class="s1">mro_for_bases</span><span class="s3">(</span><span class="s1">bases</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">mro_for_bases</span><span class="s3">(</span><span class="s1">bases</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">], ...]) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">], ...]:</span>
+    <span class="s2">def </span><span class="s1">merge_seqs</span><span class="s3">(</span><span class="s1">seqs</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">deque</span><span class="s3">[</span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]]]) </span><span class="s1">-&gt; Iterable</span><span class="s3">[</span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]]:</span>
+        <span class="s2">while True</span><span class="s3">:</span>
+            <span class="s1">non_empty </span><span class="s3">= [</span><span class="s1">seq </span><span class="s2">for </span><span class="s1">seq </span><span class="s2">in </span><span class="s1">seqs </span><span class="s2">if </span><span class="s1">seq</span><span class="s3">]</span>
+            <span class="s2">if not </span><span class="s1">non_empty</span><span class="s3">:</span>
+                <span class="s5"># Nothing left to process, we're done.</span>
+                <span class="s2">return</span>
+            <span class="s1">candidate</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+            <span class="s2">for </span><span class="s1">seq </span><span class="s2">in </span><span class="s1">non_empty</span><span class="s3">:  </span><span class="s5"># Find merge candidates among seq heads.</span>
+                <span class="s1">candidate </span><span class="s3">= </span><span class="s1">seq</span><span class="s3">[</span><span class="s6">0</span><span class="s3">]</span>
+                <span class="s1">not_head </span><span class="s3">= [</span><span class="s1">s </span><span class="s2">for </span><span class="s1">s </span><span class="s2">in </span><span class="s1">non_empty </span><span class="s2">if </span><span class="s1">candidate </span><span class="s2">in </span><span class="s1">islice</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">1</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)]</span>
+                <span class="s2">if </span><span class="s1">not_head</span><span class="s3">:</span>
+                    <span class="s5"># Reject the candidate.</span>
+                    <span class="s1">candidate </span><span class="s3">= </span><span class="s2">None</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s2">break</span>
+            <span class="s2">if not </span><span class="s1">candidate</span><span class="s3">:</span>
+                <span class="s2">raise </span><span class="s1">TypeError</span><span class="s3">(</span><span class="s4">'Inconsistent hierarchy, no C3 MRO is possible'</span><span class="s3">)</span>
+            <span class="s2">yield </span><span class="s1">candidate</span>
+            <span class="s2">for </span><span class="s1">seq </span><span class="s2">in </span><span class="s1">non_empty</span><span class="s3">:</span>
+                <span class="s5"># Remove candidate.</span>
+                <span class="s2">if </span><span class="s1">seq</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] == </span><span class="s1">candidate</span><span class="s3">:</span>
+                    <span class="s1">seq</span><span class="s3">.</span><span class="s1">popleft</span><span class="s3">()</span>
+
+    <span class="s1">seqs </span><span class="s3">= [</span><span class="s1">deque</span><span class="s3">(</span><span class="s1">mro</span><span class="s3">(</span><span class="s1">base</span><span class="s3">)) </span><span class="s2">for </span><span class="s1">base </span><span class="s2">in </span><span class="s1">bases</span><span class="s3">] + [</span><span class="s1">deque</span><span class="s3">(</span><span class="s1">bases</span><span class="s3">)]</span>
+    <span class="s2">return </span><span class="s1">tuple</span><span class="s3">(</span><span class="s1">merge_seqs</span><span class="s3">(</span><span class="s1">seqs</span><span class="s3">))</span>
+
+
+<span class="s1">_sentinel </span><span class="s3">= </span><span class="s1">object</span><span class="s3">()</span>
+
+
+<span class="s2">def </span><span class="s1">get_attribute_from_bases</span><span class="s3">(</span><span class="s1">tp</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">] | </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">], ...], </span><span class="s1">name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Get the attribute from the next class in the MRO that has it, 
+    aiming to simulate calling the method on the actual class. 
+ 
+    The reason for iterating over the mro instead of just getting 
+    the attribute (which would do that for us) is to support TypedDict, 
+    which lacks a real __mro__, but can have a virtual one constructed 
+    from its bases (as done here). 
+ 
+    Args: 
+        tp: The type or class to search for the attribute. If a tuple, this is treated as a set of base classes. 
+        name: The name of the attribute to retrieve. 
+ 
+    Returns: 
+        Any: The attribute value, if found. 
+ 
+    Raises: 
+        AttributeError: If the attribute is not found in any class in the MRO. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">tp</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">):</span>
+        <span class="s2">for </span><span class="s1">base </span><span class="s2">in </span><span class="s1">mro_for_bases</span><span class="s3">(</span><span class="s1">tp</span><span class="s3">):</span>
+            <span class="s1">attribute </span><span class="s3">= </span><span class="s1">base</span><span class="s3">.</span><span class="s1">__dict__</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">name</span><span class="s3">, </span><span class="s1">_sentinel</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">attribute </span><span class="s2">is not </span><span class="s1">_sentinel</span><span class="s3">:</span>
+                <span class="s1">attribute_get </span><span class="s3">= </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">attribute</span><span class="s3">, </span><span class="s4">'__get__'</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">attribute_get </span><span class="s2">is not None</span><span class="s3">:</span>
+                    <span class="s2">return </span><span class="s1">attribute_get</span><span class="s3">(</span><span class="s2">None</span><span class="s3">, </span><span class="s1">tp</span><span class="s3">)</span>
+                <span class="s2">return </span><span class="s1">attribute</span>
+        <span class="s2">raise </span><span class="s1">AttributeError</span><span class="s3">(</span><span class="s4">f'</span><span class="s2">{</span><span class="s1">name</span><span class="s2">} </span><span class="s4">not found in </span><span class="s2">{</span><span class="s1">tp</span><span class="s2">}</span><span class="s4">'</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">tp</span><span class="s3">, </span><span class="s1">name</span><span class="s3">)</span>
+        <span class="s2">except </span><span class="s1">AttributeError</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">get_attribute_from_bases</span><span class="s3">(</span><span class="s1">mro</span><span class="s3">(</span><span class="s1">tp</span><span class="s3">), </span><span class="s1">name</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">get_attribute_from_base_dicts</span><span class="s3">(</span><span class="s1">tp</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">], </span><span class="s1">name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Get an attribute out of the `__dict__` following the MRO. 
+    This prevents the call to `__get__` on the descriptor, and allows 
+    us to get the original function for classmethod properties. 
+ 
+    Args: 
+        tp: The type or class to search for the attribute. 
+        name: The name of the attribute to retrieve. 
+ 
+    Returns: 
+        Any: The attribute value, if found. 
+ 
+    Raises: 
+        KeyError: If the attribute is not found in any class's `__dict__` in the MRO. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">for </span><span class="s1">base </span><span class="s2">in </span><span class="s1">reversed</span><span class="s3">(</span><span class="s1">mro</span><span class="s3">(</span><span class="s1">tp</span><span class="s3">)):</span>
+        <span class="s2">if </span><span class="s1">name </span><span class="s2">in </span><span class="s1">base</span><span class="s3">.</span><span class="s1">__dict__</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">base</span><span class="s3">.</span><span class="s1">__dict__</span><span class="s3">[</span><span class="s1">name</span><span class="s3">]</span>
+    <span class="s2">return </span><span class="s1">tp</span><span class="s3">.</span><span class="s1">__dict__</span><span class="s3">[</span><span class="s1">name</span><span class="s3">]  </span><span class="s5"># raise the error</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">slots_true</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">DecoratorInfos</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Mapping of name in the class namespace to decorator info. 
+ 
+    note that the name in the class namespace is the function or attribute name 
+    not the field name! 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">validators</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Decorator</span><span class="s3">[</span><span class="s1">ValidatorDecoratorInfo</span><span class="s3">]] = </span><span class="s1">field</span><span class="s3">(</span><span class="s1">default_factory</span><span class="s3">=</span><span class="s1">dict</span><span class="s3">)</span>
+    <span class="s1">field_validators</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Decorator</span><span class="s3">[</span><span class="s1">FieldValidatorDecoratorInfo</span><span class="s3">]] = </span><span class="s1">field</span><span class="s3">(</span><span class="s1">default_factory</span><span class="s3">=</span><span class="s1">dict</span><span class="s3">)</span>
+    <span class="s1">root_validators</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Decorator</span><span class="s3">[</span><span class="s1">RootValidatorDecoratorInfo</span><span class="s3">]] = </span><span class="s1">field</span><span class="s3">(</span><span class="s1">default_factory</span><span class="s3">=</span><span class="s1">dict</span><span class="s3">)</span>
+    <span class="s1">field_serializers</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Decorator</span><span class="s3">[</span><span class="s1">FieldSerializerDecoratorInfo</span><span class="s3">]] = </span><span class="s1">field</span><span class="s3">(</span><span class="s1">default_factory</span><span class="s3">=</span><span class="s1">dict</span><span class="s3">)</span>
+    <span class="s1">model_serializers</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Decorator</span><span class="s3">[</span><span class="s1">ModelSerializerDecoratorInfo</span><span class="s3">]] = </span><span class="s1">field</span><span class="s3">(</span><span class="s1">default_factory</span><span class="s3">=</span><span class="s1">dict</span><span class="s3">)</span>
+    <span class="s1">model_validators</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Decorator</span><span class="s3">[</span><span class="s1">ModelValidatorDecoratorInfo</span><span class="s3">]] = </span><span class="s1">field</span><span class="s3">(</span><span class="s1">default_factory</span><span class="s3">=</span><span class="s1">dict</span><span class="s3">)</span>
+    <span class="s1">computed_fields</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Decorator</span><span class="s3">[</span><span class="s1">ComputedFieldInfo</span><span class="s3">]] = </span><span class="s1">field</span><span class="s3">(</span><span class="s1">default_factory</span><span class="s3">=</span><span class="s1">dict</span><span class="s3">)</span>
+
+    <span class="s3">@</span><span class="s1">staticmethod</span>
+    <span class="s2">def </span><span class="s1">build</span><span class="s3">(</span><span class="s1">model_dc</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]) </span><span class="s1">-&gt; DecoratorInfos</span><span class="s3">:  </span><span class="s5"># noqa: C901 (ignore complexity)</span>
+        <span class="s0">&quot;&quot;&quot;We want to collect all DecFunc instances that exist as 
+        attributes in the namespace of the class (a BaseModel or dataclass) 
+        that called us 
+        But we want to collect these in the order of the bases 
+        So instead of getting them all from the leaf class (the class that called us), 
+        we traverse the bases from root (the oldest ancestor class) to leaf 
+        and collect all of the instances as we go, taking care to replace 
+        any duplicate ones with the last one we see to mimic how function overriding 
+        works with inheritance. 
+        If we do replace any functions we put the replacement into the position 
+        the replaced function was in; that is, we maintain the order. 
+        &quot;&quot;&quot;</span>
+        <span class="s5"># reminder: dicts are ordered and replacement does not alter the order</span>
+        <span class="s1">res </span><span class="s3">= </span><span class="s1">DecoratorInfos</span><span class="s3">()</span>
+        <span class="s2">for </span><span class="s1">base </span><span class="s2">in </span><span class="s1">reversed</span><span class="s3">(</span><span class="s1">mro</span><span class="s3">(</span><span class="s1">model_dc</span><span class="s3">)[</span><span class="s6">1</span><span class="s3">:]):</span>
+            <span class="s1">existing</span><span class="s3">: </span><span class="s1">DecoratorInfos </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s1">base</span><span class="s3">.</span><span class="s1">__dict__</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'__pydantic_decorators__'</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">existing </span><span class="s2">is None</span><span class="s3">:</span>
+                <span class="s1">existing </span><span class="s3">= </span><span class="s1">DecoratorInfos</span><span class="s3">.</span><span class="s1">build</span><span class="s3">(</span><span class="s1">base</span><span class="s3">)</span>
+            <span class="s1">res</span><span class="s3">.</span><span class="s1">validators</span><span class="s3">.</span><span class="s1">update</span><span class="s3">({</span><span class="s1">k</span><span class="s3">: </span><span class="s1">v</span><span class="s3">.</span><span class="s1">bind_to_cls</span><span class="s3">(</span><span class="s1">model_dc</span><span class="s3">) </span><span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">existing</span><span class="s3">.</span><span class="s1">validators</span><span class="s3">.</span><span class="s1">items</span><span class="s3">()})</span>
+            <span class="s1">res</span><span class="s3">.</span><span class="s1">field_validators</span><span class="s3">.</span><span class="s1">update</span><span class="s3">({</span><span class="s1">k</span><span class="s3">: </span><span class="s1">v</span><span class="s3">.</span><span class="s1">bind_to_cls</span><span class="s3">(</span><span class="s1">model_dc</span><span class="s3">) </span><span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">existing</span><span class="s3">.</span><span class="s1">field_validators</span><span class="s3">.</span><span class="s1">items</span><span class="s3">()})</span>
+            <span class="s1">res</span><span class="s3">.</span><span class="s1">root_validators</span><span class="s3">.</span><span class="s1">update</span><span class="s3">({</span><span class="s1">k</span><span class="s3">: </span><span class="s1">v</span><span class="s3">.</span><span class="s1">bind_to_cls</span><span class="s3">(</span><span class="s1">model_dc</span><span class="s3">) </span><span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">existing</span><span class="s3">.</span><span class="s1">root_validators</span><span class="s3">.</span><span class="s1">items</span><span class="s3">()})</span>
+            <span class="s1">res</span><span class="s3">.</span><span class="s1">field_serializers</span><span class="s3">.</span><span class="s1">update</span><span class="s3">({</span><span class="s1">k</span><span class="s3">: </span><span class="s1">v</span><span class="s3">.</span><span class="s1">bind_to_cls</span><span class="s3">(</span><span class="s1">model_dc</span><span class="s3">) </span><span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">existing</span><span class="s3">.</span><span class="s1">field_serializers</span><span class="s3">.</span><span class="s1">items</span><span class="s3">()})</span>
+            <span class="s1">res</span><span class="s3">.</span><span class="s1">model_serializers</span><span class="s3">.</span><span class="s1">update</span><span class="s3">({</span><span class="s1">k</span><span class="s3">: </span><span class="s1">v</span><span class="s3">.</span><span class="s1">bind_to_cls</span><span class="s3">(</span><span class="s1">model_dc</span><span class="s3">) </span><span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">existing</span><span class="s3">.</span><span class="s1">model_serializers</span><span class="s3">.</span><span class="s1">items</span><span class="s3">()})</span>
+            <span class="s1">res</span><span class="s3">.</span><span class="s1">model_validators</span><span class="s3">.</span><span class="s1">update</span><span class="s3">({</span><span class="s1">k</span><span class="s3">: </span><span class="s1">v</span><span class="s3">.</span><span class="s1">bind_to_cls</span><span class="s3">(</span><span class="s1">model_dc</span><span class="s3">) </span><span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">existing</span><span class="s3">.</span><span class="s1">model_validators</span><span class="s3">.</span><span class="s1">items</span><span class="s3">()})</span>
+            <span class="s1">res</span><span class="s3">.</span><span class="s1">computed_fields</span><span class="s3">.</span><span class="s1">update</span><span class="s3">({</span><span class="s1">k</span><span class="s3">: </span><span class="s1">v</span><span class="s3">.</span><span class="s1">bind_to_cls</span><span class="s3">(</span><span class="s1">model_dc</span><span class="s3">) </span><span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">existing</span><span class="s3">.</span><span class="s1">computed_fields</span><span class="s3">.</span><span class="s1">items</span><span class="s3">()})</span>
+
+        <span class="s1">to_replace</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]] = []</span>
+
+        <span class="s2">for </span><span class="s1">var_name</span><span class="s3">, </span><span class="s1">var_value </span><span class="s2">in </span><span class="s1">vars</span><span class="s3">(</span><span class="s1">model_dc</span><span class="s3">).</span><span class="s1">items</span><span class="s3">():</span>
+            <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">var_value</span><span class="s3">, </span><span class="s1">PydanticDescriptorProxy</span><span class="s3">):</span>
+                <span class="s1">info </span><span class="s3">= </span><span class="s1">var_value</span><span class="s3">.</span><span class="s1">decorator_info</span>
+                <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">info</span><span class="s3">, </span><span class="s1">ValidatorDecoratorInfo</span><span class="s3">):</span>
+                    <span class="s1">res</span><span class="s3">.</span><span class="s1">validators</span><span class="s3">[</span><span class="s1">var_name</span><span class="s3">] = </span><span class="s1">Decorator</span><span class="s3">.</span><span class="s1">build</span><span class="s3">(</span>
+                        <span class="s1">model_dc</span><span class="s3">, </span><span class="s1">cls_var_name</span><span class="s3">=</span><span class="s1">var_name</span><span class="s3">, </span><span class="s1">shim</span><span class="s3">=</span><span class="s1">var_value</span><span class="s3">.</span><span class="s1">shim</span><span class="s3">, </span><span class="s1">info</span><span class="s3">=</span><span class="s1">info</span>
+                    <span class="s3">)</span>
+                <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">info</span><span class="s3">, </span><span class="s1">FieldValidatorDecoratorInfo</span><span class="s3">):</span>
+                    <span class="s1">res</span><span class="s3">.</span><span class="s1">field_validators</span><span class="s3">[</span><span class="s1">var_name</span><span class="s3">] = </span><span class="s1">Decorator</span><span class="s3">.</span><span class="s1">build</span><span class="s3">(</span>
+                        <span class="s1">model_dc</span><span class="s3">, </span><span class="s1">cls_var_name</span><span class="s3">=</span><span class="s1">var_name</span><span class="s3">, </span><span class="s1">shim</span><span class="s3">=</span><span class="s1">var_value</span><span class="s3">.</span><span class="s1">shim</span><span class="s3">, </span><span class="s1">info</span><span class="s3">=</span><span class="s1">info</span>
+                    <span class="s3">)</span>
+                <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">info</span><span class="s3">, </span><span class="s1">RootValidatorDecoratorInfo</span><span class="s3">):</span>
+                    <span class="s1">res</span><span class="s3">.</span><span class="s1">root_validators</span><span class="s3">[</span><span class="s1">var_name</span><span class="s3">] = </span><span class="s1">Decorator</span><span class="s3">.</span><span class="s1">build</span><span class="s3">(</span>
+                        <span class="s1">model_dc</span><span class="s3">, </span><span class="s1">cls_var_name</span><span class="s3">=</span><span class="s1">var_name</span><span class="s3">, </span><span class="s1">shim</span><span class="s3">=</span><span class="s1">var_value</span><span class="s3">.</span><span class="s1">shim</span><span class="s3">, </span><span class="s1">info</span><span class="s3">=</span><span class="s1">info</span>
+                    <span class="s3">)</span>
+                <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">info</span><span class="s3">, </span><span class="s1">FieldSerializerDecoratorInfo</span><span class="s3">):</span>
+                    <span class="s5"># check whether a serializer function is already registered for fields</span>
+                    <span class="s2">for </span><span class="s1">field_serializer_decorator </span><span class="s2">in </span><span class="s1">res</span><span class="s3">.</span><span class="s1">field_serializers</span><span class="s3">.</span><span class="s1">values</span><span class="s3">():</span>
+                        <span class="s5"># check that each field has at most one serializer function.</span>
+                        <span class="s5"># serializer functions for the same field in subclasses are allowed,</span>
+                        <span class="s5"># and are treated as overrides</span>
+                        <span class="s2">if </span><span class="s1">field_serializer_decorator</span><span class="s3">.</span><span class="s1">cls_var_name </span><span class="s3">== </span><span class="s1">var_name</span><span class="s3">:</span>
+                            <span class="s2">continue</span>
+                        <span class="s2">for </span><span class="s1">f </span><span class="s2">in </span><span class="s1">info</span><span class="s3">.</span><span class="s1">fields</span><span class="s3">:</span>
+                            <span class="s2">if </span><span class="s1">f </span><span class="s2">in </span><span class="s1">field_serializer_decorator</span><span class="s3">.</span><span class="s1">info</span><span class="s3">.</span><span class="s1">fields</span><span class="s3">:</span>
+                                <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+                                    <span class="s4">'Multiple field serializer functions were defined '</span>
+                                    <span class="s4">f'for field </span><span class="s2">{</span><span class="s1">f</span><span class="s2">!r}</span><span class="s4">, this is not allowed.'</span><span class="s3">,</span>
+                                    <span class="s1">code</span><span class="s3">=</span><span class="s4">'multiple-field-serializers'</span><span class="s3">,</span>
+                                <span class="s3">)</span>
+                    <span class="s1">res</span><span class="s3">.</span><span class="s1">field_serializers</span><span class="s3">[</span><span class="s1">var_name</span><span class="s3">] = </span><span class="s1">Decorator</span><span class="s3">.</span><span class="s1">build</span><span class="s3">(</span>
+                        <span class="s1">model_dc</span><span class="s3">, </span><span class="s1">cls_var_name</span><span class="s3">=</span><span class="s1">var_name</span><span class="s3">, </span><span class="s1">shim</span><span class="s3">=</span><span class="s1">var_value</span><span class="s3">.</span><span class="s1">shim</span><span class="s3">, </span><span class="s1">info</span><span class="s3">=</span><span class="s1">info</span>
+                    <span class="s3">)</span>
+                <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">info</span><span class="s3">, </span><span class="s1">ModelValidatorDecoratorInfo</span><span class="s3">):</span>
+                    <span class="s1">res</span><span class="s3">.</span><span class="s1">model_validators</span><span class="s3">[</span><span class="s1">var_name</span><span class="s3">] = </span><span class="s1">Decorator</span><span class="s3">.</span><span class="s1">build</span><span class="s3">(</span>
+                        <span class="s1">model_dc</span><span class="s3">, </span><span class="s1">cls_var_name</span><span class="s3">=</span><span class="s1">var_name</span><span class="s3">, </span><span class="s1">shim</span><span class="s3">=</span><span class="s1">var_value</span><span class="s3">.</span><span class="s1">shim</span><span class="s3">, </span><span class="s1">info</span><span class="s3">=</span><span class="s1">info</span>
+                    <span class="s3">)</span>
+                <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">info</span><span class="s3">, </span><span class="s1">ModelSerializerDecoratorInfo</span><span class="s3">):</span>
+                    <span class="s1">res</span><span class="s3">.</span><span class="s1">model_serializers</span><span class="s3">[</span><span class="s1">var_name</span><span class="s3">] = </span><span class="s1">Decorator</span><span class="s3">.</span><span class="s1">build</span><span class="s3">(</span>
+                        <span class="s1">model_dc</span><span class="s3">, </span><span class="s1">cls_var_name</span><span class="s3">=</span><span class="s1">var_name</span><span class="s3">, </span><span class="s1">shim</span><span class="s3">=</span><span class="s1">var_value</span><span class="s3">.</span><span class="s1">shim</span><span class="s3">, </span><span class="s1">info</span><span class="s3">=</span><span class="s1">info</span>
+                    <span class="s3">)</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s2">from </span><span class="s3">..</span><span class="s1">fields </span><span class="s2">import </span><span class="s1">ComputedFieldInfo</span>
+
+                    <span class="s1">isinstance</span><span class="s3">(</span><span class="s1">var_value</span><span class="s3">, </span><span class="s1">ComputedFieldInfo</span><span class="s3">)</span>
+                    <span class="s1">res</span><span class="s3">.</span><span class="s1">computed_fields</span><span class="s3">[</span><span class="s1">var_name</span><span class="s3">] = </span><span class="s1">Decorator</span><span class="s3">.</span><span class="s1">build</span><span class="s3">(</span>
+                        <span class="s1">model_dc</span><span class="s3">, </span><span class="s1">cls_var_name</span><span class="s3">=</span><span class="s1">var_name</span><span class="s3">, </span><span class="s1">shim</span><span class="s3">=</span><span class="s2">None</span><span class="s3">, </span><span class="s1">info</span><span class="s3">=</span><span class="s1">info</span>
+                    <span class="s3">)</span>
+                <span class="s1">to_replace</span><span class="s3">.</span><span class="s1">append</span><span class="s3">((</span><span class="s1">var_name</span><span class="s3">, </span><span class="s1">var_value</span><span class="s3">.</span><span class="s1">wrapped</span><span class="s3">))</span>
+        <span class="s2">if </span><span class="s1">to_replace</span><span class="s3">:</span>
+            <span class="s5"># If we can save `__pydantic_decorators__` on the class we'll be able to check for it above</span>
+            <span class="s5"># so then we don't need to re-process the type, which means we can discard our descriptor wrappers</span>
+            <span class="s5"># and replace them with the thing they are wrapping (see the other setattr call below)</span>
+            <span class="s5"># which allows validator class methods to also function as regular class methods</span>
+            <span class="s1">model_dc</span><span class="s3">.</span><span class="s1">__pydantic_decorators__ </span><span class="s3">= </span><span class="s1">res</span>
+            <span class="s2">for </span><span class="s1">name</span><span class="s3">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">to_replace</span><span class="s3">:</span>
+                <span class="s1">setattr</span><span class="s3">(</span><span class="s1">model_dc</span><span class="s3">, </span><span class="s1">name</span><span class="s3">, </span><span class="s1">value</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">res</span>
+
+
+<span class="s2">def </span><span class="s1">inspect_validator</span><span class="s3">(</span><span class="s1">validator</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[..., </span><span class="s1">Any</span><span class="s3">], </span><span class="s1">mode</span><span class="s3">: </span><span class="s1">FieldValidatorModes</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Look at a field or model validator function and determine whether it takes an info argument. 
+ 
+    An error is raised if the function has an invalid signature. 
+ 
+    Args: 
+        validator: The validator function to inspect. 
+        mode: The proposed validator mode. 
+ 
+    Returns: 
+        Whether the validator takes an info argument. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">sig </span><span class="s3">= </span><span class="s1">signature</span><span class="s3">(</span><span class="s1">validator</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s3">(</span><span class="s1">ValueError</span><span class="s3">, </span><span class="s1">TypeError</span><span class="s3">):</span>
+        <span class="s5"># `inspect.signature` might not be able to infer a signature, e.g. with C objects.</span>
+        <span class="s5"># In this case, we assume no info argument is present:</span>
+        <span class="s2">return False</span>
+    <span class="s1">n_positional </span><span class="s3">= </span><span class="s1">count_positional_required_params</span><span class="s3">(</span><span class="s1">sig</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">mode </span><span class="s3">== </span><span class="s4">'wrap'</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">n_positional </span><span class="s3">== </span><span class="s6">3</span><span class="s3">:</span>
+            <span class="s2">return True</span>
+        <span class="s2">elif </span><span class="s1">n_positional </span><span class="s3">== </span><span class="s6">2</span><span class="s3">:</span>
+            <span class="s2">return False</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">assert </span><span class="s1">mode </span><span class="s2">in </span><span class="s3">{</span><span class="s4">'before'</span><span class="s3">, </span><span class="s4">'after'</span><span class="s3">, </span><span class="s4">'plain'</span><span class="s3">}, </span><span class="s4">f&quot;invalid mode: </span><span class="s2">{</span><span class="s1">mode</span><span class="s2">!r}</span><span class="s4">, expected 'before', 'after' or 'plain&quot;</span>
+        <span class="s2">if </span><span class="s1">n_positional </span><span class="s3">== </span><span class="s6">2</span><span class="s3">:</span>
+            <span class="s2">return True</span>
+        <span class="s2">elif </span><span class="s1">n_positional </span><span class="s3">== </span><span class="s6">1</span><span class="s3">:</span>
+            <span class="s2">return False</span>
+
+    <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+        <span class="s4">f'Unrecognized field_validator function signature for </span><span class="s2">{</span><span class="s1">validator</span><span class="s2">} </span><span class="s4">with `mode=</span><span class="s2">{</span><span class="s1">mode</span><span class="s2">}</span><span class="s4">`:</span><span class="s2">{</span><span class="s1">sig</span><span class="s2">}</span><span class="s4">'</span><span class="s3">,</span>
+        <span class="s1">code</span><span class="s3">=</span><span class="s4">'validator-signature'</span><span class="s3">,</span>
+    <span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">inspect_field_serializer</span><span class="s3">(</span><span class="s1">serializer</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[..., </span><span class="s1">Any</span><span class="s3">], </span><span class="s1">mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'plain'</span><span class="s3">, </span><span class="s4">'wrap'</span><span class="s3">]) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">bool</span><span class="s3">, </span><span class="s1">bool</span><span class="s3">]:</span>
+    <span class="s0">&quot;&quot;&quot;Look at a field serializer function and determine if it is a field serializer, 
+    and whether it takes an info argument. 
+ 
+    An error is raised if the function has an invalid signature. 
+ 
+    Args: 
+        serializer: The serializer function to inspect. 
+        mode: The serializer mode, either 'plain' or 'wrap'. 
+ 
+    Returns: 
+        Tuple of (is_field_serializer, info_arg). 
+    &quot;&quot;&quot;</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">sig </span><span class="s3">= </span><span class="s1">signature</span><span class="s3">(</span><span class="s1">serializer</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s3">(</span><span class="s1">ValueError</span><span class="s3">, </span><span class="s1">TypeError</span><span class="s3">):</span>
+        <span class="s5"># `inspect.signature` might not be able to infer a signature, e.g. with C objects.</span>
+        <span class="s5"># In this case, we assume no info argument is present and this is not a method:</span>
+        <span class="s2">return </span><span class="s3">(</span><span class="s2">False</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+
+    <span class="s1">first </span><span class="s3">= </span><span class="s1">next</span><span class="s3">(</span><span class="s1">iter</span><span class="s3">(</span><span class="s1">sig</span><span class="s3">.</span><span class="s1">parameters</span><span class="s3">.</span><span class="s1">values</span><span class="s3">()), </span><span class="s2">None</span><span class="s3">)</span>
+    <span class="s1">is_field_serializer </span><span class="s3">= </span><span class="s1">first </span><span class="s2">is not None and </span><span class="s1">first</span><span class="s3">.</span><span class="s1">name </span><span class="s3">== </span><span class="s4">'self'</span>
+
+    <span class="s1">n_positional </span><span class="s3">= </span><span class="s1">count_positional_required_params</span><span class="s3">(</span><span class="s1">sig</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">is_field_serializer</span><span class="s3">:</span>
+        <span class="s5"># -1 to correct for self parameter</span>
+        <span class="s1">info_arg </span><span class="s3">= </span><span class="s1">_serializer_info_arg</span><span class="s3">(</span><span class="s1">mode</span><span class="s3">, </span><span class="s1">n_positional </span><span class="s3">- </span><span class="s6">1</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">info_arg </span><span class="s3">= </span><span class="s1">_serializer_info_arg</span><span class="s3">(</span><span class="s1">mode</span><span class="s3">, </span><span class="s1">n_positional</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">info_arg </span><span class="s2">is None</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+            <span class="s4">f'Unrecognized field_serializer function signature for </span><span class="s2">{</span><span class="s1">serializer</span><span class="s2">} </span><span class="s4">with `mode=</span><span class="s2">{</span><span class="s1">mode</span><span class="s2">}</span><span class="s4">`:</span><span class="s2">{</span><span class="s1">sig</span><span class="s2">}</span><span class="s4">'</span><span class="s3">,</span>
+            <span class="s1">code</span><span class="s3">=</span><span class="s4">'field-serializer-signature'</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+    <span class="s2">return </span><span class="s1">is_field_serializer</span><span class="s3">, </span><span class="s1">info_arg</span>
+
+
+<span class="s2">def </span><span class="s1">inspect_annotated_serializer</span><span class="s3">(</span><span class="s1">serializer</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[..., </span><span class="s1">Any</span><span class="s3">], </span><span class="s1">mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'plain'</span><span class="s3">, </span><span class="s4">'wrap'</span><span class="s3">]) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Look at a serializer function used via `Annotated` and determine whether it takes an info argument. 
+ 
+    An error is raised if the function has an invalid signature. 
+ 
+    Args: 
+        serializer: The serializer function to check. 
+        mode: The serializer mode, either 'plain' or 'wrap'. 
+ 
+    Returns: 
+        info_arg 
+    &quot;&quot;&quot;</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">sig </span><span class="s3">= </span><span class="s1">signature</span><span class="s3">(</span><span class="s1">serializer</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s3">(</span><span class="s1">ValueError</span><span class="s3">, </span><span class="s1">TypeError</span><span class="s3">):</span>
+        <span class="s5"># `inspect.signature` might not be able to infer a signature, e.g. with C objects.</span>
+        <span class="s5"># In this case, we assume no info argument is present:</span>
+        <span class="s2">return False</span>
+    <span class="s1">info_arg </span><span class="s3">= </span><span class="s1">_serializer_info_arg</span><span class="s3">(</span><span class="s1">mode</span><span class="s3">, </span><span class="s1">count_positional_required_params</span><span class="s3">(</span><span class="s1">sig</span><span class="s3">))</span>
+    <span class="s2">if </span><span class="s1">info_arg </span><span class="s2">is None</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+            <span class="s4">f'Unrecognized field_serializer function signature for </span><span class="s2">{</span><span class="s1">serializer</span><span class="s2">} </span><span class="s4">with `mode=</span><span class="s2">{</span><span class="s1">mode</span><span class="s2">}</span><span class="s4">`:</span><span class="s2">{</span><span class="s1">sig</span><span class="s2">}</span><span class="s4">'</span><span class="s3">,</span>
+            <span class="s1">code</span><span class="s3">=</span><span class="s4">'field-serializer-signature'</span><span class="s3">,</span>
+        <span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">info_arg</span>
+
+
+<span class="s2">def </span><span class="s1">inspect_model_serializer</span><span class="s3">(</span><span class="s1">serializer</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[..., </span><span class="s1">Any</span><span class="s3">], </span><span class="s1">mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'plain'</span><span class="s3">, </span><span class="s4">'wrap'</span><span class="s3">]) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Look at a model serializer function and determine whether it takes an info argument. 
+ 
+    An error is raised if the function has an invalid signature. 
+ 
+    Args: 
+        serializer: The serializer function to check. 
+        mode: The serializer mode, either 'plain' or 'wrap'. 
+ 
+    Returns: 
+        `info_arg` - whether the function expects an info argument. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">serializer</span><span class="s3">, (</span><span class="s1">staticmethod</span><span class="s3">, </span><span class="s1">classmethod</span><span class="s3">)) </span><span class="s2">or not </span><span class="s1">is_instance_method_from_sig</span><span class="s3">(</span><span class="s1">serializer</span><span class="s3">):</span>
+        <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+            <span class="s4">'`@model_serializer` must be applied to instance methods'</span><span class="s3">, </span><span class="s1">code</span><span class="s3">=</span><span class="s4">'model-serializer-instance-method'</span>
+        <span class="s3">)</span>
+
+    <span class="s1">sig </span><span class="s3">= </span><span class="s1">signature</span><span class="s3">(</span><span class="s1">serializer</span><span class="s3">)</span>
+    <span class="s1">info_arg </span><span class="s3">= </span><span class="s1">_serializer_info_arg</span><span class="s3">(</span><span class="s1">mode</span><span class="s3">, </span><span class="s1">count_positional_required_params</span><span class="s3">(</span><span class="s1">sig</span><span class="s3">))</span>
+    <span class="s2">if </span><span class="s1">info_arg </span><span class="s2">is None</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+            <span class="s4">f'Unrecognized model_serializer function signature for </span><span class="s2">{</span><span class="s1">serializer</span><span class="s2">} </span><span class="s4">with `mode=</span><span class="s2">{</span><span class="s1">mode</span><span class="s2">}</span><span class="s4">`:</span><span class="s2">{</span><span class="s1">sig</span><span class="s2">}</span><span class="s4">'</span><span class="s3">,</span>
+            <span class="s1">code</span><span class="s3">=</span><span class="s4">'model-serializer-signature'</span><span class="s3">,</span>
+        <span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">info_arg</span>
+
+
+<span class="s2">def </span><span class="s1">_serializer_info_arg</span><span class="s3">(</span><span class="s1">mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'plain'</span><span class="s3">, </span><span class="s4">'wrap'</span><span class="s3">], </span><span class="s1">n_positional</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; bool </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s2">if </span><span class="s1">mode </span><span class="s3">== </span><span class="s4">'plain'</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">n_positional </span><span class="s3">== </span><span class="s6">1</span><span class="s3">:</span>
+            <span class="s5"># (input_value: Any, /) -&gt; Any</span>
+            <span class="s2">return False</span>
+        <span class="s2">elif </span><span class="s1">n_positional </span><span class="s3">== </span><span class="s6">2</span><span class="s3">:</span>
+            <span class="s5"># (model: Any, input_value: Any, /) -&gt; Any</span>
+            <span class="s2">return True</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">assert </span><span class="s1">mode </span><span class="s3">== </span><span class="s4">'wrap'</span><span class="s3">, </span><span class="s4">f&quot;invalid mode: </span><span class="s2">{</span><span class="s1">mode</span><span class="s2">!r}</span><span class="s4">, expected 'plain' or 'wrap'&quot;</span>
+        <span class="s2">if </span><span class="s1">n_positional </span><span class="s3">== </span><span class="s6">2</span><span class="s3">:</span>
+            <span class="s5"># (input_value: Any, serializer: SerializerFunctionWrapHandler, /) -&gt; Any</span>
+            <span class="s2">return False</span>
+        <span class="s2">elif </span><span class="s1">n_positional </span><span class="s3">== </span><span class="s6">3</span><span class="s3">:</span>
+            <span class="s5"># (input_value: Any, serializer: SerializerFunctionWrapHandler, info: SerializationInfo, /) -&gt; Any</span>
+            <span class="s2">return True</span>
+
+    <span class="s2">return None</span>
+
+
+<span class="s1">AnyDecoratorCallable</span><span class="s3">: </span><span class="s1">TypeAlias </span><span class="s3">= (</span>
+    <span class="s4">'Union[classmethod[Any, Any, Any], staticmethod[Any, Any], partialmethod[Any], Callable[..., Any]]'</span>
+<span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">is_instance_method_from_sig</span><span class="s3">(</span><span class="s1">function</span><span class="s3">: </span><span class="s1">AnyDecoratorCallable</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Whether the function is an instance method. 
+ 
+    It will consider a function as instance method if the first parameter of 
+    function is `self`. 
+ 
+    Args: 
+        function: The function to check. 
+ 
+    Returns: 
+        `True` if the function is an instance method, `False` otherwise. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">sig </span><span class="s3">= </span><span class="s1">signature</span><span class="s3">(</span><span class="s1">unwrap_wrapped_function</span><span class="s3">(</span><span class="s1">function</span><span class="s3">))</span>
+    <span class="s1">first </span><span class="s3">= </span><span class="s1">next</span><span class="s3">(</span><span class="s1">iter</span><span class="s3">(</span><span class="s1">sig</span><span class="s3">.</span><span class="s1">parameters</span><span class="s3">.</span><span class="s1">values</span><span class="s3">()), </span><span class="s2">None</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">first </span><span class="s2">and </span><span class="s1">first</span><span class="s3">.</span><span class="s1">name </span><span class="s3">== </span><span class="s4">'self'</span><span class="s3">:</span>
+        <span class="s2">return True</span>
+    <span class="s2">return False</span>
+
+
+<span class="s2">def </span><span class="s1">ensure_classmethod_based_on_signature</span><span class="s3">(</span><span class="s1">function</span><span class="s3">: </span><span class="s1">AnyDecoratorCallable</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Apply the `@classmethod` decorator on the function. 
+ 
+    Args: 
+        function: The function to apply the decorator on. 
+ 
+    Return: 
+        The `@classmethod` decorator applied function. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if not </span><span class="s1">isinstance</span><span class="s3">(</span>
+        <span class="s1">unwrap_wrapped_function</span><span class="s3">(</span><span class="s1">function</span><span class="s3">, </span><span class="s1">unwrap_class_static_method</span><span class="s3">=</span><span class="s2">False</span><span class="s3">), </span><span class="s1">classmethod</span>
+    <span class="s3">) </span><span class="s2">and </span><span class="s1">_is_classmethod_from_sig</span><span class="s3">(</span><span class="s1">function</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">classmethod</span><span class="s3">(</span><span class="s1">function</span><span class="s3">)  </span><span class="s5"># type: ignore[arg-type]</span>
+    <span class="s2">return </span><span class="s1">function</span>
+
+
+<span class="s2">def </span><span class="s1">_is_classmethod_from_sig</span><span class="s3">(</span><span class="s1">function</span><span class="s3">: </span><span class="s1">AnyDecoratorCallable</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s1">sig </span><span class="s3">= </span><span class="s1">signature</span><span class="s3">(</span><span class="s1">unwrap_wrapped_function</span><span class="s3">(</span><span class="s1">function</span><span class="s3">))</span>
+    <span class="s1">first </span><span class="s3">= </span><span class="s1">next</span><span class="s3">(</span><span class="s1">iter</span><span class="s3">(</span><span class="s1">sig</span><span class="s3">.</span><span class="s1">parameters</span><span class="s3">.</span><span class="s1">values</span><span class="s3">()), </span><span class="s2">None</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">first </span><span class="s2">and </span><span class="s1">first</span><span class="s3">.</span><span class="s1">name </span><span class="s3">== </span><span class="s4">'cls'</span><span class="s3">:</span>
+        <span class="s2">return True</span>
+    <span class="s2">return False</span>
+
+
+<span class="s2">def </span><span class="s1">unwrap_wrapped_function</span><span class="s3">(</span>
+    <span class="s1">func</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+    <span class="s3">*,</span>
+    <span class="s1">unwrap_partial</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+    <span class="s1">unwrap_class_static_method</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Recursively unwraps a wrapped function until the underlying function is reached. 
+    This handles property, functools.partial, functools.partialmethod, staticmethod, and classmethod. 
+ 
+    Args: 
+        func: The function to unwrap. 
+        unwrap_partial: If True (default), unwrap partial and partialmethod decorators. 
+        unwrap_class_static_method: If True (default), also unwrap classmethod and staticmethod 
+            decorators. If False, only unwrap partial and partialmethod decorators. 
+ 
+    Returns: 
+        The underlying function of the wrapped function. 
+    &quot;&quot;&quot;</span>
+    <span class="s5"># Define the types we want to check against as a single tuple.</span>
+    <span class="s1">unwrap_types </span><span class="s3">= (</span>
+        <span class="s3">(</span><span class="s1">property</span><span class="s3">, </span><span class="s1">cached_property</span><span class="s3">)</span>
+        <span class="s3">+ ((</span><span class="s1">partial</span><span class="s3">, </span><span class="s1">partialmethod</span><span class="s3">) </span><span class="s2">if </span><span class="s1">unwrap_partial </span><span class="s2">else </span><span class="s3">())</span>
+        <span class="s3">+ ((</span><span class="s1">staticmethod</span><span class="s3">, </span><span class="s1">classmethod</span><span class="s3">) </span><span class="s2">if </span><span class="s1">unwrap_class_static_method </span><span class="s2">else </span><span class="s3">())</span>
+    <span class="s3">)</span>
+
+    <span class="s2">while </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">func</span><span class="s3">, </span><span class="s1">unwrap_types</span><span class="s3">):</span>
+        <span class="s2">if </span><span class="s1">unwrap_class_static_method </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">func</span><span class="s3">, (</span><span class="s1">classmethod</span><span class="s3">, </span><span class="s1">staticmethod</span><span class="s3">)):</span>
+            <span class="s1">func </span><span class="s3">= </span><span class="s1">func</span><span class="s3">.</span><span class="s1">__func__</span>
+        <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">func</span><span class="s3">, (</span><span class="s1">partial</span><span class="s3">, </span><span class="s1">partialmethod</span><span class="s3">)):</span>
+            <span class="s1">func </span><span class="s3">= </span><span class="s1">func</span><span class="s3">.</span><span class="s1">func</span>
+        <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">func</span><span class="s3">, </span><span class="s1">property</span><span class="s3">):</span>
+            <span class="s1">func </span><span class="s3">= </span><span class="s1">func</span><span class="s3">.</span><span class="s1">fget  </span><span class="s5"># arbitrary choice, convenient for computed fields</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s5"># Make coverage happy as it can only get here in the last possible case</span>
+            <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">func</span><span class="s3">, </span><span class="s1">cached_property</span><span class="s3">)</span>
+            <span class="s1">func </span><span class="s3">= </span><span class="s1">func</span><span class="s3">.</span><span class="s1">func  </span><span class="s5"># type: ignore</span>
+
+    <span class="s2">return </span><span class="s1">func</span>
+
+
+<span class="s1">_function_like </span><span class="s3">= (</span>
+    <span class="s1">partial</span><span class="s3">,</span>
+    <span class="s1">partialmethod</span><span class="s3">,</span>
+    <span class="s1">types</span><span class="s3">.</span><span class="s1">FunctionType</span><span class="s3">,</span>
+    <span class="s1">types</span><span class="s3">.</span><span class="s1">BuiltinFunctionType</span><span class="s3">,</span>
+    <span class="s1">types</span><span class="s3">.</span><span class="s1">MethodType</span><span class="s3">,</span>
+    <span class="s1">types</span><span class="s3">.</span><span class="s1">WrapperDescriptorType</span><span class="s3">,</span>
+    <span class="s1">types</span><span class="s3">.</span><span class="s1">MethodWrapperType</span><span class="s3">,</span>
+    <span class="s1">types</span><span class="s3">.</span><span class="s1">MemberDescriptorType</span><span class="s3">,</span>
+<span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">get_callable_return_type</span><span class="s3">(</span>
+    <span class="s1">callable_obj</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+    <span class="s1">globalns</span><span class="s3">: </span><span class="s1">GlobalsNamespace </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">localns</span><span class="s3">: </span><span class="s1">MappingNamespace </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; Any </span><span class="s3">| </span><span class="s1">PydanticUndefinedType</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Get the callable return type. 
+ 
+    Args: 
+        callable_obj: The callable to analyze. 
+        globalns: The globals namespace to use during type annotation evaluation. 
+        localns: The locals namespace to use during type annotation evaluation. 
+ 
+    Returns: 
+        The function return type. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">callable_obj</span><span class="s3">, </span><span class="s1">type</span><span class="s3">):</span>
+        <span class="s5"># types are callables, and we assume the return type</span>
+        <span class="s5"># is the type itself (e.g. `int()` results in an instance of `int`).</span>
+        <span class="s2">return </span><span class="s1">callable_obj</span>
+
+    <span class="s2">if not </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">callable_obj</span><span class="s3">, </span><span class="s1">_function_like</span><span class="s3">):</span>
+        <span class="s1">call_func </span><span class="s3">= </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">type</span><span class="s3">(</span><span class="s1">callable_obj</span><span class="s3">), </span><span class="s4">'__call__'</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)  </span><span class="s5"># noqa: B004</span>
+        <span class="s2">if </span><span class="s1">call_func </span><span class="s2">is not None</span><span class="s3">:</span>
+            <span class="s1">callable_obj </span><span class="s3">= </span><span class="s1">call_func</span>
+
+    <span class="s1">hints </span><span class="s3">= </span><span class="s1">get_function_type_hints</span><span class="s3">(</span>
+        <span class="s1">unwrap_wrapped_function</span><span class="s3">(</span><span class="s1">callable_obj</span><span class="s3">),</span>
+        <span class="s1">include_keys</span><span class="s3">={</span><span class="s4">'return'</span><span class="s3">},</span>
+        <span class="s1">globalns</span><span class="s3">=</span><span class="s1">globalns</span><span class="s3">,</span>
+        <span class="s1">localns</span><span class="s3">=</span><span class="s1">localns</span><span class="s3">,</span>
+    <span class="s3">)</span>
+    <span class="s2">return </span><span class="s1">hints</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'return'</span><span class="s3">, </span><span class="s1">PydanticUndefined</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">count_positional_required_params</span><span class="s3">(</span><span class="s1">sig</span><span class="s3">: </span><span class="s1">Signature</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Get the number of positional (required) arguments of a signature. 
+ 
+    This function should only be used to inspect signatures of validation and serialization functions. 
+    The first argument (the value being serialized or validated) is counted as a required argument 
+    even if a default value exists. 
+ 
+    Returns: 
+        The number of positional arguments of a signature. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">parameters </span><span class="s3">= </span><span class="s1">list</span><span class="s3">(</span><span class="s1">sig</span><span class="s3">.</span><span class="s1">parameters</span><span class="s3">.</span><span class="s1">values</span><span class="s3">())</span>
+    <span class="s2">return </span><span class="s1">sum</span><span class="s3">(</span>
+        <span class="s6">1</span>
+        <span class="s2">for </span><span class="s1">param </span><span class="s2">in </span><span class="s1">parameters</span>
+        <span class="s2">if </span><span class="s1">can_be_positional</span><span class="s3">(</span><span class="s1">param</span><span class="s3">)</span>
+        <span class="s5"># First argument is the value being validated/serialized, and can have a default value</span>
+        <span class="s5"># (e.g. `float`, which has signature `(x=0, /)`). We assume other parameters (the info arg</span>
+        <span class="s5"># for instance) should be required, and thus without any default value.</span>
+        <span class="s2">and </span><span class="s3">(</span><span class="s1">param</span><span class="s3">.</span><span class="s1">default </span><span class="s2">is </span><span class="s1">Parameter</span><span class="s3">.</span><span class="s1">empty </span><span class="s2">or </span><span class="s1">param </span><span class="s2">is </span><span class="s1">parameters</span><span class="s3">[</span><span class="s6">0</span><span class="s3">])</span>
+    <span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">ensure_property</span><span class="s3">(</span><span class="s1">f</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Ensure that a function is a `property` or `cached_property`, or is a valid descriptor. 
+ 
+    Args: 
+        f: The function to check. 
+ 
+    Returns: 
+        The function, or a `property` or `cached_property` instance wrapping the function. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">ismethoddescriptor</span><span class="s3">(</span><span class="s1">f</span><span class="s3">) </span><span class="s2">or </span><span class="s1">isdatadescriptor</span><span class="s3">(</span><span class="s1">f</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">f</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">property</span><span class="s3">(</span><span class="s1">f</span><span class="s3">)</span>
+</pre>
+</body>
+</html>

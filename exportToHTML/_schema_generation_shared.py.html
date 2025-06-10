@@ -1,0 +1,147 @@
+<html>
+<head>
+<title>_schema_generation_shared.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_schema_generation_shared.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;Types and utility functions used by various other internal tools.&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Callable</span><span class="s3">, </span><span class="s1">Literal</span>
+
+<span class="s2">from </span><span class="s1">pydantic_core </span><span class="s2">import </span><span class="s1">core_schema</span>
+
+<span class="s2">from </span><span class="s3">..</span><span class="s1">annotated_handlers </span><span class="s2">import </span><span class="s1">GetCoreSchemaHandler</span><span class="s3">, </span><span class="s1">GetJsonSchemaHandler</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s3">..</span><span class="s1">json_schema </span><span class="s2">import </span><span class="s1">GenerateJsonSchema</span><span class="s3">, </span><span class="s1">JsonSchemaValue</span>
+    <span class="s2">from </span><span class="s3">.</span><span class="s1">_core_utils </span><span class="s2">import </span><span class="s1">CoreSchemaOrField</span>
+    <span class="s2">from </span><span class="s3">.</span><span class="s1">_generate_schema </span><span class="s2">import </span><span class="s1">GenerateSchema</span>
+    <span class="s2">from </span><span class="s3">.</span><span class="s1">_namespace_utils </span><span class="s2">import </span><span class="s1">NamespacesTuple</span>
+
+    <span class="s1">GetJsonSchemaFunction </span><span class="s3">= </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">CoreSchemaOrField</span><span class="s3">, </span><span class="s1">GetJsonSchemaHandler</span><span class="s3">], </span><span class="s1">JsonSchemaValue</span><span class="s3">]</span>
+    <span class="s1">HandlerOverride </span><span class="s3">= </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">CoreSchemaOrField</span><span class="s3">], </span><span class="s1">JsonSchemaValue</span><span class="s3">]</span>
+
+
+<span class="s2">class </span><span class="s1">GenerateJsonSchemaHandler</span><span class="s3">(</span><span class="s1">GetJsonSchemaHandler</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;JsonSchemaHandler implementation that doesn't do ref unwrapping by default. 
+ 
+    This is used for any Annotated metadata so that we don't end up with conflicting 
+    modifications to the definition schema. 
+ 
+    Used internally by Pydantic, please do not rely on this implementation. 
+    See `GetJsonSchemaHandler` for the handler API. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">generate_json_schema</span><span class="s3">: </span><span class="s1">GenerateJsonSchema</span><span class="s3">, </span><span class="s1">handler_override</span><span class="s3">: </span><span class="s1">HandlerOverride </span><span class="s3">| </span><span class="s2">None</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">generate_json_schema </span><span class="s3">= </span><span class="s1">generate_json_schema</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">handler </span><span class="s3">= </span><span class="s1">handler_override </span><span class="s2">or </span><span class="s1">generate_json_schema</span><span class="s3">.</span><span class="s1">generate_inner</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">= </span><span class="s1">generate_json_schema</span><span class="s3">.</span><span class="s1">mode</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">core_schema</span><span class="s3">: </span><span class="s1">CoreSchemaOrField</span><span class="s3">, /) </span><span class="s1">-&gt; JsonSchemaValue</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">handler</span><span class="s3">(</span><span class="s1">core_schema</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">resolve_ref_schema</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">maybe_ref_json_schema</span><span class="s3">: </span><span class="s1">JsonSchemaValue</span><span class="s3">) </span><span class="s1">-&gt; JsonSchemaValue</span><span class="s3">:</span>
+        <span class="s0">&quot;&quot;&quot;Resolves `$ref` in the json schema. 
+ 
+        This returns the input json schema if there is no `$ref` in json schema. 
+ 
+        Args: 
+            maybe_ref_json_schema: The input json schema that may contains `$ref`. 
+ 
+        Returns: 
+            Resolved json schema. 
+ 
+        Raises: 
+            LookupError: If it can't find the definition for `$ref`. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s4">'$ref' </span><span class="s2">not in </span><span class="s1">maybe_ref_json_schema</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">maybe_ref_json_schema</span>
+        <span class="s1">ref </span><span class="s3">= </span><span class="s1">maybe_ref_json_schema</span><span class="s3">[</span><span class="s4">'$ref'</span><span class="s3">]</span>
+        <span class="s1">json_schema </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">generate_json_schema</span><span class="s3">.</span><span class="s1">get_schema_from_definitions</span><span class="s3">(</span><span class="s1">ref</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">json_schema </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">LookupError</span><span class="s3">(</span>
+                <span class="s4">f'Could not find a ref for </span><span class="s2">{</span><span class="s1">ref</span><span class="s2">}</span><span class="s4">.'</span>
+                <span class="s4">' Maybe you tried to call resolve_ref_schema from within a recursive model?'</span>
+            <span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">json_schema</span>
+
+
+<span class="s2">class </span><span class="s1">CallbackGetCoreSchemaHandler</span><span class="s3">(</span><span class="s1">GetCoreSchemaHandler</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;Wrapper to use an arbitrary function as a `GetCoreSchemaHandler`. 
+ 
+    Used internally by Pydantic, please do not rely on this implementation. 
+    See `GetCoreSchemaHandler` for the handler API. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">handler</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">Any</span><span class="s3">], </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">],</span>
+        <span class="s1">generate_schema</span><span class="s3">: </span><span class="s1">GenerateSchema</span><span class="s3">,</span>
+        <span class="s1">ref_mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'to-def'</span><span class="s3">, </span><span class="s4">'unpack'</span><span class="s3">] = </span><span class="s4">'to-def'</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_handler </span><span class="s3">= </span><span class="s1">handler</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_generate_schema </span><span class="s3">= </span><span class="s1">generate_schema</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_ref_mode </span><span class="s3">= </span><span class="s1">ref_mode</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">source_type</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, /) </span><span class="s1">-&gt; core_schema</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">:</span>
+        <span class="s1">schema </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_handler</span><span class="s3">(</span><span class="s1">source_type</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_ref_mode </span><span class="s3">== </span><span class="s4">'to-def'</span><span class="s3">:</span>
+            <span class="s1">ref </span><span class="s3">= </span><span class="s1">schema</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'ref'</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">ref </span><span class="s2">is not None</span><span class="s3">:</span>
+                <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_generate_schema</span><span class="s3">.</span><span class="s1">defs</span><span class="s3">.</span><span class="s1">create_definition_reference_schema</span><span class="s3">(</span><span class="s1">schema</span><span class="s3">)</span>
+            <span class="s2">return </span><span class="s1">schema</span>
+        <span class="s2">else</span><span class="s3">:  </span><span class="s5"># ref_mode = 'unpack'</span>
+            <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">resolve_ref_schema</span><span class="s3">(</span><span class="s1">schema</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">_get_types_namespace</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; NamespacesTuple</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_generate_schema</span><span class="s3">.</span><span class="s1">_types_namespace</span>
+
+    <span class="s2">def </span><span class="s1">generate_schema</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">source_type</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, /) </span><span class="s1">-&gt; core_schema</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_generate_schema</span><span class="s3">.</span><span class="s1">generate_schema</span><span class="s3">(</span><span class="s1">source_type</span><span class="s3">)</span>
+
+    <span class="s3">@</span><span class="s1">property</span>
+    <span class="s2">def </span><span class="s1">field_name</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; str </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_generate_schema</span><span class="s3">.</span><span class="s1">field_name_stack</span><span class="s3">.</span><span class="s1">get</span><span class="s3">()</span>
+
+    <span class="s2">def </span><span class="s1">resolve_ref_schema</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">maybe_ref_schema</span><span class="s3">: </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">) </span><span class="s1">-&gt; core_schema</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">:</span>
+        <span class="s0">&quot;&quot;&quot;Resolves reference in the core schema. 
+ 
+        Args: 
+            maybe_ref_schema: The input core schema that may contains reference. 
+ 
+        Returns: 
+            Resolved core schema. 
+ 
+        Raises: 
+            LookupError: If it can't find the definition for reference. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">maybe_ref_schema</span><span class="s3">[</span><span class="s4">'type'</span><span class="s3">] == </span><span class="s4">'definition-ref'</span><span class="s3">:</span>
+            <span class="s1">ref </span><span class="s3">= </span><span class="s1">maybe_ref_schema</span><span class="s3">[</span><span class="s4">'schema_ref'</span><span class="s3">]</span>
+            <span class="s1">definition </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_generate_schema</span><span class="s3">.</span><span class="s1">defs</span><span class="s3">.</span><span class="s1">get_schema_from_ref</span><span class="s3">(</span><span class="s1">ref</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">definition </span><span class="s2">is None</span><span class="s3">:</span>
+                <span class="s2">raise </span><span class="s1">LookupError</span><span class="s3">(</span>
+                    <span class="s4">f'Could not find a ref for </span><span class="s2">{</span><span class="s1">ref</span><span class="s2">}</span><span class="s4">.'</span>
+                    <span class="s4">' Maybe you tried to call resolve_ref_schema from within a recursive model?'</span>
+                <span class="s3">)</span>
+            <span class="s2">return </span><span class="s1">definition</span>
+        <span class="s2">elif </span><span class="s1">maybe_ref_schema</span><span class="s3">[</span><span class="s4">'type'</span><span class="s3">] == </span><span class="s4">'definitions'</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">resolve_ref_schema</span><span class="s3">(</span><span class="s1">maybe_ref_schema</span><span class="s3">[</span><span class="s4">'schema'</span><span class="s3">])</span>
+        <span class="s2">return </span><span class="s1">maybe_ref_schema</span>
+</pre>
+</body>
+</html>

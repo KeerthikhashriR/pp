@@ -1,0 +1,211 @@
+<html>
+<head>
+<title>_signature.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #7a7e85;}
+.s4 { color: #6aab73;}
+.s5 { color: #5f826b; font-style: italic;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_signature.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">dataclasses</span>
+<span class="s0">from </span><span class="s1">inspect </span><span class="s0">import </span><span class="s1">Parameter</span><span class="s2">, </span><span class="s1">Signature</span><span class="s2">, </span><span class="s1">signature</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">TYPE_CHECKING</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Callable</span>
+
+<span class="s0">from </span><span class="s1">pydantic_core </span><span class="s0">import </span><span class="s1">PydanticUndefined</span>
+
+<span class="s0">from </span><span class="s2">.</span><span class="s1">_utils </span><span class="s0">import </span><span class="s1">is_valid_identifier</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+    <span class="s0">from </span><span class="s2">..</span><span class="s1">config </span><span class="s0">import </span><span class="s1">ExtraValues</span>
+    <span class="s0">from </span><span class="s2">..</span><span class="s1">fields </span><span class="s0">import </span><span class="s1">FieldInfo</span>
+
+
+<span class="s3"># Copied over from stdlib dataclasses</span>
+<span class="s0">class </span><span class="s1">_HAS_DEFAULT_FACTORY_CLASS</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__repr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s4">'&lt;factory&gt;'</span>
+
+
+<span class="s1">_HAS_DEFAULT_FACTORY </span><span class="s2">= </span><span class="s1">_HAS_DEFAULT_FACTORY_CLASS</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">_field_name_for_signature</span><span class="s2">(</span><span class="s1">field_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">field_info</span><span class="s2">: </span><span class="s1">FieldInfo</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot;Extract the correct name to use for the field when generating a signature. 
+ 
+    Assuming the field has a valid alias, this will return the alias. Otherwise, it will return the field name. 
+    First priority is given to the alias, then the validation_alias, then the field name. 
+ 
+    Args: 
+        field_name: The name of the field 
+        field_info: The corresponding FieldInfo object. 
+ 
+    Returns: 
+        The correct name to use when generating a signature. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">field_info</span><span class="s2">.</span><span class="s1">alias</span><span class="s2">, </span><span class="s1">str</span><span class="s2">) </span><span class="s0">and </span><span class="s1">is_valid_identifier</span><span class="s2">(</span><span class="s1">field_info</span><span class="s2">.</span><span class="s1">alias</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">field_info</span><span class="s2">.</span><span class="s1">alias</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">field_info</span><span class="s2">.</span><span class="s1">validation_alias</span><span class="s2">, </span><span class="s1">str</span><span class="s2">) </span><span class="s0">and </span><span class="s1">is_valid_identifier</span><span class="s2">(</span><span class="s1">field_info</span><span class="s2">.</span><span class="s1">validation_alias</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">field_info</span><span class="s2">.</span><span class="s1">validation_alias</span>
+
+    <span class="s0">return </span><span class="s1">field_name</span>
+
+
+<span class="s0">def </span><span class="s1">_process_param_defaults</span><span class="s2">(</span><span class="s1">param</span><span class="s2">: </span><span class="s1">Parameter</span><span class="s2">) </span><span class="s1">-&gt; Parameter</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot;Modify the signature for a parameter in a dataclass where the default value is a FieldInfo instance. 
+ 
+    Args: 
+        param (Parameter): The parameter 
+ 
+    Returns: 
+        Parameter: The custom processed parameter 
+    &quot;&quot;&quot;</span>
+    <span class="s0">from </span><span class="s2">..</span><span class="s1">fields </span><span class="s0">import </span><span class="s1">FieldInfo</span>
+
+    <span class="s1">param_default </span><span class="s2">= </span><span class="s1">param</span><span class="s2">.</span><span class="s1">default</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">param_default</span><span class="s2">, </span><span class="s1">FieldInfo</span><span class="s2">):</span>
+        <span class="s1">annotation </span><span class="s2">= </span><span class="s1">param</span><span class="s2">.</span><span class="s1">annotation</span>
+        <span class="s3"># Replace the annotation if appropriate</span>
+        <span class="s3"># inspect does &quot;clever&quot; things to show annotations as strings because we have</span>
+        <span class="s3"># `from __future__ import annotations` in main, we don't want that</span>
+        <span class="s0">if </span><span class="s1">annotation </span><span class="s2">== </span><span class="s4">'Any'</span><span class="s2">:</span>
+            <span class="s1">annotation </span><span class="s2">= </span><span class="s1">Any</span>
+
+        <span class="s3"># Replace the field default</span>
+        <span class="s1">default </span><span class="s2">= </span><span class="s1">param_default</span><span class="s2">.</span><span class="s1">default</span>
+        <span class="s0">if </span><span class="s1">default </span><span class="s0">is </span><span class="s1">PydanticUndefined</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">param_default</span><span class="s2">.</span><span class="s1">default_factory </span><span class="s0">is </span><span class="s1">PydanticUndefined</span><span class="s2">:</span>
+                <span class="s1">default </span><span class="s2">= </span><span class="s1">Signature</span><span class="s2">.</span><span class="s1">empty</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s3"># this is used by dataclasses to indicate a factory exists:</span>
+                <span class="s1">default </span><span class="s2">= </span><span class="s1">dataclasses</span><span class="s2">.</span><span class="s1">_HAS_DEFAULT_FACTORY  </span><span class="s3"># type: ignore</span>
+        <span class="s0">return </span><span class="s1">param</span><span class="s2">.</span><span class="s1">replace</span><span class="s2">(</span>
+            <span class="s1">annotation</span><span class="s2">=</span><span class="s1">annotation</span><span class="s2">, </span><span class="s1">name</span><span class="s2">=</span><span class="s1">_field_name_for_signature</span><span class="s2">(</span><span class="s1">param</span><span class="s2">.</span><span class="s1">name</span><span class="s2">, </span><span class="s1">param_default</span><span class="s2">), </span><span class="s1">default</span><span class="s2">=</span><span class="s1">default</span>
+        <span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">param</span>
+
+
+<span class="s0">def </span><span class="s1">_generate_signature_parameters</span><span class="s2">(  </span><span class="s3"># noqa: C901 (ignore complexity, could use a refactor)</span>
+    <span class="s1">init</span><span class="s2">: </span><span class="s1">Callable</span><span class="s2">[..., </span><span class="s0">None</span><span class="s2">],</span>
+    <span class="s1">fields</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">FieldInfo</span><span class="s2">],</span>
+    <span class="s1">validate_by_name</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">,</span>
+    <span class="s1">extra</span><span class="s2">: </span><span class="s1">ExtraValues </span><span class="s2">| </span><span class="s0">None</span><span class="s2">,</span>
+<span class="s2">) </span><span class="s1">-&gt; dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Parameter</span><span class="s2">]:</span>
+    <span class="s5">&quot;&quot;&quot;Generate a mapping of parameter names to Parameter objects for a pydantic BaseModel or dataclass.&quot;&quot;&quot;</span>
+    <span class="s0">from </span><span class="s1">itertools </span><span class="s0">import </span><span class="s1">islice</span>
+
+    <span class="s1">present_params </span><span class="s2">= </span><span class="s1">signature</span><span class="s2">(</span><span class="s1">init</span><span class="s2">).</span><span class="s1">parameters</span><span class="s2">.</span><span class="s1">values</span><span class="s2">()</span>
+    <span class="s1">merged_params</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Parameter</span><span class="s2">] = {}</span>
+    <span class="s1">var_kw </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s1">use_var_kw </span><span class="s2">= </span><span class="s0">False</span>
+
+    <span class="s0">for </span><span class="s1">param </span><span class="s0">in </span><span class="s1">islice</span><span class="s2">(</span><span class="s1">present_params</span><span class="s2">, </span><span class="s6">1</span><span class="s2">, </span><span class="s0">None</span><span class="s2">):  </span><span class="s3"># skip self arg</span>
+        <span class="s3"># inspect does &quot;clever&quot; things to show annotations as strings because we have</span>
+        <span class="s3"># `from __future__ import annotations` in main, we don't want that</span>
+        <span class="s0">if </span><span class="s1">fields</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">param</span><span class="s2">.</span><span class="s1">name</span><span class="s2">):</span>
+            <span class="s3"># exclude params with init=False</span>
+            <span class="s0">if </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">fields</span><span class="s2">[</span><span class="s1">param</span><span class="s2">.</span><span class="s1">name</span><span class="s2">], </span><span class="s4">'init'</span><span class="s2">, </span><span class="s0">True</span><span class="s2">) </span><span class="s0">is False</span><span class="s2">:</span>
+                <span class="s0">continue</span>
+            <span class="s1">param </span><span class="s2">= </span><span class="s1">param</span><span class="s2">.</span><span class="s1">replace</span><span class="s2">(</span><span class="s1">name</span><span class="s2">=</span><span class="s1">_field_name_for_signature</span><span class="s2">(</span><span class="s1">param</span><span class="s2">.</span><span class="s1">name</span><span class="s2">, </span><span class="s1">fields</span><span class="s2">[</span><span class="s1">param</span><span class="s2">.</span><span class="s1">name</span><span class="s2">]))</span>
+        <span class="s0">if </span><span class="s1">param</span><span class="s2">.</span><span class="s1">annotation </span><span class="s2">== </span><span class="s4">'Any'</span><span class="s2">:</span>
+            <span class="s1">param </span><span class="s2">= </span><span class="s1">param</span><span class="s2">.</span><span class="s1">replace</span><span class="s2">(</span><span class="s1">annotation</span><span class="s2">=</span><span class="s1">Any</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">param</span><span class="s2">.</span><span class="s1">kind </span><span class="s0">is </span><span class="s1">param</span><span class="s2">.</span><span class="s1">VAR_KEYWORD</span><span class="s2">:</span>
+            <span class="s1">var_kw </span><span class="s2">= </span><span class="s1">param</span>
+            <span class="s0">continue</span>
+        <span class="s1">merged_params</span><span class="s2">[</span><span class="s1">param</span><span class="s2">.</span><span class="s1">name</span><span class="s2">] = </span><span class="s1">param</span>
+
+    <span class="s0">if </span><span class="s1">var_kw</span><span class="s2">:  </span><span class="s3"># if custom init has no var_kw, fields which are not declared in it cannot be passed through</span>
+        <span class="s1">allow_names </span><span class="s2">= </span><span class="s1">validate_by_name</span>
+        <span class="s0">for </span><span class="s1">field_name</span><span class="s2">, </span><span class="s1">field </span><span class="s0">in </span><span class="s1">fields</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+            <span class="s3"># when alias is a str it should be used for signature generation</span>
+            <span class="s1">param_name </span><span class="s2">= </span><span class="s1">_field_name_for_signature</span><span class="s2">(</span><span class="s1">field_name</span><span class="s2">, </span><span class="s1">field</span><span class="s2">)</span>
+
+            <span class="s0">if </span><span class="s1">field_name </span><span class="s0">in </span><span class="s1">merged_params </span><span class="s0">or </span><span class="s1">param_name </span><span class="s0">in </span><span class="s1">merged_params</span><span class="s2">:</span>
+                <span class="s0">continue</span>
+
+            <span class="s0">if not </span><span class="s1">is_valid_identifier</span><span class="s2">(</span><span class="s1">param_name</span><span class="s2">):</span>
+                <span class="s0">if </span><span class="s1">allow_names</span><span class="s2">:</span>
+                    <span class="s1">param_name </span><span class="s2">= </span><span class="s1">field_name</span>
+                <span class="s0">else</span><span class="s2">:</span>
+                    <span class="s1">use_var_kw </span><span class="s2">= </span><span class="s0">True</span>
+                    <span class="s0">continue</span>
+
+            <span class="s0">if </span><span class="s1">field</span><span class="s2">.</span><span class="s1">is_required</span><span class="s2">():</span>
+                <span class="s1">default </span><span class="s2">= </span><span class="s1">Parameter</span><span class="s2">.</span><span class="s1">empty</span>
+            <span class="s0">elif </span><span class="s1">field</span><span class="s2">.</span><span class="s1">default_factory </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s3"># Mimics stdlib dataclasses:</span>
+                <span class="s1">default </span><span class="s2">= </span><span class="s1">_HAS_DEFAULT_FACTORY</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">default </span><span class="s2">= </span><span class="s1">field</span><span class="s2">.</span><span class="s1">default</span>
+            <span class="s1">merged_params</span><span class="s2">[</span><span class="s1">param_name</span><span class="s2">] = </span><span class="s1">Parameter</span><span class="s2">(</span>
+                <span class="s1">param_name</span><span class="s2">,</span>
+                <span class="s1">Parameter</span><span class="s2">.</span><span class="s1">KEYWORD_ONLY</span><span class="s2">,</span>
+                <span class="s1">annotation</span><span class="s2">=</span><span class="s1">field</span><span class="s2">.</span><span class="s1">rebuild_annotation</span><span class="s2">(),</span>
+                <span class="s1">default</span><span class="s2">=</span><span class="s1">default</span><span class="s2">,</span>
+            <span class="s2">)</span>
+
+    <span class="s0">if </span><span class="s1">extra </span><span class="s2">== </span><span class="s4">'allow'</span><span class="s2">:</span>
+        <span class="s1">use_var_kw </span><span class="s2">= </span><span class="s0">True</span>
+
+    <span class="s0">if </span><span class="s1">var_kw </span><span class="s0">and </span><span class="s1">use_var_kw</span><span class="s2">:</span>
+        <span class="s3"># Make sure the parameter for extra kwargs</span>
+        <span class="s3"># does not have the same name as a field</span>
+        <span class="s1">default_model_signature </span><span class="s2">= [</span>
+            <span class="s2">(</span><span class="s4">'self'</span><span class="s2">, </span><span class="s1">Parameter</span><span class="s2">.</span><span class="s1">POSITIONAL_ONLY</span><span class="s2">),</span>
+            <span class="s2">(</span><span class="s4">'data'</span><span class="s2">, </span><span class="s1">Parameter</span><span class="s2">.</span><span class="s1">VAR_KEYWORD</span><span class="s2">),</span>
+        <span class="s2">]</span>
+        <span class="s0">if </span><span class="s2">[(</span><span class="s1">p</span><span class="s2">.</span><span class="s1">name</span><span class="s2">, </span><span class="s1">p</span><span class="s2">.</span><span class="s1">kind</span><span class="s2">) </span><span class="s0">for </span><span class="s1">p </span><span class="s0">in </span><span class="s1">present_params</span><span class="s2">] == </span><span class="s1">default_model_signature</span><span class="s2">:</span>
+            <span class="s3"># if this is the standard model signature, use extra_data as the extra args name</span>
+            <span class="s1">var_kw_name </span><span class="s2">= </span><span class="s4">'extra_data'</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s3"># else start from var_kw</span>
+            <span class="s1">var_kw_name </span><span class="s2">= </span><span class="s1">var_kw</span><span class="s2">.</span><span class="s1">name</span>
+
+        <span class="s3"># generate a name that's definitely unique</span>
+        <span class="s0">while </span><span class="s1">var_kw_name </span><span class="s0">in </span><span class="s1">fields</span><span class="s2">:</span>
+            <span class="s1">var_kw_name </span><span class="s2">+= </span><span class="s4">'_'</span>
+        <span class="s1">merged_params</span><span class="s2">[</span><span class="s1">var_kw_name</span><span class="s2">] = </span><span class="s1">var_kw</span><span class="s2">.</span><span class="s1">replace</span><span class="s2">(</span><span class="s1">name</span><span class="s2">=</span><span class="s1">var_kw_name</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">merged_params</span>
+
+
+<span class="s0">def </span><span class="s1">generate_pydantic_signature</span><span class="s2">(</span>
+    <span class="s1">init</span><span class="s2">: </span><span class="s1">Callable</span><span class="s2">[..., </span><span class="s0">None</span><span class="s2">],</span>
+    <span class="s1">fields</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">FieldInfo</span><span class="s2">],</span>
+    <span class="s1">validate_by_name</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">,</span>
+    <span class="s1">extra</span><span class="s2">: </span><span class="s1">ExtraValues </span><span class="s2">| </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">is_dataclass</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+<span class="s2">) </span><span class="s1">-&gt; Signature</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot;Generate signature for a pydantic BaseModel or dataclass. 
+ 
+    Args: 
+        init: The class init. 
+        fields: The model fields. 
+        validate_by_name: The `validate_by_name` value of the config. 
+        extra: The `extra` value of the config. 
+        is_dataclass: Whether the model is a dataclass. 
+ 
+    Returns: 
+        The dataclass/BaseModel subclass signature. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">merged_params </span><span class="s2">= </span><span class="s1">_generate_signature_parameters</span><span class="s2">(</span><span class="s1">init</span><span class="s2">, </span><span class="s1">fields</span><span class="s2">, </span><span class="s1">validate_by_name</span><span class="s2">, </span><span class="s1">extra</span><span class="s2">)</span>
+
+    <span class="s0">if </span><span class="s1">is_dataclass</span><span class="s2">:</span>
+        <span class="s1">merged_params </span><span class="s2">= {</span><span class="s1">k</span><span class="s2">: </span><span class="s1">_process_param_defaults</span><span class="s2">(</span><span class="s1">v</span><span class="s2">) </span><span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">merged_params</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()}</span>
+
+    <span class="s0">return </span><span class="s1">Signature</span><span class="s2">(</span><span class="s1">parameters</span><span class="s2">=</span><span class="s1">list</span><span class="s2">(</span><span class="s1">merged_params</span><span class="s2">.</span><span class="s1">values</span><span class="s2">()), </span><span class="s1">return_annotation</span><span class="s2">=</span><span class="s0">None</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

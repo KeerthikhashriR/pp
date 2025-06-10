@@ -1,0 +1,216 @@
+<html>
+<head>
+<title>testapp.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+testapp.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;A small application that can be used to test a WSGI server and check 
+it for WSGI compliance. 
+&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">importlib</span><span class="s3">.</span><span class="s1">metadata</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">import </span><span class="s1">typing </span><span class="s2">as </span><span class="s1">t</span>
+<span class="s2">from </span><span class="s1">textwrap </span><span class="s2">import </span><span class="s1">wrap</span>
+
+<span class="s2">from </span><span class="s1">markupsafe </span><span class="s2">import </span><span class="s1">escape</span>
+
+<span class="s2">from </span><span class="s3">.</span><span class="s1">wrappers</span><span class="s3">.</span><span class="s1">request </span><span class="s2">import </span><span class="s1">Request</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">wrappers</span><span class="s3">.</span><span class="s1">response </span><span class="s2">import </span><span class="s1">Response</span>
+
+<span class="s1">TEMPLATE </span><span class="s3">= </span><span class="s4">&quot;&quot;&quot;</span><span class="s2">\ 
+</span><span class="s4">&lt;!doctype html&gt; 
+&lt;html lang=en&gt; 
+&lt;title&gt;WSGI Information&lt;/title&gt; 
+&lt;style type=&quot;text/css&quot;&gt; 
+  @import url(https://fonts.googleapis.com/css?family=Ubuntu); 
+ 
+  body       { font-family: 'Lucida Grande', 'Lucida Sans Unicode', 'Geneva', 
+               'Verdana', sans-serif; background-color: white; color: #000; 
+               font-size: 15px; text-align: center; } 
+  div.box    { text-align: left; width: 45em; margin: auto; padding: 50px 0; 
+               background-color: white; } 
+  h1, h2     { font-family: 'Ubuntu', 'Lucida Grande', 'Lucida Sans Unicode', 
+               'Geneva', 'Verdana', sans-serif; font-weight: normal; } 
+  h1         { margin: 0 0 30px 0; } 
+  h2         { font-size: 1.4em; margin: 1em 0 0.5em 0; } 
+  table      { width: 100%%; border-collapse: collapse; border: 1px solid #AFC5C9 } 
+  table th   { background-color: #AFC1C4; color: white; font-size: 0.72em; 
+               font-weight: normal; width: 18em; vertical-align: top; 
+               padding: 0.5em 0 0.1em 0.5em; } 
+  table td   { border: 1px solid #AFC5C9; padding: 0.1em 0 0.1em 0.5em; } 
+  code       { font-family: 'Consolas', 'Monaco', 'Bitstream Vera Sans Mono', 
+               monospace; font-size: 0.7em; } 
+  ul li      { line-height: 1.5em; } 
+  ul.path    { font-size: 0.7em; margin: 0 -30px; padding: 8px 30px; 
+               list-style: none; background: #E8EFF0; } 
+  ul.path li { line-height: 1.6em; } 
+  li.virtual { color: #999; text-decoration: underline; } 
+  li.exp     { background: white; } 
+&lt;/style&gt; 
+&lt;div class=&quot;box&quot;&gt; 
+  &lt;h1&gt;WSGI Information&lt;/h1&gt; 
+  &lt;p&gt; 
+    This page displays all available information about the WSGI server and 
+    the underlying Python interpreter. 
+  &lt;h2 id=&quot;python-interpreter&quot;&gt;Python Interpreter&lt;/h2&gt; 
+  &lt;table&gt; 
+    &lt;tr&gt; 
+      &lt;th&gt;Python Version 
+      &lt;td&gt;%(python_version)s 
+    &lt;tr&gt; 
+      &lt;th&gt;Platform 
+      &lt;td&gt;%(platform)s [%(os)s] 
+    &lt;tr&gt; 
+      &lt;th&gt;API Version 
+      &lt;td&gt;%(api_version)s 
+    &lt;tr&gt; 
+      &lt;th&gt;Byteorder 
+      &lt;td&gt;%(byteorder)s 
+    &lt;tr&gt; 
+      &lt;th&gt;Werkzeug Version 
+      &lt;td&gt;%(werkzeug_version)s 
+  &lt;/table&gt; 
+  &lt;h2 id=&quot;wsgi-environment&quot;&gt;WSGI Environment&lt;/h2&gt; 
+  &lt;table&gt;%(wsgi_env)s&lt;/table&gt; 
+  &lt;h2 id=&quot;installed-eggs&quot;&gt;Installed Eggs&lt;/h2&gt; 
+  &lt;p&gt; 
+    The following python packages were installed on the system as 
+    Python eggs: 
+  &lt;ul&gt;%(python_eggs)s&lt;/ul&gt; 
+  &lt;h2 id=&quot;sys-path&quot;&gt;System Path&lt;/h2&gt; 
+  &lt;p&gt; 
+    The following paths are the current contents of the load path.  The 
+    following entries are looked up for Python packages.  Note that not 
+    all items in this path are folders.  Gray and underlined items are 
+    entries pointing to invalid resources or used by custom import hooks 
+    such as the zip importer. 
+  &lt;p&gt; 
+    Items with a bright background were expanded for display from a relative 
+    path.  If you encounter such paths in the output you might want to check 
+    your setup as relative paths are usually problematic in multithreaded 
+    environments. 
+  &lt;ul class=&quot;path&quot;&gt;%(sys_path)s&lt;/ul&gt; 
+&lt;/div&gt; 
+&quot;&quot;&quot;</span>
+
+
+<span class="s2">def </span><span class="s1">iter_sys_path</span><span class="s3">() </span><span class="s1">-&gt; t</span><span class="s3">.</span><span class="s1">Iterator</span><span class="s3">[</span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">bool</span><span class="s3">, </span><span class="s1">bool</span><span class="s3">]]:</span>
+    <span class="s2">if </span><span class="s1">os</span><span class="s3">.</span><span class="s1">name </span><span class="s3">== </span><span class="s4">&quot;posix&quot;</span><span class="s3">:</span>
+
+        <span class="s2">def </span><span class="s1">strip</span><span class="s3">(</span><span class="s1">x</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; str</span><span class="s3">:</span>
+            <span class="s1">prefix </span><span class="s3">= </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">expanduser</span><span class="s3">(</span><span class="s4">&quot;~&quot;</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">x</span><span class="s3">.</span><span class="s1">startswith</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">):</span>
+                <span class="s1">x </span><span class="s3">= </span><span class="s4">f&quot;~</span><span class="s2">{</span><span class="s1">x</span><span class="s3">[</span><span class="s1">len</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">) :]</span><span class="s2">}</span><span class="s4">&quot;</span>
+            <span class="s2">return </span><span class="s1">x</span>
+
+    <span class="s2">else</span><span class="s3">:</span>
+
+        <span class="s2">def </span><span class="s1">strip</span><span class="s3">(</span><span class="s1">x</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; str</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">x</span>
+
+    <span class="s1">cwd </span><span class="s3">= </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">abspath</span><span class="s3">(</span><span class="s1">os</span><span class="s3">.</span><span class="s1">getcwd</span><span class="s3">())</span>
+    <span class="s2">for </span><span class="s1">item </span><span class="s2">in </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">path</span><span class="s3">:</span>
+        <span class="s1">path </span><span class="s3">= </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">cwd</span><span class="s3">, </span><span class="s1">item </span><span class="s2">or </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">curdir</span><span class="s3">)</span>
+        <span class="s2">yield </span><span class="s1">strip</span><span class="s3">(</span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">normpath</span><span class="s3">(</span><span class="s1">path</span><span class="s3">)), </span><span class="s2">not </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">isdir</span><span class="s3">(</span><span class="s1">path</span><span class="s3">), </span><span class="s1">path </span><span class="s3">!= </span><span class="s1">item</span>
+
+
+<span class="s3">@</span><span class="s1">Request</span><span class="s3">.</span><span class="s1">application</span>
+<span class="s2">def </span><span class="s1">test_app</span><span class="s3">(</span><span class="s1">req</span><span class="s3">: </span><span class="s1">Request</span><span class="s3">) </span><span class="s1">-&gt; Response</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Simple test application that dumps the environment.  You can use 
+    it to check if Werkzeug is working properly: 
+ 
+    .. sourcecode:: pycon 
+ 
+        &gt;&gt;&gt; from werkzeug.serving import run_simple 
+        &gt;&gt;&gt; from werkzeug.testapp import test_app 
+        &gt;&gt;&gt; run_simple('localhost', 3000, test_app) 
+         * Running on http://localhost:3000/ 
+ 
+    The application displays important information from the WSGI environment, 
+    the Python interpreter and the installed libraries. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">import </span><span class="s1">pkg_resources</span>
+    <span class="s2">except </span><span class="s1">ImportError</span><span class="s3">:</span>
+        <span class="s1">eggs</span><span class="s3">: </span><span class="s1">t</span><span class="s3">.</span><span class="s1">Iterable</span><span class="s3">[</span><span class="s1">t</span><span class="s3">.</span><span class="s1">Any</span><span class="s3">] = ()</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">eggs </span><span class="s3">= </span><span class="s1">sorted</span><span class="s3">(</span>
+            <span class="s1">pkg_resources</span><span class="s3">.</span><span class="s1">working_set</span><span class="s3">,</span>
+            <span class="s1">key</span><span class="s3">=</span><span class="s2">lambda </span><span class="s1">x</span><span class="s3">: </span><span class="s1">x</span><span class="s3">.</span><span class="s1">project_name</span><span class="s3">.</span><span class="s1">lower</span><span class="s3">(),</span>
+        <span class="s3">)</span>
+    <span class="s1">python_eggs </span><span class="s3">= []</span>
+    <span class="s2">for </span><span class="s1">egg </span><span class="s2">in </span><span class="s1">eggs</span><span class="s3">:</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">version </span><span class="s3">= </span><span class="s1">egg</span><span class="s3">.</span><span class="s1">version</span>
+        <span class="s2">except </span><span class="s3">(</span><span class="s1">ValueError</span><span class="s3">, </span><span class="s1">AttributeError</span><span class="s3">):</span>
+            <span class="s1">version </span><span class="s3">= </span><span class="s4">&quot;unknown&quot;</span>
+        <span class="s1">python_eggs</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span>
+            <span class="s4">f&quot;&lt;li&gt;</span><span class="s2">{</span><span class="s1">escape</span><span class="s3">(</span><span class="s1">egg</span><span class="s3">.</span><span class="s1">project_name</span><span class="s3">)</span><span class="s2">} </span><span class="s4">&lt;small&gt;[</span><span class="s2">{</span><span class="s1">escape</span><span class="s3">(</span><span class="s1">version</span><span class="s3">)</span><span class="s2">}</span><span class="s4">]&lt;/small&gt;&quot;</span>
+        <span class="s3">)</span>
+
+    <span class="s1">wsgi_env </span><span class="s3">= []</span>
+    <span class="s1">sorted_environ </span><span class="s3">= </span><span class="s1">sorted</span><span class="s3">(</span><span class="s1">req</span><span class="s3">.</span><span class="s1">environ</span><span class="s3">.</span><span class="s1">items</span><span class="s3">(), </span><span class="s1">key</span><span class="s3">=</span><span class="s2">lambda </span><span class="s1">x</span><span class="s3">: </span><span class="s1">repr</span><span class="s3">(</span><span class="s1">x</span><span class="s3">[</span><span class="s5">0</span><span class="s3">]).</span><span class="s1">lower</span><span class="s3">())</span>
+    <span class="s2">for </span><span class="s1">key</span><span class="s3">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">sorted_environ</span><span class="s3">:</span>
+        <span class="s1">value </span><span class="s3">= </span><span class="s4">&quot;&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">wrap</span><span class="s3">(</span><span class="s1">str</span><span class="s3">(</span><span class="s1">escape</span><span class="s3">(</span><span class="s1">repr</span><span class="s3">(</span><span class="s1">value</span><span class="s3">)))))</span>
+        <span class="s1">wsgi_env</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s4">f&quot;&lt;tr&gt;&lt;th&gt;</span><span class="s2">{</span><span class="s1">escape</span><span class="s3">(</span><span class="s1">key</span><span class="s3">)</span><span class="s2">}</span><span class="s4">&lt;td&gt;&lt;code&gt;</span><span class="s2">{</span><span class="s1">value</span><span class="s2">}</span><span class="s4">&lt;/code&gt;&quot;</span><span class="s3">)</span>
+
+    <span class="s1">sys_path </span><span class="s3">= []</span>
+    <span class="s2">for </span><span class="s1">item</span><span class="s3">, </span><span class="s1">virtual</span><span class="s3">, </span><span class="s1">expanded </span><span class="s2">in </span><span class="s1">iter_sys_path</span><span class="s3">():</span>
+        <span class="s1">css </span><span class="s3">= []</span>
+        <span class="s2">if </span><span class="s1">virtual</span><span class="s3">:</span>
+            <span class="s1">css</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s4">&quot;virtual&quot;</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">expanded</span><span class="s3">:</span>
+            <span class="s1">css</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s4">&quot;exp&quot;</span><span class="s3">)</span>
+        <span class="s1">class_str </span><span class="s3">= </span><span class="s4">f' class=&quot;</span><span class="s2">{</span><span class="s4">&quot; &quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">css</span><span class="s3">)</span><span class="s2">}</span><span class="s4">&quot;' </span><span class="s2">if </span><span class="s1">css </span><span class="s2">else </span><span class="s4">&quot;&quot;</span>
+        <span class="s1">sys_path</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s4">f&quot;&lt;li</span><span class="s2">{</span><span class="s1">class_str</span><span class="s2">}</span><span class="s4">&gt;</span><span class="s2">{</span><span class="s1">escape</span><span class="s3">(</span><span class="s1">item</span><span class="s3">)</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s3">)</span>
+
+    <span class="s1">context </span><span class="s3">= {</span>
+        <span class="s4">&quot;python_version&quot;</span><span class="s3">: </span><span class="s4">&quot;&lt;br&gt;&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">escape</span><span class="s3">(</span><span class="s1">sys</span><span class="s3">.</span><span class="s1">version</span><span class="s3">).</span><span class="s1">splitlines</span><span class="s3">()),</span>
+        <span class="s4">&quot;platform&quot;</span><span class="s3">: </span><span class="s1">escape</span><span class="s3">(</span><span class="s1">sys</span><span class="s3">.</span><span class="s1">platform</span><span class="s3">),</span>
+        <span class="s4">&quot;os&quot;</span><span class="s3">: </span><span class="s1">escape</span><span class="s3">(</span><span class="s1">os</span><span class="s3">.</span><span class="s1">name</span><span class="s3">),</span>
+        <span class="s4">&quot;api_version&quot;</span><span class="s3">: </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">api_version</span><span class="s3">,</span>
+        <span class="s4">&quot;byteorder&quot;</span><span class="s3">: </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">byteorder</span><span class="s3">,</span>
+        <span class="s4">&quot;werkzeug_version&quot;</span><span class="s3">: </span><span class="s1">_get_werkzeug_version</span><span class="s3">(),</span>
+        <span class="s4">&quot;python_eggs&quot;</span><span class="s3">: </span><span class="s4">&quot;</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">python_eggs</span><span class="s3">),</span>
+        <span class="s4">&quot;wsgi_env&quot;</span><span class="s3">: </span><span class="s4">&quot;</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">wsgi_env</span><span class="s3">),</span>
+        <span class="s4">&quot;sys_path&quot;</span><span class="s3">: </span><span class="s4">&quot;</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">sys_path</span><span class="s3">),</span>
+    <span class="s3">}</span>
+    <span class="s2">return </span><span class="s1">Response</span><span class="s3">(</span><span class="s1">TEMPLATE </span><span class="s3">% </span><span class="s1">context</span><span class="s3">, </span><span class="s1">mimetype</span><span class="s3">=</span><span class="s4">&quot;text/html&quot;</span><span class="s3">)</span>
+
+
+<span class="s1">_werkzeug_version </span><span class="s3">= </span><span class="s4">&quot;&quot;</span>
+
+
+<span class="s2">def </span><span class="s1">_get_werkzeug_version</span><span class="s3">() </span><span class="s1">-&gt; str</span><span class="s3">:</span>
+    <span class="s2">global </span><span class="s1">_werkzeug_version</span>
+
+    <span class="s2">if not </span><span class="s1">_werkzeug_version</span><span class="s3">:</span>
+        <span class="s1">_werkzeug_version </span><span class="s3">= </span><span class="s1">importlib</span><span class="s3">.</span><span class="s1">metadata</span><span class="s3">.</span><span class="s1">version</span><span class="s3">(</span><span class="s4">&quot;werkzeug&quot;</span><span class="s3">)</span>
+
+    <span class="s2">return </span><span class="s1">_werkzeug_version</span>
+
+
+<span class="s2">if </span><span class="s1">__name__ </span><span class="s3">== </span><span class="s4">&quot;__main__&quot;</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s3">.</span><span class="s1">serving </span><span class="s2">import </span><span class="s1">run_simple</span>
+
+    <span class="s1">run_simple</span><span class="s3">(</span><span class="s4">&quot;localhost&quot;</span><span class="s3">, </span><span class="s5">5000</span><span class="s3">, </span><span class="s1">test_app</span><span class="s3">, </span><span class="s1">use_reloader</span><span class="s3">=</span><span class="s2">True</span><span class="s3">)</span>
+</pre>
+</body>
+</html>

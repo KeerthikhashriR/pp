@@ -1,0 +1,523 @@
+<html>
+<head>
+<title>dataclasses.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #7a7e85;}
+.s5 { color: #6aab73;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+dataclasses.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot; 
+The main purpose is to enhance stdlib dataclasses by adding validation 
+A pydantic dataclass can be generated from scratch or from a stdlib one. 
+ 
+Behind the scene, a pydantic dataclass is just like a regular one on which we attach 
+a `BaseModel` and magic methods to trigger the validation of the data. 
+`__init__` and `__post_init__` are hence overridden and have extra logic to be 
+able to validate input data. 
+ 
+When a pydantic dataclass is generated from scratch, it's just a plain dataclass 
+with validation triggered at initialization 
+ 
+The tricky part if for stdlib dataclasses that are converted after into pydantic ones e.g. 
+ 
+```py 
+@dataclasses.dataclass 
+class M: 
+    x: int 
+ 
+ValidatedM = pydantic.dataclasses.dataclass(M) 
+``` 
+ 
+We indeed still want to support equality, hashing, repr, ... as if it was the stdlib one! 
+ 
+```py 
+assert isinstance(ValidatedM(x=1), M) 
+assert ValidatedM(x=1) == M(x=1) 
+``` 
+ 
+This means we **don't want to create a new dataclass that inherits from it** 
+The trick is to create a wrapper around `M` that will act as a proxy to trigger 
+validation without altering default `M` behaviour. 
+&quot;&quot;&quot;</span>
+<span class="s2">import </span><span class="s1">copy</span>
+<span class="s2">import </span><span class="s1">dataclasses</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">from </span><span class="s1">contextlib </span><span class="s2">import </span><span class="s1">contextmanager</span>
+<span class="s2">from </span><span class="s1">functools </span><span class="s2">import </span><span class="s1">wraps</span>
+
+<span class="s2">try</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s1">functools </span><span class="s2">import </span><span class="s1">cached_property</span>
+<span class="s2">except </span><span class="s1">ImportError</span><span class="s3">:</span>
+    <span class="s4"># cached_property available only for python3.8+</span>
+    <span class="s2">pass</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Callable</span><span class="s3">, </span><span class="s1">ClassVar</span><span class="s3">, </span><span class="s1">Dict</span><span class="s3">, </span><span class="s1">Generator</span><span class="s3">, </span><span class="s1">Optional</span><span class="s3">, </span><span class="s1">Type</span><span class="s3">, </span><span class="s1">TypeVar</span><span class="s3">, </span><span class="s1">Union</span><span class="s3">, </span><span class="s1">overload</span>
+
+<span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">dataclass_transform</span>
+
+<span class="s2">from </span><span class="s1">pydantic</span><span class="s3">.</span><span class="s1">v1</span><span class="s3">.</span><span class="s1">class_validators </span><span class="s2">import </span><span class="s1">gather_all_validators</span>
+<span class="s2">from </span><span class="s1">pydantic</span><span class="s3">.</span><span class="s1">v1</span><span class="s3">.</span><span class="s1">config </span><span class="s2">import </span><span class="s1">BaseConfig</span><span class="s3">, </span><span class="s1">ConfigDict</span><span class="s3">, </span><span class="s1">Extra</span><span class="s3">, </span><span class="s1">get_config</span>
+<span class="s2">from </span><span class="s1">pydantic</span><span class="s3">.</span><span class="s1">v1</span><span class="s3">.</span><span class="s1">error_wrappers </span><span class="s2">import </span><span class="s1">ValidationError</span>
+<span class="s2">from </span><span class="s1">pydantic</span><span class="s3">.</span><span class="s1">v1</span><span class="s3">.</span><span class="s1">errors </span><span class="s2">import </span><span class="s1">DataclassTypeError</span>
+<span class="s2">from </span><span class="s1">pydantic</span><span class="s3">.</span><span class="s1">v1</span><span class="s3">.</span><span class="s1">fields </span><span class="s2">import </span><span class="s1">Field</span><span class="s3">, </span><span class="s1">FieldInfo</span><span class="s3">, </span><span class="s1">Required</span><span class="s3">, </span><span class="s1">Undefined</span>
+<span class="s2">from </span><span class="s1">pydantic</span><span class="s3">.</span><span class="s1">v1</span><span class="s3">.</span><span class="s1">main </span><span class="s2">import </span><span class="s1">create_model</span><span class="s3">, </span><span class="s1">validate_model</span>
+<span class="s2">from </span><span class="s1">pydantic</span><span class="s3">.</span><span class="s1">v1</span><span class="s3">.</span><span class="s1">utils </span><span class="s2">import </span><span class="s1">ClassAttribute</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s1">pydantic</span><span class="s3">.</span><span class="s1">v1</span><span class="s3">.</span><span class="s1">main </span><span class="s2">import </span><span class="s1">BaseModel</span>
+    <span class="s2">from </span><span class="s1">pydantic</span><span class="s3">.</span><span class="s1">v1</span><span class="s3">.</span><span class="s1">typing </span><span class="s2">import </span><span class="s1">CallableGenerator</span><span class="s3">, </span><span class="s1">NoArgAnyCallable</span>
+
+    <span class="s1">DataclassT </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'DataclassT'</span><span class="s3">, </span><span class="s1">bound</span><span class="s3">=</span><span class="s5">'Dataclass'</span><span class="s3">)</span>
+
+    <span class="s1">DataclassClassOrWrapper </span><span class="s3">= </span><span class="s1">Union</span><span class="s3">[</span><span class="s1">Type</span><span class="s3">[</span><span class="s5">'Dataclass'</span><span class="s3">], </span><span class="s5">'DataclassProxy'</span><span class="s3">]</span>
+
+    <span class="s2">class </span><span class="s1">Dataclass</span><span class="s3">:</span>
+        <span class="s4"># stdlib attributes</span>
+        <span class="s1">__dataclass_fields__</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">Dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]]</span>
+        <span class="s1">__dataclass_params__</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]  </span><span class="s4"># in reality `dataclasses._DataclassParams`</span>
+        <span class="s1">__post_init__</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">Callable</span><span class="s3">[..., </span><span class="s2">None</span><span class="s3">]]</span>
+
+        <span class="s4"># Added by pydantic</span>
+        <span class="s1">__pydantic_run_validation__</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">bool</span><span class="s3">]</span>
+        <span class="s1">__post_init_post_parse__</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">Callable</span><span class="s3">[..., </span><span class="s2">None</span><span class="s3">]]</span>
+        <span class="s1">__pydantic_initialised__</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">bool</span><span class="s3">]</span>
+        <span class="s1">__pydantic_model__</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">Type</span><span class="s3">[</span><span class="s1">BaseModel</span><span class="s3">]]</span>
+        <span class="s1">__pydantic_validate_values__</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">Callable</span><span class="s3">[[</span><span class="s5">'Dataclass'</span><span class="s3">], </span><span class="s2">None</span><span class="s3">]]</span>
+        <span class="s1">__pydantic_has_field_info_default__</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">bool</span><span class="s3">]  </span><span class="s4"># whether a `pydantic.Field` is used as default value</span>
+
+        <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">: </span><span class="s1">object</span><span class="s3">, **</span><span class="s1">kwargs</span><span class="s3">: </span><span class="s1">object</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+            <span class="s2">pass</span>
+
+        <span class="s3">@</span><span class="s1">classmethod</span>
+        <span class="s2">def </span><span class="s1">__get_validators__</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">: </span><span class="s1">Type</span><span class="s3">[</span><span class="s5">'Dataclass'</span><span class="s3">]) </span><span class="s1">-&gt; </span><span class="s5">'CallableGenerator'</span><span class="s3">:</span>
+            <span class="s2">pass</span>
+
+        <span class="s3">@</span><span class="s1">classmethod</span>
+        <span class="s2">def </span><span class="s1">__validate__</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">: </span><span class="s1">Type</span><span class="s3">[</span><span class="s5">'DataclassT'</span><span class="s3">], </span><span class="s1">v</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s5">'DataclassT'</span><span class="s3">:</span>
+            <span class="s2">pass</span>
+
+
+<span class="s1">__all__ </span><span class="s3">= [</span>
+    <span class="s5">'dataclass'</span><span class="s3">,</span>
+    <span class="s5">'set_validation'</span><span class="s3">,</span>
+    <span class="s5">'create_pydantic_model_from_dataclass'</span><span class="s3">,</span>
+    <span class="s5">'is_builtin_dataclass'</span><span class="s3">,</span>
+    <span class="s5">'make_dataclass_validator'</span><span class="s3">,</span>
+<span class="s3">]</span>
+
+<span class="s1">_T </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_T'</span><span class="s3">)</span>
+
+<span class="s2">if </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">version_info </span><span class="s3">&gt;= (</span><span class="s6">3</span><span class="s3">, </span><span class="s6">10</span><span class="s3">):</span>
+
+    <span class="s3">@</span><span class="s1">dataclass_transform</span><span class="s3">(</span><span class="s1">field_specifiers</span><span class="s3">=(</span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">field</span><span class="s3">, </span><span class="s1">Field</span><span class="s3">))</span>
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">dataclass</span><span class="s3">(</span>
+        <span class="s3">*,</span>
+        <span class="s1">init</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">repr</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">eq</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">order</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">unsafe_hash</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">frozen</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">config</span><span class="s3">: </span><span class="s1">Union</span><span class="s3">[</span><span class="s1">ConfigDict</span><span class="s3">, </span><span class="s1">Type</span><span class="s3">[</span><span class="s1">object</span><span class="s3">], </span><span class="s2">None</span><span class="s3">] = </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">validate_on_init</span><span class="s3">: </span><span class="s1">Optional</span><span class="s3">[</span><span class="s1">bool</span><span class="s3">] = </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">use_proxy</span><span class="s3">: </span><span class="s1">Optional</span><span class="s3">[</span><span class="s1">bool</span><span class="s3">] = </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">kw_only</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= ...,</span>
+    <span class="s3">) </span><span class="s1">-&gt; Callable</span><span class="s3">[[</span><span class="s1">Type</span><span class="s3">[</span><span class="s1">_T</span><span class="s3">]], </span><span class="s5">'DataclassClassOrWrapper'</span><span class="s3">]:</span>
+        <span class="s3">...</span>
+
+    <span class="s3">@</span><span class="s1">dataclass_transform</span><span class="s3">(</span><span class="s1">field_specifiers</span><span class="s3">=(</span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">field</span><span class="s3">, </span><span class="s1">Field</span><span class="s3">))</span>
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">dataclass</span><span class="s3">(</span>
+        <span class="s1">_cls</span><span class="s3">: </span><span class="s1">Type</span><span class="s3">[</span><span class="s1">_T</span><span class="s3">],</span>
+        <span class="s3">*,</span>
+        <span class="s1">init</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">repr</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">eq</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">order</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">unsafe_hash</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">frozen</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">config</span><span class="s3">: </span><span class="s1">Union</span><span class="s3">[</span><span class="s1">ConfigDict</span><span class="s3">, </span><span class="s1">Type</span><span class="s3">[</span><span class="s1">object</span><span class="s3">], </span><span class="s2">None</span><span class="s3">] = </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">validate_on_init</span><span class="s3">: </span><span class="s1">Optional</span><span class="s3">[</span><span class="s1">bool</span><span class="s3">] = </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">use_proxy</span><span class="s3">: </span><span class="s1">Optional</span><span class="s3">[</span><span class="s1">bool</span><span class="s3">] = </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">kw_only</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= ...,</span>
+    <span class="s3">) </span><span class="s1">-&gt; </span><span class="s5">'DataclassClassOrWrapper'</span><span class="s3">:</span>
+        <span class="s3">...</span>
+
+<span class="s2">else</span><span class="s3">:</span>
+
+    <span class="s3">@</span><span class="s1">dataclass_transform</span><span class="s3">(</span><span class="s1">field_specifiers</span><span class="s3">=(</span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">field</span><span class="s3">, </span><span class="s1">Field</span><span class="s3">))</span>
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">dataclass</span><span class="s3">(</span>
+        <span class="s3">*,</span>
+        <span class="s1">init</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">repr</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">eq</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">order</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">unsafe_hash</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">frozen</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">config</span><span class="s3">: </span><span class="s1">Union</span><span class="s3">[</span><span class="s1">ConfigDict</span><span class="s3">, </span><span class="s1">Type</span><span class="s3">[</span><span class="s1">object</span><span class="s3">], </span><span class="s2">None</span><span class="s3">] = </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">validate_on_init</span><span class="s3">: </span><span class="s1">Optional</span><span class="s3">[</span><span class="s1">bool</span><span class="s3">] = </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">use_proxy</span><span class="s3">: </span><span class="s1">Optional</span><span class="s3">[</span><span class="s1">bool</span><span class="s3">] = </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; Callable</span><span class="s3">[[</span><span class="s1">Type</span><span class="s3">[</span><span class="s1">_T</span><span class="s3">]], </span><span class="s5">'DataclassClassOrWrapper'</span><span class="s3">]:</span>
+        <span class="s3">...</span>
+
+    <span class="s3">@</span><span class="s1">dataclass_transform</span><span class="s3">(</span><span class="s1">field_specifiers</span><span class="s3">=(</span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">field</span><span class="s3">, </span><span class="s1">Field</span><span class="s3">))</span>
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">dataclass</span><span class="s3">(</span>
+        <span class="s1">_cls</span><span class="s3">: </span><span class="s1">Type</span><span class="s3">[</span><span class="s1">_T</span><span class="s3">],</span>
+        <span class="s3">*,</span>
+        <span class="s1">init</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">repr</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">eq</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">order</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">unsafe_hash</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">frozen</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">config</span><span class="s3">: </span><span class="s1">Union</span><span class="s3">[</span><span class="s1">ConfigDict</span><span class="s3">, </span><span class="s1">Type</span><span class="s3">[</span><span class="s1">object</span><span class="s3">], </span><span class="s2">None</span><span class="s3">] = </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">validate_on_init</span><span class="s3">: </span><span class="s1">Optional</span><span class="s3">[</span><span class="s1">bool</span><span class="s3">] = </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">use_proxy</span><span class="s3">: </span><span class="s1">Optional</span><span class="s3">[</span><span class="s1">bool</span><span class="s3">] = </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; </span><span class="s5">'DataclassClassOrWrapper'</span><span class="s3">:</span>
+        <span class="s3">...</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass_transform</span><span class="s3">(</span><span class="s1">field_specifiers</span><span class="s3">=(</span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">field</span><span class="s3">, </span><span class="s1">Field</span><span class="s3">))</span>
+<span class="s2">def </span><span class="s1">dataclass</span><span class="s3">(</span>
+    <span class="s1">_cls</span><span class="s3">: </span><span class="s1">Optional</span><span class="s3">[</span><span class="s1">Type</span><span class="s3">[</span><span class="s1">_T</span><span class="s3">]] = </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s3">*,</span>
+    <span class="s1">init</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+    <span class="s1">repr</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+    <span class="s1">eq</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+    <span class="s1">order</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+    <span class="s1">unsafe_hash</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+    <span class="s1">frozen</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+    <span class="s1">config</span><span class="s3">: </span><span class="s1">Union</span><span class="s3">[</span><span class="s1">ConfigDict</span><span class="s3">, </span><span class="s1">Type</span><span class="s3">[</span><span class="s1">object</span><span class="s3">], </span><span class="s2">None</span><span class="s3">] = </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">validate_on_init</span><span class="s3">: </span><span class="s1">Optional</span><span class="s3">[</span><span class="s1">bool</span><span class="s3">] = </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">use_proxy</span><span class="s3">: </span><span class="s1">Optional</span><span class="s3">[</span><span class="s1">bool</span><span class="s3">] = </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">kw_only</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; Union</span><span class="s3">[</span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">Type</span><span class="s3">[</span><span class="s1">_T</span><span class="s3">]], </span><span class="s5">'DataclassClassOrWrapper'</span><span class="s3">], </span><span class="s5">'DataclassClassOrWrapper'</span><span class="s3">]:</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Like the python standard lib dataclasses but with type validation. 
+    The result is either a pydantic dataclass that will validate input data 
+    or a wrapper that will trigger validation around a stdlib dataclass 
+    to avoid modifying it directly 
+    &quot;&quot;&quot;</span>
+    <span class="s1">the_config </span><span class="s3">= </span><span class="s1">get_config</span><span class="s3">(</span><span class="s1">config</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">wrap</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">: </span><span class="s1">Type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]) </span><span class="s1">-&gt; </span><span class="s5">'DataclassClassOrWrapper'</span><span class="s3">:</span>
+        <span class="s1">should_use_proxy </span><span class="s3">= (</span>
+            <span class="s1">use_proxy</span>
+            <span class="s2">if </span><span class="s1">use_proxy </span><span class="s2">is not None</span>
+            <span class="s2">else </span><span class="s3">(</span>
+                <span class="s1">is_builtin_dataclass</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">)</span>
+                <span class="s2">and </span><span class="s3">(</span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__bases__</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] </span><span class="s2">is </span><span class="s1">object </span><span class="s2">or </span><span class="s1">set</span><span class="s3">(</span><span class="s1">dir</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">)) == </span><span class="s1">set</span><span class="s3">(</span><span class="s1">dir</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__bases__</span><span class="s3">[</span><span class="s6">0</span><span class="s3">])))</span>
+            <span class="s3">)</span>
+        <span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">should_use_proxy</span><span class="s3">:</span>
+            <span class="s1">dc_cls_doc </span><span class="s3">= </span><span class="s5">''</span>
+            <span class="s1">dc_cls </span><span class="s3">= </span><span class="s1">DataclassProxy</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">)</span>
+            <span class="s1">default_validate_on_init </span><span class="s3">= </span><span class="s2">False</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">dc_cls_doc </span><span class="s3">= </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__doc__ </span><span class="s2">or </span><span class="s5">''  </span><span class="s4"># needs to be done before generating dataclass</span>
+            <span class="s2">if </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">version_info </span><span class="s3">&gt;= (</span><span class="s6">3</span><span class="s3">, </span><span class="s6">10</span><span class="s3">):</span>
+                <span class="s1">dc_cls </span><span class="s3">= </span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">dataclass</span><span class="s3">(</span>
+                    <span class="s1">cls</span><span class="s3">,</span>
+                    <span class="s1">init</span><span class="s3">=</span><span class="s1">init</span><span class="s3">,</span>
+                    <span class="s1">repr</span><span class="s3">=</span><span class="s1">repr</span><span class="s3">,</span>
+                    <span class="s1">eq</span><span class="s3">=</span><span class="s1">eq</span><span class="s3">,</span>
+                    <span class="s1">order</span><span class="s3">=</span><span class="s1">order</span><span class="s3">,</span>
+                    <span class="s1">unsafe_hash</span><span class="s3">=</span><span class="s1">unsafe_hash</span><span class="s3">,</span>
+                    <span class="s1">frozen</span><span class="s3">=</span><span class="s1">frozen</span><span class="s3">,</span>
+                    <span class="s1">kw_only</span><span class="s3">=</span><span class="s1">kw_only</span><span class="s3">,</span>
+                <span class="s3">)</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">dc_cls </span><span class="s3">= </span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">dataclass</span><span class="s3">(  </span><span class="s4"># type: ignore</span>
+                    <span class="s1">cls</span><span class="s3">, </span><span class="s1">init</span><span class="s3">=</span><span class="s1">init</span><span class="s3">, </span><span class="s1">repr</span><span class="s3">=</span><span class="s1">repr</span><span class="s3">, </span><span class="s1">eq</span><span class="s3">=</span><span class="s1">eq</span><span class="s3">, </span><span class="s1">order</span><span class="s3">=</span><span class="s1">order</span><span class="s3">, </span><span class="s1">unsafe_hash</span><span class="s3">=</span><span class="s1">unsafe_hash</span><span class="s3">, </span><span class="s1">frozen</span><span class="s3">=</span><span class="s1">frozen</span>
+                <span class="s3">)</span>
+            <span class="s1">default_validate_on_init </span><span class="s3">= </span><span class="s2">True</span>
+
+        <span class="s1">should_validate_on_init </span><span class="s3">= </span><span class="s1">default_validate_on_init </span><span class="s2">if </span><span class="s1">validate_on_init </span><span class="s2">is None else </span><span class="s1">validate_on_init</span>
+        <span class="s1">_add_pydantic_validation_attributes</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">the_config</span><span class="s3">, </span><span class="s1">should_validate_on_init</span><span class="s3">, </span><span class="s1">dc_cls_doc</span><span class="s3">)</span>
+        <span class="s1">dc_cls</span><span class="s3">.</span><span class="s1">__pydantic_model__</span><span class="s3">.</span><span class="s1">__try_update_forward_refs__</span><span class="s3">(**{</span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__name__</span><span class="s3">: </span><span class="s1">cls</span><span class="s3">})</span>
+        <span class="s2">return </span><span class="s1">dc_cls</span>
+
+    <span class="s2">if </span><span class="s1">_cls </span><span class="s2">is None</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">wrap</span>
+
+    <span class="s2">return </span><span class="s1">wrap</span><span class="s3">(</span><span class="s1">_cls</span><span class="s3">)</span>
+
+
+<span class="s3">@</span><span class="s1">contextmanager</span>
+<span class="s2">def </span><span class="s1">set_validation</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">: </span><span class="s1">Type</span><span class="s3">[</span><span class="s5">'DataclassT'</span><span class="s3">], </span><span class="s1">value</span><span class="s3">: </span><span class="s1">bool</span><span class="s3">) </span><span class="s1">-&gt; Generator</span><span class="s3">[</span><span class="s1">Type</span><span class="s3">[</span><span class="s5">'DataclassT'</span><span class="s3">], </span><span class="s2">None</span><span class="s3">, </span><span class="s2">None</span><span class="s3">]:</span>
+    <span class="s1">original_run_validation </span><span class="s3">= </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__pydantic_run_validation__</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">cls</span><span class="s3">.</span><span class="s1">__pydantic_run_validation__ </span><span class="s3">= </span><span class="s1">value</span>
+        <span class="s2">yield </span><span class="s1">cls</span>
+    <span class="s2">finally</span><span class="s3">:</span>
+        <span class="s1">cls</span><span class="s3">.</span><span class="s1">__pydantic_run_validation__ </span><span class="s3">= </span><span class="s1">original_run_validation</span>
+
+
+<span class="s2">class </span><span class="s1">DataclassProxy</span><span class="s3">:</span>
+    <span class="s1">__slots__ </span><span class="s3">= </span><span class="s5">'__dataclass__'</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">dc_cls</span><span class="s3">: </span><span class="s1">Type</span><span class="s3">[</span><span class="s5">'Dataclass'</span><span class="s3">]) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">object</span><span class="s3">.</span><span class="s1">__setattr__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s5">'__dataclass__'</span><span class="s3">, </span><span class="s1">dc_cls</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, **</span><span class="s1">kwargs</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+        <span class="s2">with </span><span class="s1">set_validation</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__dataclass__</span><span class="s3">, </span><span class="s2">True</span><span class="s3">):</span>
+            <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__dataclass__</span><span class="s3">(*</span><span class="s1">args</span><span class="s3">, **</span><span class="s1">kwargs</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">__getattr__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__dataclass__</span><span class="s3">, </span><span class="s1">name</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">__setattr__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">__name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, </span><span class="s1">__value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">setattr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__dataclass__</span><span class="s3">, </span><span class="s1">__name</span><span class="s3">, </span><span class="s1">__value</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">__instancecheck__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">instance</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">instance</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__dataclass__</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">__copy__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s5">'DataclassProxy'</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">DataclassProxy</span><span class="s3">(</span><span class="s1">copy</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__dataclass__</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">__deepcopy__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">memo</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s5">'DataclassProxy'</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">DataclassProxy</span><span class="s3">(</span><span class="s1">copy</span><span class="s3">.</span><span class="s1">deepcopy</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__dataclass__</span><span class="s3">, </span><span class="s1">memo</span><span class="s3">))</span>
+
+
+<span class="s2">def </span><span class="s1">_add_pydantic_validation_attributes</span><span class="s3">(  </span><span class="s4"># noqa: C901 (ignore complexity)</span>
+    <span class="s1">dc_cls</span><span class="s3">: </span><span class="s1">Type</span><span class="s3">[</span><span class="s5">'Dataclass'</span><span class="s3">],</span>
+    <span class="s1">config</span><span class="s3">: </span><span class="s1">Type</span><span class="s3">[</span><span class="s1">BaseConfig</span><span class="s3">],</span>
+    <span class="s1">validate_on_init</span><span class="s3">: </span><span class="s1">bool</span><span class="s3">,</span>
+    <span class="s1">dc_cls_doc</span><span class="s3">: </span><span class="s1">str</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot; 
+    We need to replace the right method. If no `__post_init__` has been set in the stdlib dataclass 
+    it won't even exist (code is generated on the fly by `dataclasses`) 
+    By default, we run validation after `__init__` or `__post_init__` if defined 
+    &quot;&quot;&quot;</span>
+    <span class="s1">init </span><span class="s3">= </span><span class="s1">dc_cls</span><span class="s3">.</span><span class="s1">__init__</span>
+
+    <span class="s3">@</span><span class="s1">wraps</span><span class="s3">(</span><span class="s1">init</span><span class="s3">)</span>
+    <span class="s2">def </span><span class="s1">handle_extra_init</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s5">'Dataclass'</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, **</span><span class="s1">kwargs</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">config</span><span class="s3">.</span><span class="s1">extra </span><span class="s3">== </span><span class="s1">Extra</span><span class="s3">.</span><span class="s1">ignore</span><span class="s3">:</span>
+            <span class="s1">init</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">, **{</span><span class="s1">k</span><span class="s3">: </span><span class="s1">v </span><span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">kwargs</span><span class="s3">.</span><span class="s1">items</span><span class="s3">() </span><span class="s2">if </span><span class="s1">k </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__dataclass_fields__</span><span class="s3">})</span>
+
+        <span class="s2">elif </span><span class="s1">config</span><span class="s3">.</span><span class="s1">extra </span><span class="s3">== </span><span class="s1">Extra</span><span class="s3">.</span><span class="s1">allow</span><span class="s3">:</span>
+            <span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">kwargs</span><span class="s3">.</span><span class="s1">items</span><span class="s3">():</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">__dict__</span><span class="s3">.</span><span class="s1">setdefault</span><span class="s3">(</span><span class="s1">k</span><span class="s3">, </span><span class="s1">v</span><span class="s3">)</span>
+            <span class="s1">init</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">, **{</span><span class="s1">k</span><span class="s3">: </span><span class="s1">v </span><span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">kwargs</span><span class="s3">.</span><span class="s1">items</span><span class="s3">() </span><span class="s2">if </span><span class="s1">k </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__dataclass_fields__</span><span class="s3">})</span>
+
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">init</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">, **</span><span class="s1">kwargs</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">dc_cls</span><span class="s3">, </span><span class="s5">'__post_init__'</span><span class="s3">):</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">post_init </span><span class="s3">= </span><span class="s1">dc_cls</span><span class="s3">.</span><span class="s1">__post_init__</span><span class="s3">.</span><span class="s1">__wrapped__  </span><span class="s4"># type: ignore[attr-defined]</span>
+        <span class="s2">except </span><span class="s1">AttributeError</span><span class="s3">:</span>
+            <span class="s1">post_init </span><span class="s3">= </span><span class="s1">dc_cls</span><span class="s3">.</span><span class="s1">__post_init__</span>
+
+        <span class="s3">@</span><span class="s1">wraps</span><span class="s3">(</span><span class="s1">post_init</span><span class="s3">)</span>
+        <span class="s2">def </span><span class="s1">new_post_init</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s5">'Dataclass'</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, **</span><span class="s1">kwargs</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">config</span><span class="s3">.</span><span class="s1">post_init_call </span><span class="s3">== </span><span class="s5">'before_validation'</span><span class="s3">:</span>
+                <span class="s1">post_init</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">, **</span><span class="s1">kwargs</span><span class="s3">)</span>
+
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__class__</span><span class="s3">.</span><span class="s1">__pydantic_run_validation__</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">__pydantic_validate_values__</span><span class="s3">()</span>
+                <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s5">'__post_init_post_parse__'</span><span class="s3">):</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">__post_init_post_parse__</span><span class="s3">(*</span><span class="s1">args</span><span class="s3">, **</span><span class="s1">kwargs</span><span class="s3">)</span>
+
+            <span class="s2">if </span><span class="s1">config</span><span class="s3">.</span><span class="s1">post_init_call </span><span class="s3">== </span><span class="s5">'after_validation'</span><span class="s3">:</span>
+                <span class="s1">post_init</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">, **</span><span class="s1">kwargs</span><span class="s3">)</span>
+
+        <span class="s1">setattr</span><span class="s3">(</span><span class="s1">dc_cls</span><span class="s3">, </span><span class="s5">'__init__'</span><span class="s3">, </span><span class="s1">handle_extra_init</span><span class="s3">)</span>
+        <span class="s1">setattr</span><span class="s3">(</span><span class="s1">dc_cls</span><span class="s3">, </span><span class="s5">'__post_init__'</span><span class="s3">, </span><span class="s1">new_post_init</span><span class="s3">)</span>
+
+    <span class="s2">else</span><span class="s3">:</span>
+
+        <span class="s3">@</span><span class="s1">wraps</span><span class="s3">(</span><span class="s1">init</span><span class="s3">)</span>
+        <span class="s2">def </span><span class="s1">new_init</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s5">'Dataclass'</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, **</span><span class="s1">kwargs</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+            <span class="s1">handle_extra_init</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">, **</span><span class="s1">kwargs</span><span class="s3">)</span>
+
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__class__</span><span class="s3">.</span><span class="s1">__pydantic_run_validation__</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">__pydantic_validate_values__</span><span class="s3">()</span>
+
+            <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s5">'__post_init_post_parse__'</span><span class="s3">):</span>
+                <span class="s4"># We need to find again the initvars. To do that we use `__dataclass_fields__` instead of</span>
+                <span class="s4"># public method `dataclasses.fields`</span>
+
+                <span class="s4"># get all initvars and their default values</span>
+                <span class="s1">initvars_and_values</span><span class="s3">: </span><span class="s1">Dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] = {}</span>
+                <span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">f </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__class__</span><span class="s3">.</span><span class="s1">__dataclass_fields__</span><span class="s3">.</span><span class="s1">values</span><span class="s3">()):</span>
+                    <span class="s2">if </span><span class="s1">f</span><span class="s3">.</span><span class="s1">_field_type </span><span class="s2">is </span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">_FIELD_INITVAR</span><span class="s3">:  </span><span class="s4"># type: ignore[attr-defined]</span>
+                        <span class="s2">try</span><span class="s3">:</span>
+                            <span class="s4"># set arg value by default</span>
+                            <span class="s1">initvars_and_values</span><span class="s3">[</span><span class="s1">f</span><span class="s3">.</span><span class="s1">name</span><span class="s3">] = </span><span class="s1">args</span><span class="s3">[</span><span class="s1">i</span><span class="s3">]</span>
+                        <span class="s2">except </span><span class="s1">IndexError</span><span class="s3">:</span>
+                            <span class="s1">initvars_and_values</span><span class="s3">[</span><span class="s1">f</span><span class="s3">.</span><span class="s1">name</span><span class="s3">] = </span><span class="s1">kwargs</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">f</span><span class="s3">.</span><span class="s1">name</span><span class="s3">, </span><span class="s1">f</span><span class="s3">.</span><span class="s1">default</span><span class="s3">)</span>
+
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">__post_init_post_parse__</span><span class="s3">(**</span><span class="s1">initvars_and_values</span><span class="s3">)</span>
+
+        <span class="s1">setattr</span><span class="s3">(</span><span class="s1">dc_cls</span><span class="s3">, </span><span class="s5">'__init__'</span><span class="s3">, </span><span class="s1">new_init</span><span class="s3">)</span>
+
+    <span class="s1">setattr</span><span class="s3">(</span><span class="s1">dc_cls</span><span class="s3">, </span><span class="s5">'__pydantic_run_validation__'</span><span class="s3">, </span><span class="s1">ClassAttribute</span><span class="s3">(</span><span class="s5">'__pydantic_run_validation__'</span><span class="s3">, </span><span class="s1">validate_on_init</span><span class="s3">))</span>
+    <span class="s1">setattr</span><span class="s3">(</span><span class="s1">dc_cls</span><span class="s3">, </span><span class="s5">'__pydantic_initialised__'</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+    <span class="s1">setattr</span><span class="s3">(</span><span class="s1">dc_cls</span><span class="s3">, </span><span class="s5">'__pydantic_model__'</span><span class="s3">, </span><span class="s1">create_pydantic_model_from_dataclass</span><span class="s3">(</span><span class="s1">dc_cls</span><span class="s3">, </span><span class="s1">config</span><span class="s3">, </span><span class="s1">dc_cls_doc</span><span class="s3">))</span>
+    <span class="s1">setattr</span><span class="s3">(</span><span class="s1">dc_cls</span><span class="s3">, </span><span class="s5">'__pydantic_validate_values__'</span><span class="s3">, </span><span class="s1">_dataclass_validate_values</span><span class="s3">)</span>
+    <span class="s1">setattr</span><span class="s3">(</span><span class="s1">dc_cls</span><span class="s3">, </span><span class="s5">'__validate__'</span><span class="s3">, </span><span class="s1">classmethod</span><span class="s3">(</span><span class="s1">_validate_dataclass</span><span class="s3">))</span>
+    <span class="s1">setattr</span><span class="s3">(</span><span class="s1">dc_cls</span><span class="s3">, </span><span class="s5">'__get_validators__'</span><span class="s3">, </span><span class="s1">classmethod</span><span class="s3">(</span><span class="s1">_get_validators</span><span class="s3">))</span>
+
+    <span class="s2">if </span><span class="s1">dc_cls</span><span class="s3">.</span><span class="s1">__pydantic_model__</span><span class="s3">.</span><span class="s1">__config__</span><span class="s3">.</span><span class="s1">validate_assignment </span><span class="s2">and not </span><span class="s1">dc_cls</span><span class="s3">.</span><span class="s1">__dataclass_params__</span><span class="s3">.</span><span class="s1">frozen</span><span class="s3">:</span>
+        <span class="s1">setattr</span><span class="s3">(</span><span class="s1">dc_cls</span><span class="s3">, </span><span class="s5">'__setattr__'</span><span class="s3">, </span><span class="s1">_dataclass_validate_assignment_setattr</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_get_validators</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">: </span><span class="s5">'DataclassClassOrWrapper'</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s5">'CallableGenerator'</span><span class="s3">:</span>
+    <span class="s2">yield </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__validate__</span>
+
+
+<span class="s2">def </span><span class="s1">_validate_dataclass</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">: </span><span class="s1">Type</span><span class="s3">[</span><span class="s5">'DataclassT'</span><span class="s3">], </span><span class="s1">v</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s5">'DataclassT'</span><span class="s3">:</span>
+    <span class="s2">with </span><span class="s1">set_validation</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s2">True</span><span class="s3">):</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">v</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">):</span>
+            <span class="s1">v</span><span class="s3">.</span><span class="s1">__pydantic_validate_values__</span><span class="s3">()</span>
+            <span class="s2">return </span><span class="s1">v</span>
+        <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">v</span><span class="s3">, (</span><span class="s1">list</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">)):</span>
+            <span class="s2">return </span><span class="s1">cls</span><span class="s3">(*</span><span class="s1">v</span><span class="s3">)</span>
+        <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">v</span><span class="s3">, </span><span class="s1">dict</span><span class="s3">):</span>
+            <span class="s2">return </span><span class="s1">cls</span><span class="s3">(**</span><span class="s1">v</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">DataclassTypeError</span><span class="s3">(</span><span class="s1">class_name</span><span class="s3">=</span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__name__</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">create_pydantic_model_from_dataclass</span><span class="s3">(</span>
+    <span class="s1">dc_cls</span><span class="s3">: </span><span class="s1">Type</span><span class="s3">[</span><span class="s5">'Dataclass'</span><span class="s3">],</span>
+    <span class="s1">config</span><span class="s3">: </span><span class="s1">Type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">] = </span><span class="s1">BaseConfig</span><span class="s3">,</span>
+    <span class="s1">dc_cls_doc</span><span class="s3">: </span><span class="s1">Optional</span><span class="s3">[</span><span class="s1">str</span><span class="s3">] = </span><span class="s2">None</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; Type</span><span class="s3">[</span><span class="s5">'BaseModel'</span><span class="s3">]:</span>
+    <span class="s1">field_definitions</span><span class="s3">: </span><span class="s1">Dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] = {}</span>
+    <span class="s2">for </span><span class="s1">field </span><span class="s2">in </span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">fields</span><span class="s3">(</span><span class="s1">dc_cls</span><span class="s3">):</span>
+        <span class="s1">default</span><span class="s3">: </span><span class="s1">Any </span><span class="s3">= </span><span class="s1">Undefined</span>
+        <span class="s1">default_factory</span><span class="s3">: </span><span class="s1">Optional</span><span class="s3">[</span><span class="s5">'NoArgAnyCallable'</span><span class="s3">] = </span><span class="s2">None</span>
+        <span class="s1">field_info</span><span class="s3">: </span><span class="s1">FieldInfo</span>
+
+        <span class="s2">if </span><span class="s1">field</span><span class="s3">.</span><span class="s1">default </span><span class="s2">is not </span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">MISSING</span><span class="s3">:</span>
+            <span class="s1">default </span><span class="s3">= </span><span class="s1">field</span><span class="s3">.</span><span class="s1">default</span>
+        <span class="s2">elif </span><span class="s1">field</span><span class="s3">.</span><span class="s1">default_factory </span><span class="s2">is not </span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">MISSING</span><span class="s3">:</span>
+            <span class="s1">default_factory </span><span class="s3">= </span><span class="s1">field</span><span class="s3">.</span><span class="s1">default_factory</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">default </span><span class="s3">= </span><span class="s1">Required</span>
+
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">default</span><span class="s3">, </span><span class="s1">FieldInfo</span><span class="s3">):</span>
+            <span class="s1">field_info </span><span class="s3">= </span><span class="s1">default</span>
+            <span class="s1">dc_cls</span><span class="s3">.</span><span class="s1">__pydantic_has_field_info_default__ </span><span class="s3">= </span><span class="s2">True</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">field_info </span><span class="s3">= </span><span class="s1">Field</span><span class="s3">(</span><span class="s1">default</span><span class="s3">=</span><span class="s1">default</span><span class="s3">, </span><span class="s1">default_factory</span><span class="s3">=</span><span class="s1">default_factory</span><span class="s3">, **</span><span class="s1">field</span><span class="s3">.</span><span class="s1">metadata</span><span class="s3">)</span>
+
+        <span class="s1">field_definitions</span><span class="s3">[</span><span class="s1">field</span><span class="s3">.</span><span class="s1">name</span><span class="s3">] = (</span><span class="s1">field</span><span class="s3">.</span><span class="s1">type</span><span class="s3">, </span><span class="s1">field_info</span><span class="s3">)</span>
+
+    <span class="s1">validators </span><span class="s3">= </span><span class="s1">gather_all_validators</span><span class="s3">(</span><span class="s1">dc_cls</span><span class="s3">)</span>
+    <span class="s1">model</span><span class="s3">: </span><span class="s1">Type</span><span class="s3">[</span><span class="s5">'BaseModel'</span><span class="s3">] = </span><span class="s1">create_model</span><span class="s3">(</span>
+        <span class="s1">dc_cls</span><span class="s3">.</span><span class="s1">__name__</span><span class="s3">,</span>
+        <span class="s1">__config__</span><span class="s3">=</span><span class="s1">config</span><span class="s3">,</span>
+        <span class="s1">__module__</span><span class="s3">=</span><span class="s1">dc_cls</span><span class="s3">.</span><span class="s1">__module__</span><span class="s3">,</span>
+        <span class="s1">__validators__</span><span class="s3">=</span><span class="s1">validators</span><span class="s3">,</span>
+        <span class="s1">__cls_kwargs__</span><span class="s3">={</span><span class="s5">'__resolve_forward_refs__'</span><span class="s3">: </span><span class="s2">False</span><span class="s3">},</span>
+        <span class="s3">**</span><span class="s1">field_definitions</span><span class="s3">,</span>
+    <span class="s3">)</span>
+    <span class="s1">model</span><span class="s3">.</span><span class="s1">__doc__ </span><span class="s3">= </span><span class="s1">dc_cls_doc </span><span class="s2">if </span><span class="s1">dc_cls_doc </span><span class="s2">is not None else </span><span class="s1">dc_cls</span><span class="s3">.</span><span class="s1">__doc__ </span><span class="s2">or </span><span class="s5">''</span>
+    <span class="s2">return </span><span class="s1">model</span>
+
+
+<span class="s2">if </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">version_info </span><span class="s3">&gt;= (</span><span class="s6">3</span><span class="s3">, </span><span class="s6">8</span><span class="s3">):</span>
+
+    <span class="s2">def </span><span class="s1">_is_field_cached_property</span><span class="s3">(</span><span class="s1">obj</span><span class="s3">: </span><span class="s5">'Dataclass'</span><span class="s3">, </span><span class="s1">k</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">type</span><span class="s3">(</span><span class="s1">obj</span><span class="s3">), </span><span class="s1">k</span><span class="s3">, </span><span class="s2">None</span><span class="s3">), </span><span class="s1">cached_property</span><span class="s3">)</span>
+
+<span class="s2">else</span><span class="s3">:</span>
+
+    <span class="s2">def </span><span class="s1">_is_field_cached_property</span><span class="s3">(</span><span class="s1">obj</span><span class="s3">: </span><span class="s5">'Dataclass'</span><span class="s3">, </span><span class="s1">k</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+        <span class="s2">return False</span>
+
+
+<span class="s2">def </span><span class="s1">_dataclass_validate_values</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s5">'Dataclass'</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s4"># validation errors can occur if this function is called twice on an already initialised dataclass.</span>
+    <span class="s4"># for example if Extra.forbid is enabled, it would consider __pydantic_initialised__ an invalid extra property</span>
+    <span class="s2">if </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s5">'__pydantic_initialised__'</span><span class="s3">):</span>
+        <span class="s2">return</span>
+    <span class="s2">if </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s5">'__pydantic_has_field_info_default__'</span><span class="s3">, </span><span class="s2">False</span><span class="s3">):</span>
+        <span class="s4"># We need to remove `FieldInfo` values since they are not valid as input</span>
+        <span class="s4"># It's ok to do that because they are obviously the default values!</span>
+        <span class="s1">input_data </span><span class="s3">= {</span>
+            <span class="s1">k</span><span class="s3">: </span><span class="s1">v</span>
+            <span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__dict__</span><span class="s3">.</span><span class="s1">items</span><span class="s3">()</span>
+            <span class="s2">if not </span><span class="s3">(</span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">v</span><span class="s3">, </span><span class="s1">FieldInfo</span><span class="s3">) </span><span class="s2">or </span><span class="s1">_is_field_cached_property</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">k</span><span class="s3">))</span>
+        <span class="s3">}</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">input_data </span><span class="s3">= {</span><span class="s1">k</span><span class="s3">: </span><span class="s1">v </span><span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__dict__</span><span class="s3">.</span><span class="s1">items</span><span class="s3">() </span><span class="s2">if not </span><span class="s1">_is_field_cached_property</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">k</span><span class="s3">)}</span>
+    <span class="s1">d</span><span class="s3">, </span><span class="s1">_</span><span class="s3">, </span><span class="s1">validation_error </span><span class="s3">= </span><span class="s1">validate_model</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__pydantic_model__</span><span class="s3">, </span><span class="s1">input_data</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">=</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__class__</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">validation_error</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">validation_error</span>
+    <span class="s1">self</span><span class="s3">.</span><span class="s1">__dict__</span><span class="s3">.</span><span class="s1">update</span><span class="s3">(</span><span class="s1">d</span><span class="s3">)</span>
+    <span class="s1">object</span><span class="s3">.</span><span class="s1">__setattr__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s5">'__pydantic_initialised__'</span><span class="s3">, </span><span class="s2">True</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_dataclass_validate_assignment_setattr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s5">'Dataclass'</span><span class="s3">, </span><span class="s1">name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, </span><span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__pydantic_initialised__</span><span class="s3">:</span>
+        <span class="s1">d </span><span class="s3">= </span><span class="s1">dict</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__dict__</span><span class="s3">)</span>
+        <span class="s1">d</span><span class="s3">.</span><span class="s1">pop</span><span class="s3">(</span><span class="s1">name</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)</span>
+        <span class="s1">known_field </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__pydantic_model__</span><span class="s3">.</span><span class="s1">__fields__</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">name</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">known_field</span><span class="s3">:</span>
+            <span class="s1">value</span><span class="s3">, </span><span class="s1">error_ </span><span class="s3">= </span><span class="s1">known_field</span><span class="s3">.</span><span class="s1">validate</span><span class="s3">(</span><span class="s1">value</span><span class="s3">, </span><span class="s1">d</span><span class="s3">, </span><span class="s1">loc</span><span class="s3">=</span><span class="s1">name</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">=</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__class__</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">error_</span><span class="s3">:</span>
+                <span class="s2">raise </span><span class="s1">ValidationError</span><span class="s3">([</span><span class="s1">error_</span><span class="s3">], </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__class__</span><span class="s3">)</span>
+
+    <span class="s1">object</span><span class="s3">.</span><span class="s1">__setattr__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">name</span><span class="s3">, </span><span class="s1">value</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">is_builtin_dataclass</span><span class="s3">(</span><span class="s1">_cls</span><span class="s3">: </span><span class="s1">Type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Whether a class is a stdlib dataclass 
+    (useful to discriminated a pydantic dataclass that is actually a wrapper around a stdlib dataclass) 
+ 
+    we check that 
+    - `_cls` is a dataclass 
+    - `_cls` is not a processed pydantic dataclass (with a basemodel attached) 
+    - `_cls` is not a pydantic dataclass inheriting directly from a stdlib dataclass 
+    e.g. 
+    ``` 
+    @dataclasses.dataclass 
+    class A: 
+        x: int 
+ 
+    @pydantic.dataclasses.dataclass 
+    class B(A): 
+        y: int 
+    ``` 
+    In this case, when we first check `B`, we make an extra check and look at the annotations ('y'), 
+    which won't be a superset of all the dataclass fields (only the stdlib fields i.e. 'x') 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s3">(</span>
+        <span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">is_dataclass</span><span class="s3">(</span><span class="s1">_cls</span><span class="s3">)</span>
+        <span class="s2">and not </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">_cls</span><span class="s3">, </span><span class="s5">'__pydantic_model__'</span><span class="s3">)</span>
+        <span class="s2">and </span><span class="s1">set</span><span class="s3">(</span><span class="s1">_cls</span><span class="s3">.</span><span class="s1">__dataclass_fields__</span><span class="s3">).</span><span class="s1">issuperset</span><span class="s3">(</span><span class="s1">set</span><span class="s3">(</span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">_cls</span><span class="s3">, </span><span class="s5">'__annotations__'</span><span class="s3">, {})))</span>
+    <span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">make_dataclass_validator</span><span class="s3">(</span><span class="s1">dc_cls</span><span class="s3">: </span><span class="s1">Type</span><span class="s3">[</span><span class="s5">'Dataclass'</span><span class="s3">], </span><span class="s1">config</span><span class="s3">: </span><span class="s1">Type</span><span class="s3">[</span><span class="s1">BaseConfig</span><span class="s3">]) </span><span class="s1">-&gt; </span><span class="s5">'CallableGenerator'</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Create a pydantic.dataclass from a builtin dataclass to add type validation 
+    and yield the validators 
+    It retrieves the parameters of the dataclass and forwards them to the newly created dataclass 
+    &quot;&quot;&quot;</span>
+    <span class="s2">yield from </span><span class="s1">_get_validators</span><span class="s3">(</span><span class="s1">dataclass</span><span class="s3">(</span><span class="s1">dc_cls</span><span class="s3">, </span><span class="s1">config</span><span class="s3">=</span><span class="s1">config</span><span class="s3">, </span><span class="s1">use_proxy</span><span class="s3">=</span><span class="s2">True</span><span class="s3">))</span>
+</pre>
+</body>
+</html>

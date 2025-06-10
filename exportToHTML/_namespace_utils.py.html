@@ -1,0 +1,316 @@
+<html>
+<head>
+<title>_namespace_utils.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #7a7e85;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_namespace_utils.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">from </span><span class="s1">collections</span><span class="s2">.</span><span class="s1">abc </span><span class="s0">import </span><span class="s1">Generator</span><span class="s2">, </span><span class="s1">Iterator</span><span class="s2">, </span><span class="s1">Mapping</span>
+<span class="s0">from </span><span class="s1">contextlib </span><span class="s0">import </span><span class="s1">contextmanager</span>
+<span class="s0">from </span><span class="s1">functools </span><span class="s0">import </span><span class="s1">cached_property</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Callable</span><span class="s2">, </span><span class="s1">NamedTuple</span><span class="s2">, </span><span class="s1">TypeVar</span>
+
+<span class="s0">from </span><span class="s1">typing_extensions </span><span class="s0">import </span><span class="s1">ParamSpec</span><span class="s2">, </span><span class="s1">TypeAlias</span><span class="s2">, </span><span class="s1">TypeAliasType</span><span class="s2">, </span><span class="s1">TypeVarTuple</span>
+
+<span class="s1">GlobalsNamespace</span><span class="s2">: </span><span class="s1">TypeAlias </span><span class="s2">= </span><span class="s3">'dict[str, Any]'</span>
+<span class="s3">&quot;&quot;&quot;A global namespace. 
+ 
+In most cases, this is a reference to the `__dict__` attribute of a module. 
+This namespace type is expected as the `globals` argument during annotations evaluation. 
+&quot;&quot;&quot;</span>
+
+<span class="s1">MappingNamespace</span><span class="s2">: </span><span class="s1">TypeAlias </span><span class="s2">= </span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]</span>
+<span class="s3">&quot;&quot;&quot;Any kind of namespace. 
+ 
+In most cases, this is a local namespace (e.g. the `__dict__` attribute of a class, 
+the [`f_locals`][frame.f_locals] attribute of a frame object, when dealing with types 
+defined inside functions). 
+This namespace type is expected as the `locals` argument during annotations evaluation. 
+&quot;&quot;&quot;</span>
+
+<span class="s1">_TypeVarLike</span><span class="s2">: </span><span class="s1">TypeAlias </span><span class="s2">= </span><span class="s3">'TypeVar | ParamSpec | TypeVarTuple'</span>
+
+
+<span class="s0">class </span><span class="s1">NamespacesTuple</span><span class="s2">(</span><span class="s1">NamedTuple</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;A tuple of globals and locals to be used during annotations evaluation. 
+ 
+    This datastructure is defined as a named tuple so that it can easily be unpacked: 
+ 
+    ```python {lint=&quot;skip&quot; test=&quot;skip&quot;} 
+    def eval_type(typ: type[Any], ns: NamespacesTuple) -&gt; None: 
+        return eval(typ, *ns) 
+    ``` 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">globals</span><span class="s2">: </span><span class="s1">GlobalsNamespace</span>
+    <span class="s3">&quot;&quot;&quot;The namespace to be used as the `globals` argument during annotations evaluation.&quot;&quot;&quot;</span>
+
+    <span class="s1">locals</span><span class="s2">: </span><span class="s1">MappingNamespace</span>
+    <span class="s3">&quot;&quot;&quot;The namespace to be used as the `locals` argument during annotations evaluation.&quot;&quot;&quot;</span>
+
+
+<span class="s0">def </span><span class="s1">get_module_ns_of</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]:</span>
+    <span class="s4">&quot;&quot;&quot;Get the namespace of the module where the object is defined. 
+ 
+    Caution: this function does not return a copy of the module namespace, so the result 
+    should not be mutated. The burden of enforcing this is on the caller. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">module_name </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s3">'__module__'</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">module_name</span><span class="s2">:</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">modules</span><span class="s2">[</span><span class="s1">module_name</span><span class="s2">].</span><span class="s1">__dict__</span>
+        <span class="s0">except </span><span class="s1">KeyError</span><span class="s2">:</span>
+            <span class="s5"># happens occasionally, see https://github.com/pydantic/pydantic/issues/2363</span>
+            <span class="s0">return </span><span class="s2">{}</span>
+    <span class="s0">return </span><span class="s2">{}</span>
+
+
+<span class="s5"># Note that this class is almost identical to `collections.ChainMap`, but need to enforce</span>
+<span class="s5"># immutable mappings here:</span>
+<span class="s0">class </span><span class="s1">LazyLocalNamespace</span><span class="s2">(</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]):</span>
+    <span class="s4">&quot;&quot;&quot;A lazily evaluated mapping, to be used as the `locals` argument during annotations evaluation. 
+ 
+    While the [`eval`][eval] function expects a mapping as the `locals` argument, it only 
+    performs `__getitem__` calls. The [`Mapping`][collections.abc.Mapping] abstract base class 
+    is fully implemented only for type checking purposes. 
+ 
+    Args: 
+        *namespaces: The namespaces to consider, in ascending order of priority. 
+ 
+    Example: 
+        ```python {lint=&quot;skip&quot; test=&quot;skip&quot;} 
+        ns = LazyLocalNamespace({'a': 1, 'b': 2}, {'a': 3}) 
+        ns['a'] 
+        #&gt; 3 
+        ns['b'] 
+        #&gt; 2 
+        ``` 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, *</span><span class="s1">namespaces</span><span class="s2">: </span><span class="s1">MappingNamespace</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_namespaces </span><span class="s2">= </span><span class="s1">namespaces</span>
+
+    <span class="s2">@</span><span class="s1">cached_property</span>
+    <span class="s0">def </span><span class="s1">data</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]:</span>
+        <span class="s0">return </span><span class="s2">{</span><span class="s1">k</span><span class="s2">: </span><span class="s1">v </span><span class="s0">for </span><span class="s1">ns </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_namespaces </span><span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">ns</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()}</span>
+
+    <span class="s0">def </span><span class="s1">__len__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; int</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">data</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">__getitem__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">data</span><span class="s2">[</span><span class="s1">key</span><span class="s2">]</span>
+
+    <span class="s0">def </span><span class="s1">__contains__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">: </span><span class="s1">object</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">key </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">data</span>
+
+    <span class="s0">def </span><span class="s1">__iter__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; Iterator</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+        <span class="s0">return </span><span class="s1">iter</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">data</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">ns_for_function</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">: </span><span class="s1">Callable</span><span class="s2">[..., </span><span class="s1">Any</span><span class="s2">], </span><span class="s1">parent_namespace</span><span class="s2">: </span><span class="s1">MappingNamespace </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; NamespacesTuple</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Return the global and local namespaces to be used when evaluating annotations for the provided function. 
+ 
+    The global namespace will be the `__dict__` attribute of the module the function was defined in. 
+    The local namespace will contain the `__type_params__` introduced by PEP 695. 
+ 
+    Args: 
+        obj: The object to use when building namespaces. 
+        parent_namespace: Optional namespace to be added with the lowest priority in the local namespace. 
+            If the passed function is a method, the `parent_namespace` will be the namespace of the class 
+            the method is defined in. Thus, we also fetch type `__type_params__` from there (i.e. the 
+            class-scoped type variables). 
+    &quot;&quot;&quot;</span>
+    <span class="s1">locals_list</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">MappingNamespace</span><span class="s2">] = []</span>
+    <span class="s0">if </span><span class="s1">parent_namespace </span><span class="s0">is not None</span><span class="s2">:</span>
+        <span class="s1">locals_list</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">parent_namespace</span><span class="s2">)</span>
+
+    <span class="s5"># Get the `__type_params__` attribute introduced by PEP 695.</span>
+    <span class="s5"># Note that the `typing._eval_type` function expects type params to be</span>
+    <span class="s5"># passed as a separate argument. However, internally, `_eval_type` calls</span>
+    <span class="s5"># `ForwardRef._evaluate` which will merge type params with the localns,</span>
+    <span class="s5"># essentially mimicking what we do here.</span>
+    <span class="s1">type_params</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">_TypeVarLike</span><span class="s2">, ...] = </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s3">'__type_params__'</span><span class="s2">, ())</span>
+    <span class="s0">if </span><span class="s1">parent_namespace </span><span class="s0">is not None</span><span class="s2">:</span>
+        <span class="s5"># We also fetch type params from the parent namespace. If present, it probably</span>
+        <span class="s5"># means the function was defined in a class. This is to support the following:</span>
+        <span class="s5"># https://github.com/python/cpython/issues/124089.</span>
+        <span class="s1">type_params </span><span class="s2">+= </span><span class="s1">parent_namespace</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'__type_params__'</span><span class="s2">, ())</span>
+
+    <span class="s1">locals_list</span><span class="s2">.</span><span class="s1">append</span><span class="s2">({</span><span class="s1">t</span><span class="s2">.</span><span class="s1">__name__</span><span class="s2">: </span><span class="s1">t </span><span class="s0">for </span><span class="s1">t </span><span class="s0">in </span><span class="s1">type_params</span><span class="s2">})</span>
+
+    <span class="s5"># What about short-cirtuiting to `obj.__globals__`?</span>
+    <span class="s1">globalns </span><span class="s2">= </span><span class="s1">get_module_ns_of</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">NamespacesTuple</span><span class="s2">(</span><span class="s1">globalns</span><span class="s2">, </span><span class="s1">LazyLocalNamespace</span><span class="s2">(*</span><span class="s1">locals_list</span><span class="s2">))</span>
+
+
+<span class="s0">class </span><span class="s1">NsResolver</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;A class responsible for the namespaces resolving logic for annotations evaluation. 
+ 
+    This class handles the namespace logic when evaluating annotations mainly for class objects. 
+ 
+    It holds a stack of classes that are being inspected during the core schema building, 
+    and the `types_namespace` property exposes the globals and locals to be used for 
+    type annotation evaluation. Additionally -- if no class is present in the stack -- a 
+    fallback globals and locals can be provided using the `namespaces_tuple` argument 
+    (this is useful when generating a schema for a simple annotation, e.g. when using 
+    `TypeAdapter`). 
+ 
+    The namespace creation logic is unfortunately flawed in some cases, for backwards 
+    compatibility reasons and to better support valid edge cases. See the description 
+    for the `parent_namespace` argument and the example for more details. 
+ 
+    Args: 
+        namespaces_tuple: The default globals and locals to use if no class is present 
+            on the stack. This can be useful when using the `GenerateSchema` class 
+            with `TypeAdapter`, where the &quot;type&quot; being analyzed is a simple annotation. 
+        parent_namespace: An optional parent namespace that will be added to the locals 
+            with the lowest priority. For a given class defined in a function, the locals 
+            of this function are usually used as the parent namespace: 
+ 
+            ```python {lint=&quot;skip&quot; test=&quot;skip&quot;} 
+            from pydantic import BaseModel 
+ 
+            def func() -&gt; None: 
+                SomeType = int 
+ 
+                class Model(BaseModel): 
+                    f: 'SomeType' 
+ 
+                # when collecting fields, an namespace resolver instance will be created 
+                # this way: 
+                # ns_resolver = NsResolver(parent_namespace={'SomeType': SomeType}) 
+            ``` 
+ 
+            For backwards compatibility reasons and to support valid edge cases, this parent 
+            namespace will be used for *every* type being pushed to the stack. In the future, 
+            we might want to be smarter by only doing so when the type being pushed is defined 
+            in the same module as the parent namespace. 
+ 
+    Example: 
+        ```python {lint=&quot;skip&quot; test=&quot;skip&quot;} 
+        ns_resolver = NsResolver( 
+            parent_namespace={'fallback': 1}, 
+        ) 
+ 
+        class Sub: 
+            m: 'Model' 
+ 
+        class Model: 
+            some_local = 1 
+            sub: Sub 
+ 
+        ns_resolver = NsResolver() 
+ 
+        # This is roughly what happens when we build a core schema for `Model`: 
+        with ns_resolver.push(Model): 
+            ns_resolver.types_namespace 
+            #&gt; NamespacesTuple({'Sub': Sub}, {'Model': Model, 'some_local': 1}) 
+            # First thing to notice here, the model being pushed is added to the locals. 
+            # Because `NsResolver` is being used during the model definition, it is not 
+            # yet added to the globals. This is useful when resolving self-referencing annotations. 
+ 
+            with ns_resolver.push(Sub): 
+                ns_resolver.types_namespace 
+                #&gt; NamespacesTuple({'Sub': Sub}, {'Sub': Sub, 'Model': Model}) 
+                # Second thing to notice: `Sub` is present in both the globals and locals. 
+                # This is not an issue, just that as described above, the model being pushed 
+                # is added to the locals, but it happens to be present in the globals as well 
+                # because it is already defined. 
+                # Third thing to notice: `Model` is also added in locals. This is a backwards 
+                # compatibility workaround that allows for `Sub` to be able to resolve `'Model'` 
+                # correctly (as otherwise models would have to be rebuilt even though this 
+                # doesn't look necessary). 
+        ``` 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">namespaces_tuple</span><span class="s2">: </span><span class="s1">NamespacesTuple </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">parent_namespace</span><span class="s2">: </span><span class="s1">MappingNamespace </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_base_ns_tuple </span><span class="s2">= </span><span class="s1">namespaces_tuple </span><span class="s0">or </span><span class="s1">NamespacesTuple</span><span class="s2">({}, {})</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_parent_ns </span><span class="s2">= </span><span class="s1">parent_namespace</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_types_stack</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">type</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">] | </span><span class="s1">TypeAliasType</span><span class="s2">] = []</span>
+
+    <span class="s2">@</span><span class="s1">cached_property</span>
+    <span class="s0">def </span><span class="s1">types_namespace</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; NamespacesTuple</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;The current global and local namespaces to be used for annotations evaluation.&quot;&quot;&quot;</span>
+        <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_types_stack</span><span class="s2">:</span>
+            <span class="s5"># TODO: should we merge the parent namespace here?</span>
+            <span class="s5"># This is relevant for TypeAdapter, where there are no types on the stack, and we might</span>
+            <span class="s5"># need access to the parent_ns. Right now, we sidestep this in `type_adapter.py` by passing</span>
+            <span class="s5"># locals to both parent_ns and the base_ns_tuple, but this is a bit hacky.</span>
+            <span class="s5"># we might consider something like:</span>
+            <span class="s5"># if self._parent_ns is not None:</span>
+            <span class="s5">#     # Hacky workarounds, see class docstring:</span>
+            <span class="s5">#     # An optional parent namespace that will be added to the locals with the lowest priority</span>
+            <span class="s5">#     locals_list: list[MappingNamespace] = [self._parent_ns, self._base_ns_tuple.locals]</span>
+            <span class="s5">#     return NamespacesTuple(self._base_ns_tuple.globals, LazyLocalNamespace(*locals_list))</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_base_ns_tuple</span>
+
+        <span class="s1">typ </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_types_stack</span><span class="s2">[-</span><span class="s6">1</span><span class="s2">]</span>
+
+        <span class="s1">globalns </span><span class="s2">= </span><span class="s1">get_module_ns_of</span><span class="s2">(</span><span class="s1">typ</span><span class="s2">)</span>
+
+        <span class="s1">locals_list</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">MappingNamespace</span><span class="s2">] = []</span>
+        <span class="s5"># Hacky workarounds, see class docstring:</span>
+        <span class="s5"># An optional parent namespace that will be added to the locals with the lowest priority</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_parent_ns </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">locals_list</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_parent_ns</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_types_stack</span><span class="s2">) &gt; </span><span class="s6">1</span><span class="s2">:</span>
+            <span class="s1">first_type </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_types_stack</span><span class="s2">[</span><span class="s6">0</span><span class="s2">]</span>
+            <span class="s1">locals_list</span><span class="s2">.</span><span class="s1">append</span><span class="s2">({</span><span class="s1">first_type</span><span class="s2">.</span><span class="s1">__name__</span><span class="s2">: </span><span class="s1">first_type</span><span class="s2">})</span>
+
+        <span class="s5"># Adding `__type_params__` *before* `vars(typ)`, as the latter takes priority</span>
+        <span class="s5"># (see https://github.com/python/cpython/pull/120272).</span>
+        <span class="s5"># TODO `typ.__type_params__` when we drop support for Python 3.11:</span>
+        <span class="s1">type_params</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">_TypeVarLike</span><span class="s2">, ...] = </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">typ</span><span class="s2">, </span><span class="s3">'__type_params__'</span><span class="s2">, ())</span>
+        <span class="s0">if </span><span class="s1">type_params</span><span class="s2">:</span>
+            <span class="s5"># Adding `__type_params__` is mostly useful for generic classes defined using</span>
+            <span class="s5"># PEP 695 syntax *and* using forward annotations (see the example in</span>
+            <span class="s5"># https://github.com/python/cpython/issues/114053). For TypeAliasType instances,</span>
+            <span class="s5"># it is way less common, but still required if using a string annotation in the alias</span>
+            <span class="s5"># value, e.g. `type A[T] = 'T'` (which is not necessary in most cases).</span>
+            <span class="s1">locals_list</span><span class="s2">.</span><span class="s1">append</span><span class="s2">({</span><span class="s1">t</span><span class="s2">.</span><span class="s1">__name__</span><span class="s2">: </span><span class="s1">t </span><span class="s0">for </span><span class="s1">t </span><span class="s0">in </span><span class="s1">type_params</span><span class="s2">})</span>
+
+        <span class="s5"># TypeAliasType instances don't have a `__dict__` attribute, so the check</span>
+        <span class="s5"># is necessary:</span>
+        <span class="s0">if </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">typ</span><span class="s2">, </span><span class="s3">'__dict__'</span><span class="s2">):</span>
+            <span class="s1">locals_list</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">vars</span><span class="s2">(</span><span class="s1">typ</span><span class="s2">))</span>
+
+        <span class="s5"># The `len(self._types_stack) &gt; 1` check above prevents this from being added twice:</span>
+        <span class="s1">locals_list</span><span class="s2">.</span><span class="s1">append</span><span class="s2">({</span><span class="s1">typ</span><span class="s2">.</span><span class="s1">__name__</span><span class="s2">: </span><span class="s1">typ</span><span class="s2">})</span>
+
+        <span class="s0">return </span><span class="s1">NamespacesTuple</span><span class="s2">(</span><span class="s1">globalns</span><span class="s2">, </span><span class="s1">LazyLocalNamespace</span><span class="s2">(*</span><span class="s1">locals_list</span><span class="s2">))</span>
+
+    <span class="s2">@</span><span class="s1">contextmanager</span>
+    <span class="s0">def </span><span class="s1">push</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">typ</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">] | </span><span class="s1">TypeAliasType</span><span class="s2">, /) </span><span class="s1">-&gt; Generator</span><span class="s2">[</span><span class="s0">None</span><span class="s2">]:</span>
+        <span class="s4">&quot;&quot;&quot;Push a type to the stack.&quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_types_stack</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">typ</span><span class="s2">)</span>
+        <span class="s5"># Reset the cached property:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">.</span><span class="s1">pop</span><span class="s2">(</span><span class="s3">'types_namespace'</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">yield</span>
+        <span class="s0">finally</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_types_stack</span><span class="s2">.</span><span class="s1">pop</span><span class="s2">()</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">.</span><span class="s1">pop</span><span class="s2">(</span><span class="s3">'types_namespace'</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

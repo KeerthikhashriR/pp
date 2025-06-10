@@ -1,0 +1,409 @@
+<html>
+<head>
+<title>ImImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #2aacb8;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># IFUNC IM file handling for PIL</span>
+<span class="s0">#</span>
+<span class="s0"># history:</span>
+<span class="s0"># 1995-09-01 fl   Created.</span>
+<span class="s0"># 1997-01-03 fl   Save palette images</span>
+<span class="s0"># 1997-01-08 fl   Added sequence support</span>
+<span class="s0"># 1997-01-23 fl   Added P and RGB save support</span>
+<span class="s0"># 1997-05-31 fl   Read floating point images</span>
+<span class="s0"># 1997-06-22 fl   Save floating point images</span>
+<span class="s0"># 1997-08-27 fl   Read and save 1-bit images</span>
+<span class="s0"># 1998-06-25 fl   Added support for RGB+LUT images</span>
+<span class="s0"># 1998-07-02 fl   Added support for YCC images</span>
+<span class="s0"># 1998-07-15 fl   Renamed offset attribute to avoid name clash</span>
+<span class="s0"># 1998-12-29 fl   Added I;16 support</span>
+<span class="s0"># 2001-02-17 fl   Use 're' instead of 'regex' (Python 2.1) (0.7)</span>
+<span class="s0"># 2003-09-26 fl   Added LA/PA support</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2003 by Secret Labs AB.</span>
+<span class="s0"># Copyright (c) 1995-2001 by Fredrik Lundh.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">IO</span><span class="s3">, </span><span class="s1">Any</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">ImageFile</span><span class="s3">, </span><span class="s1">ImagePalette</span>
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Standard tags</span>
+
+<span class="s1">COMMENT </span><span class="s3">= </span><span class="s4">&quot;Comment&quot;</span>
+<span class="s1">DATE </span><span class="s3">= </span><span class="s4">&quot;Date&quot;</span>
+<span class="s1">EQUIPMENT </span><span class="s3">= </span><span class="s4">&quot;Digitalization equipment&quot;</span>
+<span class="s1">FRAMES </span><span class="s3">= </span><span class="s4">&quot;File size (no of images)&quot;</span>
+<span class="s1">LUT </span><span class="s3">= </span><span class="s4">&quot;Lut&quot;</span>
+<span class="s1">NAME </span><span class="s3">= </span><span class="s4">&quot;Name&quot;</span>
+<span class="s1">SCALE </span><span class="s3">= </span><span class="s4">&quot;Scale (x,y)&quot;</span>
+<span class="s1">SIZE </span><span class="s3">= </span><span class="s4">&quot;Image size (x*y)&quot;</span>
+<span class="s1">MODE </span><span class="s3">= </span><span class="s4">&quot;Image type&quot;</span>
+
+<span class="s1">TAGS </span><span class="s3">= {</span>
+    <span class="s1">COMMENT</span><span class="s3">: </span><span class="s5">0</span><span class="s3">,</span>
+    <span class="s1">DATE</span><span class="s3">: </span><span class="s5">0</span><span class="s3">,</span>
+    <span class="s1">EQUIPMENT</span><span class="s3">: </span><span class="s5">0</span><span class="s3">,</span>
+    <span class="s1">FRAMES</span><span class="s3">: </span><span class="s5">0</span><span class="s3">,</span>
+    <span class="s1">LUT</span><span class="s3">: </span><span class="s5">0</span><span class="s3">,</span>
+    <span class="s1">NAME</span><span class="s3">: </span><span class="s5">0</span><span class="s3">,</span>
+    <span class="s1">SCALE</span><span class="s3">: </span><span class="s5">0</span><span class="s3">,</span>
+    <span class="s1">SIZE</span><span class="s3">: </span><span class="s5">0</span><span class="s3">,</span>
+    <span class="s1">MODE</span><span class="s3">: </span><span class="s5">0</span><span class="s3">,</span>
+<span class="s3">}</span>
+
+<span class="s1">OPEN </span><span class="s3">= {</span>
+    <span class="s0"># ifunc93/p3cfunc formats</span>
+    <span class="s4">&quot;0 1 image&quot;</span><span class="s3">: (</span><span class="s4">&quot;1&quot;</span><span class="s3">, </span><span class="s4">&quot;1&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;L 1 image&quot;</span><span class="s3">: (</span><span class="s4">&quot;1&quot;</span><span class="s3">, </span><span class="s4">&quot;1&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;Greyscale image&quot;</span><span class="s3">: (</span><span class="s4">&quot;L&quot;</span><span class="s3">, </span><span class="s4">&quot;L&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;Grayscale image&quot;</span><span class="s3">: (</span><span class="s4">&quot;L&quot;</span><span class="s3">, </span><span class="s4">&quot;L&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;RGB image&quot;</span><span class="s3">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s3">, </span><span class="s4">&quot;RGB;L&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;RLB image&quot;</span><span class="s3">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s3">, </span><span class="s4">&quot;RLB&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;RYB image&quot;</span><span class="s3">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s3">, </span><span class="s4">&quot;RLB&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;B1 image&quot;</span><span class="s3">: (</span><span class="s4">&quot;1&quot;</span><span class="s3">, </span><span class="s4">&quot;1&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;B2 image&quot;</span><span class="s3">: (</span><span class="s4">&quot;P&quot;</span><span class="s3">, </span><span class="s4">&quot;P;2&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;B4 image&quot;</span><span class="s3">: (</span><span class="s4">&quot;P&quot;</span><span class="s3">, </span><span class="s4">&quot;P;4&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;X 24 image&quot;</span><span class="s3">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s3">, </span><span class="s4">&quot;RGB&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;L 32 S image&quot;</span><span class="s3">: (</span><span class="s4">&quot;I&quot;</span><span class="s3">, </span><span class="s4">&quot;I;32&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;L 32 F image&quot;</span><span class="s3">: (</span><span class="s4">&quot;F&quot;</span><span class="s3">, </span><span class="s4">&quot;F;32&quot;</span><span class="s3">),</span>
+    <span class="s0"># old p3cfunc formats</span>
+    <span class="s4">&quot;RGB3 image&quot;</span><span class="s3">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s3">, </span><span class="s4">&quot;RGB;T&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;RYB3 image&quot;</span><span class="s3">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s3">, </span><span class="s4">&quot;RYB;T&quot;</span><span class="s3">),</span>
+    <span class="s0"># extensions</span>
+    <span class="s4">&quot;LA image&quot;</span><span class="s3">: (</span><span class="s4">&quot;LA&quot;</span><span class="s3">, </span><span class="s4">&quot;LA;L&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;PA image&quot;</span><span class="s3">: (</span><span class="s4">&quot;LA&quot;</span><span class="s3">, </span><span class="s4">&quot;PA;L&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;RGBA image&quot;</span><span class="s3">: (</span><span class="s4">&quot;RGBA&quot;</span><span class="s3">, </span><span class="s4">&quot;RGBA;L&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;RGBX image&quot;</span><span class="s3">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s3">, </span><span class="s4">&quot;RGBX;L&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;CMYK image&quot;</span><span class="s3">: (</span><span class="s4">&quot;CMYK&quot;</span><span class="s3">, </span><span class="s4">&quot;CMYK;L&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;YCC image&quot;</span><span class="s3">: (</span><span class="s4">&quot;YCbCr&quot;</span><span class="s3">, </span><span class="s4">&quot;YCbCr;L&quot;</span><span class="s3">),</span>
+<span class="s3">}</span>
+
+<span class="s0"># ifunc95 extensions</span>
+<span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s3">[</span><span class="s4">&quot;8&quot;</span><span class="s3">, </span><span class="s4">&quot;8S&quot;</span><span class="s3">, </span><span class="s4">&quot;16&quot;</span><span class="s3">, </span><span class="s4">&quot;16S&quot;</span><span class="s3">, </span><span class="s4">&quot;32&quot;</span><span class="s3">, </span><span class="s4">&quot;32F&quot;</span><span class="s3">]:</span>
+    <span class="s1">OPEN</span><span class="s3">[</span><span class="s4">f&quot;L </span><span class="s2">{</span><span class="s1">i</span><span class="s2">} </span><span class="s4">image&quot;</span><span class="s3">] = (</span><span class="s4">&quot;F&quot;</span><span class="s3">, </span><span class="s4">f&quot;F;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s3">)</span>
+    <span class="s1">OPEN</span><span class="s3">[</span><span class="s4">f&quot;L*</span><span class="s2">{</span><span class="s1">i</span><span class="s2">} </span><span class="s4">image&quot;</span><span class="s3">] = (</span><span class="s4">&quot;F&quot;</span><span class="s3">, </span><span class="s4">f&quot;F;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s3">)</span>
+<span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s3">[</span><span class="s4">&quot;16&quot;</span><span class="s3">, </span><span class="s4">&quot;16L&quot;</span><span class="s3">, </span><span class="s4">&quot;16B&quot;</span><span class="s3">]:</span>
+    <span class="s1">OPEN</span><span class="s3">[</span><span class="s4">f&quot;L </span><span class="s2">{</span><span class="s1">i</span><span class="s2">} </span><span class="s4">image&quot;</span><span class="s3">] = (</span><span class="s4">f&quot;I;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s3">, </span><span class="s4">f&quot;I;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s3">)</span>
+    <span class="s1">OPEN</span><span class="s3">[</span><span class="s4">f&quot;L*</span><span class="s2">{</span><span class="s1">i</span><span class="s2">} </span><span class="s4">image&quot;</span><span class="s3">] = (</span><span class="s4">f&quot;I;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s3">, </span><span class="s4">f&quot;I;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s3">)</span>
+<span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s3">[</span><span class="s4">&quot;32S&quot;</span><span class="s3">]:</span>
+    <span class="s1">OPEN</span><span class="s3">[</span><span class="s4">f&quot;L </span><span class="s2">{</span><span class="s1">i</span><span class="s2">} </span><span class="s4">image&quot;</span><span class="s3">] = (</span><span class="s4">&quot;I&quot;</span><span class="s3">, </span><span class="s4">f&quot;I;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s3">)</span>
+    <span class="s1">OPEN</span><span class="s3">[</span><span class="s4">f&quot;L*</span><span class="s2">{</span><span class="s1">i</span><span class="s2">} </span><span class="s4">image&quot;</span><span class="s3">] = (</span><span class="s4">&quot;I&quot;</span><span class="s3">, </span><span class="s4">f&quot;I;</span><span class="s2">{</span><span class="s1">i</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s3">)</span>
+<span class="s2">for </span><span class="s1">j </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s5">2</span><span class="s3">, </span><span class="s5">33</span><span class="s3">):</span>
+    <span class="s1">OPEN</span><span class="s3">[</span><span class="s4">f&quot;L*</span><span class="s2">{</span><span class="s1">j</span><span class="s2">} </span><span class="s4">image&quot;</span><span class="s3">] = (</span><span class="s4">&quot;F&quot;</span><span class="s3">, </span><span class="s4">f&quot;F;</span><span class="s2">{</span><span class="s1">j</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s3">)</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Read IM directory</span>
+
+<span class="s1">split </span><span class="s3">= </span><span class="s1">re</span><span class="s3">.</span><span class="s1">compile</span><span class="s3">(</span><span class="s6">rb&quot;^([A-Za-z][^:]*):[ \t]*(.*)[ \t]*$&quot;</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">number</span><span class="s3">(</span><span class="s1">s</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; float</span><span class="s3">:</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">int</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">float</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for the IFUNC IM file format.</span>
+
+
+<span class="s2">class </span><span class="s1">ImImageFile</span><span class="s3">(</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">ImageFile</span><span class="s3">):</span>
+    <span class="s1">format </span><span class="s3">= </span><span class="s4">&quot;IM&quot;</span>
+    <span class="s1">format_description </span><span class="s3">= </span><span class="s4">&quot;IFUNC Image Memory&quot;</span>
+    <span class="s1">_close_exclusive_fp_after_loading </span><span class="s3">= </span><span class="s2">False</span>
+
+    <span class="s2">def </span><span class="s1">_open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s0"># Quick rejection: if there's not an LF among the first</span>
+        <span class="s0"># 100 bytes, this is (probably) not a text header.</span>
+
+        <span class="s2">if </span><span class="s6">b&quot;</span><span class="s2">\n</span><span class="s6">&quot; </span><span class="s2">not in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">100</span><span class="s3">):</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;not an IM file&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s5">0</span><span class="s3">)</span>
+
+        <span class="s1">n </span><span class="s3">= </span><span class="s5">0</span>
+
+        <span class="s0"># Default values</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s1">MODE</span><span class="s3">] = </span><span class="s4">&quot;L&quot;</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s1">SIZE</span><span class="s3">] = (</span><span class="s5">512</span><span class="s3">, </span><span class="s5">512</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s1">FRAMES</span><span class="s3">] = </span><span class="s5">1</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">rawmode </span><span class="s3">= </span><span class="s4">&quot;L&quot;</span>
+
+        <span class="s2">while True</span><span class="s3">:</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">1</span><span class="s3">)</span>
+
+            <span class="s0"># Some versions of IFUNC uses \n\r instead of \r\n...</span>
+            <span class="s2">if </span><span class="s1">s </span><span class="s3">== </span><span class="s6">b&quot;</span><span class="s2">\r</span><span class="s6">&quot;</span><span class="s3">:</span>
+                <span class="s2">continue</span>
+
+            <span class="s2">if not </span><span class="s1">s </span><span class="s2">or </span><span class="s1">s </span><span class="s3">== </span><span class="s6">b&quot;</span><span class="s2">\0</span><span class="s6">&quot; </span><span class="s2">or </span><span class="s1">s </span><span class="s3">== </span><span class="s6">b&quot;</span><span class="s2">\x1A</span><span class="s6">&quot;</span><span class="s3">:</span>
+                <span class="s2">break</span>
+
+            <span class="s0"># FIXME: this may read whole file if not a text file</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">s </span><span class="s3">+ </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">readline</span><span class="s3">()</span>
+
+            <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">s</span><span class="s3">) &gt; </span><span class="s5">100</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;not an IM file&quot;</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+            <span class="s2">if </span><span class="s1">s</span><span class="s3">[-</span><span class="s5">2</span><span class="s3">:] == </span><span class="s6">b&quot;</span><span class="s2">\r\n</span><span class="s6">&quot;</span><span class="s3">:</span>
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[:-</span><span class="s5">2</span><span class="s3">]</span>
+            <span class="s2">elif </span><span class="s1">s</span><span class="s3">[-</span><span class="s5">1</span><span class="s3">:] == </span><span class="s6">b&quot;</span><span class="s2">\n</span><span class="s6">&quot;</span><span class="s3">:</span>
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[:-</span><span class="s5">1</span><span class="s3">]</span>
+
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">m </span><span class="s3">= </span><span class="s1">split</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">re</span><span class="s3">.</span><span class="s1">error </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;not an IM file&quot;</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">) </span><span class="s2">from </span><span class="s1">e</span>
+
+            <span class="s2">if </span><span class="s1">m</span><span class="s3">:</span>
+                <span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s3">= </span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">1</span><span class="s3">, </span><span class="s5">2</span><span class="s3">)</span>
+
+                <span class="s0"># Don't know if this is the correct encoding,</span>
+                <span class="s0"># but a decent guess (I guess)</span>
+                <span class="s1">k </span><span class="s3">= </span><span class="s1">k</span><span class="s3">.</span><span class="s1">decode</span><span class="s3">(</span><span class="s4">&quot;latin-1&quot;</span><span class="s3">, </span><span class="s4">&quot;replace&quot;</span><span class="s3">)</span>
+                <span class="s1">v </span><span class="s3">= </span><span class="s1">v</span><span class="s3">.</span><span class="s1">decode</span><span class="s3">(</span><span class="s4">&quot;latin-1&quot;</span><span class="s3">, </span><span class="s4">&quot;replace&quot;</span><span class="s3">)</span>
+
+                <span class="s0"># Convert value as appropriate</span>
+                <span class="s2">if </span><span class="s1">k </span><span class="s2">in </span><span class="s3">[</span><span class="s1">FRAMES</span><span class="s3">, </span><span class="s1">SCALE</span><span class="s3">, </span><span class="s1">SIZE</span><span class="s3">]:</span>
+                    <span class="s1">v </span><span class="s3">= </span><span class="s1">v</span><span class="s3">.</span><span class="s1">replace</span><span class="s3">(</span><span class="s4">&quot;*&quot;</span><span class="s3">, </span><span class="s4">&quot;,&quot;</span><span class="s3">)</span>
+                    <span class="s1">v </span><span class="s3">= </span><span class="s1">tuple</span><span class="s3">(</span><span class="s1">map</span><span class="s3">(</span><span class="s1">number</span><span class="s3">, </span><span class="s1">v</span><span class="s3">.</span><span class="s1">split</span><span class="s3">(</span><span class="s4">&quot;,&quot;</span><span class="s3">)))</span>
+                    <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">v</span><span class="s3">) == </span><span class="s5">1</span><span class="s3">:</span>
+                        <span class="s1">v </span><span class="s3">= </span><span class="s1">v</span><span class="s3">[</span><span class="s5">0</span><span class="s3">]</span>
+                <span class="s2">elif </span><span class="s1">k </span><span class="s3">== </span><span class="s1">MODE </span><span class="s2">and </span><span class="s1">v </span><span class="s2">in </span><span class="s1">OPEN</span><span class="s3">:</span>
+                    <span class="s1">v</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">rawmode </span><span class="s3">= </span><span class="s1">OPEN</span><span class="s3">[</span><span class="s1">v</span><span class="s3">]</span>
+
+                <span class="s0"># Add to dictionary. Note that COMMENT tags are</span>
+                <span class="s0"># combined into a list of strings.</span>
+                <span class="s2">if </span><span class="s1">k </span><span class="s3">== </span><span class="s1">COMMENT</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s1">k </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s1">k</span><span class="s3">].</span><span class="s1">append</span><span class="s3">(</span><span class="s1">v</span><span class="s3">)</span>
+                    <span class="s2">else</span><span class="s3">:</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s1">k</span><span class="s3">] = [</span><span class="s1">v</span><span class="s3">]</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s1">k</span><span class="s3">] = </span><span class="s1">v</span>
+
+                <span class="s2">if </span><span class="s1">k </span><span class="s2">in </span><span class="s1">TAGS</span><span class="s3">:</span>
+                    <span class="s1">n </span><span class="s3">+= </span><span class="s5">1</span>
+
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s4">f&quot;Syntax error in IM header: </span><span class="s2">{</span><span class="s1">s</span><span class="s3">.</span><span class="s1">decode</span><span class="s3">(</span><span class="s4">'ascii'</span><span class="s3">, </span><span class="s4">'replace'</span><span class="s3">)</span><span class="s2">}</span><span class="s4">&quot;</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s2">if not </span><span class="s1">n</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;Not an IM file&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s0"># Basic attributes</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s1">SIZE</span><span class="s3">]</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s1">MODE</span><span class="s3">]</span>
+
+        <span class="s0"># Skip forward to start of image data</span>
+        <span class="s2">while </span><span class="s1">s </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[:</span><span class="s5">1</span><span class="s3">] != </span><span class="s6">b&quot;</span><span class="s2">\x1A</span><span class="s6">&quot;</span><span class="s3">:</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">1</span><span class="s3">)</span>
+        <span class="s2">if not </span><span class="s1">s</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;File truncated&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s1">LUT </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+            <span class="s0"># convert lookup table to palette or lut attribute</span>
+            <span class="s1">palette </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">768</span><span class="s3">)</span>
+            <span class="s1">greyscale </span><span class="s3">= </span><span class="s5">1  </span><span class="s0"># greyscale palette</span>
+            <span class="s1">linear </span><span class="s3">= </span><span class="s5">1  </span><span class="s0"># linear greyscale palette</span>
+            <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s5">256</span><span class="s3">):</span>
+                <span class="s2">if </span><span class="s1">palette</span><span class="s3">[</span><span class="s1">i</span><span class="s3">] == </span><span class="s1">palette</span><span class="s3">[</span><span class="s1">i </span><span class="s3">+ </span><span class="s5">256</span><span class="s3">] == </span><span class="s1">palette</span><span class="s3">[</span><span class="s1">i </span><span class="s3">+ </span><span class="s5">512</span><span class="s3">]:</span>
+                    <span class="s2">if </span><span class="s1">palette</span><span class="s3">[</span><span class="s1">i</span><span class="s3">] != </span><span class="s1">i</span><span class="s3">:</span>
+                        <span class="s1">linear </span><span class="s3">= </span><span class="s5">0</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">greyscale </span><span class="s3">= </span><span class="s5">0</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">in </span><span class="s3">[</span><span class="s4">&quot;L&quot;</span><span class="s3">, </span><span class="s4">&quot;LA&quot;</span><span class="s3">, </span><span class="s4">&quot;P&quot;</span><span class="s3">, </span><span class="s4">&quot;PA&quot;</span><span class="s3">]:</span>
+                <span class="s2">if </span><span class="s1">greyscale</span><span class="s3">:</span>
+                    <span class="s2">if not </span><span class="s1">linear</span><span class="s3">:</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">lut </span><span class="s3">= </span><span class="s1">list</span><span class="s3">(</span><span class="s1">palette</span><span class="s3">[:</span><span class="s5">256</span><span class="s3">])</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">in </span><span class="s3">[</span><span class="s4">&quot;L&quot;</span><span class="s3">, </span><span class="s4">&quot;P&quot;</span><span class="s3">]:</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">rawmode </span><span class="s3">= </span><span class="s4">&quot;P&quot;</span>
+                    <span class="s2">elif </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">in </span><span class="s3">[</span><span class="s4">&quot;LA&quot;</span><span class="s3">, </span><span class="s4">&quot;PA&quot;</span><span class="s3">]:</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s4">&quot;PA&quot;</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">rawmode </span><span class="s3">= </span><span class="s4">&quot;PA;L&quot;</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">palette </span><span class="s3">= </span><span class="s1">ImagePalette</span><span class="s3">.</span><span class="s1">raw</span><span class="s3">(</span><span class="s4">&quot;RGB;L&quot;</span><span class="s3">, </span><span class="s1">palette</span><span class="s3">)</span>
+            <span class="s2">elif </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s4">&quot;RGB&quot;</span><span class="s3">:</span>
+                <span class="s2">if not </span><span class="s1">greyscale </span><span class="s2">or not </span><span class="s1">linear</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">lut </span><span class="s3">= </span><span class="s1">list</span><span class="s3">(</span><span class="s1">palette</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">frame </span><span class="s3">= </span><span class="s5">0</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__offset </span><span class="s3">= </span><span class="s1">offs </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">()</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_fp </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp  </span><span class="s0"># FIXME: hack</span>
+
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">rawmode</span><span class="s3">[:</span><span class="s5">2</span><span class="s3">] == </span><span class="s4">&quot;F;&quot;</span><span class="s3">:</span>
+            <span class="s0"># ifunc95 formats</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s0"># use bit decoder (if necessary)</span>
+                <span class="s1">bits </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">rawmode</span><span class="s3">[</span><span class="s5">2</span><span class="s3">:])</span>
+                <span class="s2">if </span><span class="s1">bits </span><span class="s2">not in </span><span class="s3">[</span><span class="s5">8</span><span class="s3">, </span><span class="s5">16</span><span class="s3">, </span><span class="s5">32</span><span class="s3">]:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= [</span>
+                        <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span>
+                            <span class="s4">&quot;bit&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">offs</span><span class="s3">, (</span><span class="s1">bits</span><span class="s3">, </span><span class="s5">8</span><span class="s3">, </span><span class="s5">3</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, -</span><span class="s5">1</span><span class="s3">)</span>
+                        <span class="s3">)</span>
+                    <span class="s3">]</span>
+                    <span class="s2">return</span>
+            <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+                <span class="s2">pass</span>
+
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">rawmode </span><span class="s2">in </span><span class="s3">[</span><span class="s4">&quot;RGB;T&quot;</span><span class="s3">, </span><span class="s4">&quot;RYB;T&quot;</span><span class="s3">]:</span>
+            <span class="s0"># Old LabEye/3PC files.  Would be very surprised if anyone</span>
+            <span class="s0"># ever stumbled upon such a file ;-)</span>
+            <span class="s1">size </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] * </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">1</span><span class="s3">]</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= [</span>
+                <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s4">&quot;raw&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">offs</span><span class="s3">, (</span><span class="s4">&quot;G&quot;</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, -</span><span class="s5">1</span><span class="s3">)),</span>
+                <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s4">&quot;raw&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">offs </span><span class="s3">+ </span><span class="s1">size</span><span class="s3">, (</span><span class="s4">&quot;R&quot;</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, -</span><span class="s5">1</span><span class="s3">)),</span>
+                <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span>
+                    <span class="s4">&quot;raw&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">offs </span><span class="s3">+ </span><span class="s5">2 </span><span class="s3">* </span><span class="s1">size</span><span class="s3">, (</span><span class="s4">&quot;B&quot;</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, -</span><span class="s5">1</span><span class="s3">)</span>
+                <span class="s3">),</span>
+            <span class="s3">]</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s0"># LabEye/IFUNC files</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= [</span>
+                <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s4">&quot;raw&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">offs</span><span class="s3">, (</span><span class="s1">self</span><span class="s3">.</span><span class="s1">rawmode</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, -</span><span class="s5">1</span><span class="s3">))</span>
+            <span class="s3">]</span>
+
+    <span class="s3">@</span><span class="s1">property</span>
+    <span class="s2">def </span><span class="s1">n_frames</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s1">FRAMES</span><span class="s3">]</span>
+
+    <span class="s3">@</span><span class="s1">property</span>
+    <span class="s2">def </span><span class="s1">is_animated</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s1">FRAMES</span><span class="s3">] &gt; </span><span class="s5">1</span>
+
+    <span class="s2">def </span><span class="s1">seek</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">frame</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if not </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_seek_check</span><span class="s3">(</span><span class="s1">frame</span><span class="s3">):</span>
+            <span class="s2">return</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">frame </span><span class="s3">= </span><span class="s1">frame</span>
+
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s4">&quot;1&quot;</span><span class="s3">:</span>
+            <span class="s1">bits </span><span class="s3">= </span><span class="s5">1</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">bits </span><span class="s3">= </span><span class="s5">8 </span><span class="s3">* </span><span class="s1">len</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">)</span>
+
+        <span class="s1">size </span><span class="s3">= ((</span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] * </span><span class="s1">bits </span><span class="s3">+ </span><span class="s5">7</span><span class="s3">) // </span><span class="s5">8</span><span class="s3">) * </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">1</span><span class="s3">]</span>
+        <span class="s1">offs </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__offset </span><span class="s3">+ </span><span class="s1">frame </span><span class="s3">* </span><span class="s1">size</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">fp </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_fp</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= [</span>
+            <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s4">&quot;raw&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">offs</span><span class="s3">, (</span><span class="s1">self</span><span class="s3">.</span><span class="s1">rawmode</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, -</span><span class="s5">1</span><span class="s3">))</span>
+        <span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">tell</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">frame</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Save IM files</span>
+
+
+<span class="s1">SAVE </span><span class="s3">= {</span>
+    <span class="s0"># mode: (im type, raw mode)</span>
+    <span class="s4">&quot;1&quot;</span><span class="s3">: (</span><span class="s4">&quot;0 1&quot;</span><span class="s3">, </span><span class="s4">&quot;1&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;L&quot;</span><span class="s3">: (</span><span class="s4">&quot;Greyscale&quot;</span><span class="s3">, </span><span class="s4">&quot;L&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;LA&quot;</span><span class="s3">: (</span><span class="s4">&quot;LA&quot;</span><span class="s3">, </span><span class="s4">&quot;LA;L&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;P&quot;</span><span class="s3">: (</span><span class="s4">&quot;Greyscale&quot;</span><span class="s3">, </span><span class="s4">&quot;P&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;PA&quot;</span><span class="s3">: (</span><span class="s4">&quot;LA&quot;</span><span class="s3">, </span><span class="s4">&quot;PA;L&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;I&quot;</span><span class="s3">: (</span><span class="s4">&quot;L 32S&quot;</span><span class="s3">, </span><span class="s4">&quot;I;32S&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;I;16&quot;</span><span class="s3">: (</span><span class="s4">&quot;L 16&quot;</span><span class="s3">, </span><span class="s4">&quot;I;16&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;I;16L&quot;</span><span class="s3">: (</span><span class="s4">&quot;L 16L&quot;</span><span class="s3">, </span><span class="s4">&quot;I;16L&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;I;16B&quot;</span><span class="s3">: (</span><span class="s4">&quot;L 16B&quot;</span><span class="s3">, </span><span class="s4">&quot;I;16B&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;F&quot;</span><span class="s3">: (</span><span class="s4">&quot;L 32F&quot;</span><span class="s3">, </span><span class="s4">&quot;F;32F&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;RGB&quot;</span><span class="s3">: (</span><span class="s4">&quot;RGB&quot;</span><span class="s3">, </span><span class="s4">&quot;RGB;L&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;RGBA&quot;</span><span class="s3">: (</span><span class="s4">&quot;RGBA&quot;</span><span class="s3">, </span><span class="s4">&quot;RGBA;L&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;RGBX&quot;</span><span class="s3">: (</span><span class="s4">&quot;RGBX&quot;</span><span class="s3">, </span><span class="s4">&quot;RGBX;L&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;CMYK&quot;</span><span class="s3">: (</span><span class="s4">&quot;CMYK&quot;</span><span class="s3">, </span><span class="s4">&quot;CMYK;L&quot;</span><span class="s3">),</span>
+    <span class="s4">&quot;YCbCr&quot;</span><span class="s3">: (</span><span class="s4">&quot;YCC&quot;</span><span class="s3">, </span><span class="s4">&quot;YCbCr;L&quot;</span><span class="s3">),</span>
+<span class="s3">}</span>
+
+
+<span class="s2">def </span><span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">image_type</span><span class="s3">, </span><span class="s1">rawmode </span><span class="s3">= </span><span class="s1">SAVE</span><span class="s3">[</span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">]</span>
+    <span class="s2">except </span><span class="s1">KeyError </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s4">f&quot;Cannot save </span><span class="s2">{</span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span><span class="s2">} </span><span class="s4">images as IM&quot;</span>
+        <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">) </span><span class="s2">from </span><span class="s1">e</span>
+
+    <span class="s1">frames </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">&quot;frames&quot;</span><span class="s3">, </span><span class="s5">1</span><span class="s3">)</span>
+
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">f&quot;Image type: </span><span class="s2">{</span><span class="s1">image_type</span><span class="s2">} </span><span class="s4">image</span><span class="s2">\r\n</span><span class="s4">&quot;</span><span class="s3">.</span><span class="s1">encode</span><span class="s3">(</span><span class="s4">&quot;ascii&quot;</span><span class="s3">))</span>
+    <span class="s2">if </span><span class="s1">filename</span><span class="s3">:</span>
+        <span class="s0"># Each line must be 100 characters or less,</span>
+        <span class="s0"># or: SyntaxError(&quot;not an IM file&quot;)</span>
+        <span class="s0"># 8 characters are used for &quot;Name: &quot; and &quot;\r\n&quot;</span>
+        <span class="s0"># Keep just the filename, ditch the potentially overlong path</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">filename</span><span class="s3">, </span><span class="s1">bytes</span><span class="s3">):</span>
+            <span class="s1">filename </span><span class="s3">= </span><span class="s1">filename</span><span class="s3">.</span><span class="s1">decode</span><span class="s3">(</span><span class="s4">&quot;ascii&quot;</span><span class="s3">)</span>
+        <span class="s1">name</span><span class="s3">, </span><span class="s1">ext </span><span class="s3">= </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">splitext</span><span class="s3">(</span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">basename</span><span class="s3">(</span><span class="s1">filename</span><span class="s3">))</span>
+        <span class="s1">name </span><span class="s3">= </span><span class="s4">&quot;&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">([</span><span class="s1">name</span><span class="s3">[: </span><span class="s5">92 </span><span class="s3">- </span><span class="s1">len</span><span class="s3">(</span><span class="s1">ext</span><span class="s3">)], </span><span class="s1">ext</span><span class="s3">])</span>
+
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">f&quot;Name: </span><span class="s2">{</span><span class="s1">name</span><span class="s2">}\r\n</span><span class="s4">&quot;</span><span class="s3">.</span><span class="s1">encode</span><span class="s3">(</span><span class="s4">&quot;ascii&quot;</span><span class="s3">))</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">f&quot;Image size (x*y): </span><span class="s2">{</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">0</span><span class="s3">]</span><span class="s2">}</span><span class="s4">*</span><span class="s2">{</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">1</span><span class="s3">]</span><span class="s2">}\r\n</span><span class="s4">&quot;</span><span class="s3">.</span><span class="s1">encode</span><span class="s3">(</span><span class="s4">&quot;ascii&quot;</span><span class="s3">))</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">f&quot;File size (no of images): </span><span class="s2">{</span><span class="s1">frames</span><span class="s2">}\r\n</span><span class="s4">&quot;</span><span class="s3">.</span><span class="s1">encode</span><span class="s3">(</span><span class="s4">&quot;ascii&quot;</span><span class="s3">))</span>
+    <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">in </span><span class="s3">[</span><span class="s4">&quot;P&quot;</span><span class="s3">, </span><span class="s4">&quot;PA&quot;</span><span class="s3">]:</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s6">b&quot;Lut: 1</span><span class="s2">\r\n</span><span class="s6">&quot;</span><span class="s3">)</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s6">b&quot;</span><span class="s2">\000</span><span class="s6">&quot; </span><span class="s3">* (</span><span class="s5">511 </span><span class="s3">- </span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">()) + </span><span class="s6">b&quot;</span><span class="s2">\032</span><span class="s6">&quot;</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">in </span><span class="s3">[</span><span class="s4">&quot;P&quot;</span><span class="s3">, </span><span class="s4">&quot;PA&quot;</span><span class="s3">]:</span>
+        <span class="s1">im_palette </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">getpalette</span><span class="s3">(</span><span class="s4">&quot;RGB&quot;</span><span class="s3">, </span><span class="s4">&quot;RGB;L&quot;</span><span class="s3">)</span>
+        <span class="s1">colors </span><span class="s3">= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">im_palette</span><span class="s3">) // </span><span class="s5">3</span>
+        <span class="s1">palette </span><span class="s3">= </span><span class="s6">b&quot;&quot;</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s5">3</span><span class="s3">):</span>
+            <span class="s1">palette </span><span class="s3">+= </span><span class="s1">im_palette</span><span class="s3">[</span><span class="s1">colors </span><span class="s3">* </span><span class="s1">i </span><span class="s3">: </span><span class="s1">colors </span><span class="s3">* (</span><span class="s1">i </span><span class="s3">+ </span><span class="s5">1</span><span class="s3">)]</span>
+            <span class="s1">palette </span><span class="s3">+= </span><span class="s6">b&quot;</span><span class="s2">\x00</span><span class="s6">&quot; </span><span class="s3">* (</span><span class="s5">256 </span><span class="s3">- </span><span class="s1">colors</span><span class="s3">)</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">palette</span><span class="s3">)  </span><span class="s0"># 768 bytes</span>
+    <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_save</span><span class="s3">(</span>
+        <span class="s1">im</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">, [</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s4">&quot;raw&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, (</span><span class="s1">rawmode</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, -</span><span class="s5">1</span><span class="s3">))]</span>
+    <span class="s3">)</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Registry</span>
+
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_open</span><span class="s3">(</span><span class="s1">ImImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">ImImageFile</span><span class="s3">)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_save</span><span class="s3">(</span><span class="s1">ImImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">_save</span><span class="s3">)</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_extension</span><span class="s3">(</span><span class="s1">ImImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s4">&quot;.im&quot;</span><span class="s3">)</span>
+</pre>
+</body>
+</html>

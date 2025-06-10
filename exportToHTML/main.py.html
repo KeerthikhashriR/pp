@@ -1,0 +1,1130 @@
+<html>
+<head>
+<title>main.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8;}
+.s5 { color: #7a7e85;}
+.s6 { color: #5f826b; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+main.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">warnings</span>
+<span class="s0">from </span><span class="s1">abc </span><span class="s0">import </span><span class="s1">ABCMeta</span>
+<span class="s0">from </span><span class="s1">copy </span><span class="s0">import </span><span class="s1">deepcopy</span>
+<span class="s0">from </span><span class="s1">enum </span><span class="s0">import </span><span class="s1">Enum</span>
+<span class="s0">from </span><span class="s1">functools </span><span class="s0">import </span><span class="s1">partial</span>
+<span class="s0">from </span><span class="s1">pathlib </span><span class="s0">import </span><span class="s1">Path</span>
+<span class="s0">from </span><span class="s1">types </span><span class="s0">import </span><span class="s1">FunctionType</span><span class="s2">, </span><span class="s1">prepare_class</span><span class="s2">, </span><span class="s1">resolve_bases</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s2">(</span>
+    <span class="s1">TYPE_CHECKING</span><span class="s2">,</span>
+    <span class="s1">AbstractSet</span><span class="s2">,</span>
+    <span class="s1">Any</span><span class="s2">,</span>
+    <span class="s1">Callable</span><span class="s2">,</span>
+    <span class="s1">ClassVar</span><span class="s2">,</span>
+    <span class="s1">Dict</span><span class="s2">,</span>
+    <span class="s1">List</span><span class="s2">,</span>
+    <span class="s1">Mapping</span><span class="s2">,</span>
+    <span class="s1">Optional</span><span class="s2">,</span>
+    <span class="s1">Tuple</span><span class="s2">,</span>
+    <span class="s1">Type</span><span class="s2">,</span>
+    <span class="s1">TypeVar</span><span class="s2">,</span>
+    <span class="s1">Union</span><span class="s2">,</span>
+    <span class="s1">cast</span><span class="s2">,</span>
+    <span class="s1">no_type_check</span><span class="s2">,</span>
+    <span class="s1">overload</span><span class="s2">,</span>
+<span class="s2">)</span>
+
+<span class="s0">from </span><span class="s1">typing_extensions </span><span class="s0">import </span><span class="s1">dataclass_transform</span>
+
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">class_validators </span><span class="s0">import </span><span class="s1">ValidatorGroup</span><span class="s2">, </span><span class="s1">extract_root_validators</span><span class="s2">, </span><span class="s1">extract_validators</span><span class="s2">, </span><span class="s1">inherit_validators</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">config </span><span class="s0">import </span><span class="s1">BaseConfig</span><span class="s2">, </span><span class="s1">Extra</span><span class="s2">, </span><span class="s1">inherit_config</span><span class="s2">, </span><span class="s1">prepare_config</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">error_wrappers </span><span class="s0">import </span><span class="s1">ErrorWrapper</span><span class="s2">, </span><span class="s1">ValidationError</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">errors </span><span class="s0">import </span><span class="s1">ConfigError</span><span class="s2">, </span><span class="s1">DictError</span><span class="s2">, </span><span class="s1">ExtraError</span><span class="s2">, </span><span class="s1">MissingError</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">fields </span><span class="s0">import </span><span class="s2">(</span>
+    <span class="s1">MAPPING_LIKE_SHAPES</span><span class="s2">,</span>
+    <span class="s1">Field</span><span class="s2">,</span>
+    <span class="s1">ModelField</span><span class="s2">,</span>
+    <span class="s1">ModelPrivateAttr</span><span class="s2">,</span>
+    <span class="s1">PrivateAttr</span><span class="s2">,</span>
+    <span class="s1">Undefined</span><span class="s2">,</span>
+    <span class="s1">is_finalvar_with_default_val</span><span class="s2">,</span>
+<span class="s2">)</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">json </span><span class="s0">import </span><span class="s1">custom_pydantic_encoder</span><span class="s2">, </span><span class="s1">pydantic_encoder</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">parse </span><span class="s0">import </span><span class="s1">Protocol</span><span class="s2">, </span><span class="s1">load_file</span><span class="s2">, </span><span class="s1">load_str_bytes</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">schema </span><span class="s0">import </span><span class="s1">default_ref_template</span><span class="s2">, </span><span class="s1">model_schema</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">PyObject</span><span class="s2">, </span><span class="s1">StrBytes</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">typing </span><span class="s0">import </span><span class="s2">(</span>
+    <span class="s1">AnyCallable</span><span class="s2">,</span>
+    <span class="s1">get_args</span><span class="s2">,</span>
+    <span class="s1">get_origin</span><span class="s2">,</span>
+    <span class="s1">is_classvar</span><span class="s2">,</span>
+    <span class="s1">is_namedtuple</span><span class="s2">,</span>
+    <span class="s1">is_union</span><span class="s2">,</span>
+    <span class="s1">resolve_annotations</span><span class="s2">,</span>
+    <span class="s1">update_model_forward_refs</span><span class="s2">,</span>
+<span class="s2">)</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">utils </span><span class="s0">import </span><span class="s2">(</span>
+    <span class="s1">DUNDER_ATTRIBUTES</span><span class="s2">,</span>
+    <span class="s1">ROOT_KEY</span><span class="s2">,</span>
+    <span class="s1">ClassAttribute</span><span class="s2">,</span>
+    <span class="s1">GetterDict</span><span class="s2">,</span>
+    <span class="s1">Representation</span><span class="s2">,</span>
+    <span class="s1">ValueItems</span><span class="s2">,</span>
+    <span class="s1">generate_model_signature</span><span class="s2">,</span>
+    <span class="s1">is_valid_field</span><span class="s2">,</span>
+    <span class="s1">is_valid_private_name</span><span class="s2">,</span>
+    <span class="s1">lenient_issubclass</span><span class="s2">,</span>
+    <span class="s1">sequence_like</span><span class="s2">,</span>
+    <span class="s1">smart_deepcopy</span><span class="s2">,</span>
+    <span class="s1">unique_list</span><span class="s2">,</span>
+    <span class="s1">validate_field_name</span><span class="s2">,</span>
+<span class="s2">)</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+    <span class="s0">from </span><span class="s1">inspect </span><span class="s0">import </span><span class="s1">Signature</span>
+
+    <span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">class_validators </span><span class="s0">import </span><span class="s1">ValidatorListDict</span>
+    <span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">ModelOrDc</span>
+    <span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">typing </span><span class="s0">import </span><span class="s2">(</span>
+        <span class="s1">AbstractSetIntStr</span><span class="s2">,</span>
+        <span class="s1">AnyClassMethod</span><span class="s2">,</span>
+        <span class="s1">CallableGenerator</span><span class="s2">,</span>
+        <span class="s1">DictAny</span><span class="s2">,</span>
+        <span class="s1">DictStrAny</span><span class="s2">,</span>
+        <span class="s1">MappingIntStrAny</span><span class="s2">,</span>
+        <span class="s1">ReprArgs</span><span class="s2">,</span>
+        <span class="s1">SetStr</span><span class="s2">,</span>
+        <span class="s1">TupleGenerator</span><span class="s2">,</span>
+    <span class="s2">)</span>
+
+    <span class="s1">Model </span><span class="s2">= </span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s3">'Model'</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s3">'BaseModel'</span><span class="s2">)</span>
+
+<span class="s1">__all__ </span><span class="s2">= </span><span class="s3">'BaseModel'</span><span class="s2">, </span><span class="s3">'create_model'</span><span class="s2">, </span><span class="s3">'validate_model'</span>
+
+<span class="s1">_T </span><span class="s2">= </span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s3">'_T'</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">validate_custom_root_type</span><span class="s2">(</span><span class="s1">fields</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">ModelField</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">fields</span><span class="s2">) &gt; </span><span class="s4">1</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s3">f'</span><span class="s0">{</span><span class="s1">ROOT_KEY</span><span class="s0">} </span><span class="s3">cannot be mixed with other fields'</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">generate_hash_function</span><span class="s2">(</span><span class="s1">frozen</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">) </span><span class="s1">-&gt; Optional</span><span class="s2">[</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">int</span><span class="s2">]]:</span>
+    <span class="s0">def </span><span class="s1">hash_function</span><span class="s2">(</span><span class="s1">self_</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; int</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">hash</span><span class="s2">(</span><span class="s1">self_</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">) + </span><span class="s1">hash</span><span class="s2">(</span><span class="s1">tuple</span><span class="s2">(</span><span class="s1">self_</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">.</span><span class="s1">values</span><span class="s2">()))</span>
+
+    <span class="s0">return </span><span class="s1">hash_function </span><span class="s0">if </span><span class="s1">frozen </span><span class="s0">else None</span>
+
+
+<span class="s5"># If a field is of type `Callable`, its default value should be a function and cannot to ignored.</span>
+<span class="s1">ANNOTATED_FIELD_UNTOUCHED_TYPES</span><span class="s2">: </span><span class="s1">Tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...] = (</span><span class="s1">property</span><span class="s2">, </span><span class="s1">type</span><span class="s2">, </span><span class="s1">classmethod</span><span class="s2">, </span><span class="s1">staticmethod</span><span class="s2">)</span>
+<span class="s5"># When creating a `BaseModel` instance, we bypass all the methods, properties... added to the model</span>
+<span class="s1">UNTOUCHED_TYPES</span><span class="s2">: </span><span class="s1">Tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...] = (</span><span class="s1">FunctionType</span><span class="s2">,) + </span><span class="s1">ANNOTATED_FIELD_UNTOUCHED_TYPES</span>
+<span class="s5"># Note `ModelMetaclass` refers to `BaseModel`, but is also used to *create* `BaseModel`, so we need to add this extra</span>
+<span class="s5"># (somewhat hacky) boolean to keep track of whether we've created the `BaseModel` class yet, and therefore whether it's</span>
+<span class="s5"># safe to refer to it. If it *hasn't* been created, we assume that the `__new__` call we're in the middle of is for</span>
+<span class="s5"># the `BaseModel` class, since that's defined immediately after the metaclass.</span>
+<span class="s1">_is_base_model_class_defined </span><span class="s2">= </span><span class="s0">False</span>
+
+
+<span class="s2">@</span><span class="s1">dataclass_transform</span><span class="s2">(</span><span class="s1">kw_only_default</span><span class="s2">=</span><span class="s0">True</span><span class="s2">, </span><span class="s1">field_specifiers</span><span class="s2">=(</span><span class="s1">Field</span><span class="s2">,))</span>
+<span class="s0">class </span><span class="s1">ModelMetaclass</span><span class="s2">(</span><span class="s1">ABCMeta</span><span class="s2">):</span>
+    <span class="s2">@</span><span class="s1">no_type_check  </span><span class="s5"># noqa C901</span>
+    <span class="s0">def </span><span class="s1">__new__</span><span class="s2">(</span><span class="s1">mcs</span><span class="s2">, </span><span class="s1">name</span><span class="s2">, </span><span class="s1">bases</span><span class="s2">, </span><span class="s1">namespace</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">):  </span><span class="s5"># noqa C901</span>
+        <span class="s1">fields</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">ModelField</span><span class="s2">] = {}</span>
+        <span class="s1">config </span><span class="s2">= </span><span class="s1">BaseConfig</span>
+        <span class="s1">validators</span><span class="s2">: </span><span class="s3">'ValidatorListDict' </span><span class="s2">= {}</span>
+
+        <span class="s1">pre_root_validators</span><span class="s2">, </span><span class="s1">post_root_validators </span><span class="s2">= [], []</span>
+        <span class="s1">private_attributes</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">ModelPrivateAttr</span><span class="s2">] = {}</span>
+        <span class="s1">base_private_attributes</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">ModelPrivateAttr</span><span class="s2">] = {}</span>
+        <span class="s1">slots</span><span class="s2">: </span><span class="s1">SetStr </span><span class="s2">= </span><span class="s1">namespace</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'__slots__'</span><span class="s2">, ())</span>
+        <span class="s1">slots </span><span class="s2">= {</span><span class="s1">slots</span><span class="s2">} </span><span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">slots</span><span class="s2">, </span><span class="s1">str</span><span class="s2">) </span><span class="s0">else </span><span class="s1">set</span><span class="s2">(</span><span class="s1">slots</span><span class="s2">)</span>
+        <span class="s1">class_vars</span><span class="s2">: </span><span class="s1">SetStr </span><span class="s2">= </span><span class="s1">set</span><span class="s2">()</span>
+        <span class="s1">hash_func</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">int</span><span class="s2">]] = </span><span class="s0">None</span>
+
+        <span class="s0">for </span><span class="s1">base </span><span class="s0">in </span><span class="s1">reversed</span><span class="s2">(</span><span class="s1">bases</span><span class="s2">):</span>
+            <span class="s0">if </span><span class="s1">_is_base_model_class_defined </span><span class="s0">and </span><span class="s1">issubclass</span><span class="s2">(</span><span class="s1">base</span><span class="s2">, </span><span class="s1">BaseModel</span><span class="s2">) </span><span class="s0">and </span><span class="s1">base </span><span class="s2">!= </span><span class="s1">BaseModel</span><span class="s2">:</span>
+                <span class="s1">fields</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">smart_deepcopy</span><span class="s2">(</span><span class="s1">base</span><span class="s2">.</span><span class="s1">__fields__</span><span class="s2">))</span>
+                <span class="s1">config </span><span class="s2">= </span><span class="s1">inherit_config</span><span class="s2">(</span><span class="s1">base</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">, </span><span class="s1">config</span><span class="s2">)</span>
+                <span class="s1">validators </span><span class="s2">= </span><span class="s1">inherit_validators</span><span class="s2">(</span><span class="s1">base</span><span class="s2">.</span><span class="s1">__validators__</span><span class="s2">, </span><span class="s1">validators</span><span class="s2">)</span>
+                <span class="s1">pre_root_validators </span><span class="s2">+= </span><span class="s1">base</span><span class="s2">.</span><span class="s1">__pre_root_validators__</span>
+                <span class="s1">post_root_validators </span><span class="s2">+= </span><span class="s1">base</span><span class="s2">.</span><span class="s1">__post_root_validators__</span>
+                <span class="s1">base_private_attributes</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">base</span><span class="s2">.</span><span class="s1">__private_attributes__</span><span class="s2">)</span>
+                <span class="s1">class_vars</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">base</span><span class="s2">.</span><span class="s1">__class_vars__</span><span class="s2">)</span>
+                <span class="s1">hash_func </span><span class="s2">= </span><span class="s1">base</span><span class="s2">.</span><span class="s1">__hash__</span>
+
+        <span class="s1">resolve_forward_refs </span><span class="s2">= </span><span class="s1">kwargs</span><span class="s2">.</span><span class="s1">pop</span><span class="s2">(</span><span class="s3">'__resolve_forward_refs__'</span><span class="s2">, </span><span class="s0">True</span><span class="s2">)</span>
+        <span class="s1">allowed_config_kwargs</span><span class="s2">: </span><span class="s1">SetStr </span><span class="s2">= {</span>
+            <span class="s1">key</span>
+            <span class="s0">for </span><span class="s1">key </span><span class="s0">in </span><span class="s1">dir</span><span class="s2">(</span><span class="s1">config</span><span class="s2">)</span>
+            <span class="s0">if not </span><span class="s2">(</span><span class="s1">key</span><span class="s2">.</span><span class="s1">startswith</span><span class="s2">(</span><span class="s3">'__'</span><span class="s2">) </span><span class="s0">and </span><span class="s1">key</span><span class="s2">.</span><span class="s1">endswith</span><span class="s2">(</span><span class="s3">'__'</span><span class="s2">))  </span><span class="s5"># skip dunder methods and attributes</span>
+        <span class="s2">}</span>
+        <span class="s1">config_kwargs </span><span class="s2">= {</span><span class="s1">key</span><span class="s2">: </span><span class="s1">kwargs</span><span class="s2">.</span><span class="s1">pop</span><span class="s2">(</span><span class="s1">key</span><span class="s2">) </span><span class="s0">for </span><span class="s1">key </span><span class="s0">in </span><span class="s1">kwargs</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">() &amp; </span><span class="s1">allowed_config_kwargs</span><span class="s2">}</span>
+        <span class="s1">config_from_namespace </span><span class="s2">= </span><span class="s1">namespace</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'Config'</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">config_kwargs </span><span class="s0">and </span><span class="s1">config_from_namespace</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span><span class="s3">'Specifying config in two places is ambiguous, use either Config attribute or class kwargs'</span><span class="s2">)</span>
+        <span class="s1">config </span><span class="s2">= </span><span class="s1">inherit_config</span><span class="s2">(</span><span class="s1">config_from_namespace</span><span class="s2">, </span><span class="s1">config</span><span class="s2">, **</span><span class="s1">config_kwargs</span><span class="s2">)</span>
+
+        <span class="s1">validators </span><span class="s2">= </span><span class="s1">inherit_validators</span><span class="s2">(</span><span class="s1">extract_validators</span><span class="s2">(</span><span class="s1">namespace</span><span class="s2">), </span><span class="s1">validators</span><span class="s2">)</span>
+        <span class="s1">vg </span><span class="s2">= </span><span class="s1">ValidatorGroup</span><span class="s2">(</span><span class="s1">validators</span><span class="s2">)</span>
+
+        <span class="s0">for </span><span class="s1">f </span><span class="s0">in </span><span class="s1">fields</span><span class="s2">.</span><span class="s1">values</span><span class="s2">():</span>
+            <span class="s1">f</span><span class="s2">.</span><span class="s1">set_config</span><span class="s2">(</span><span class="s1">config</span><span class="s2">)</span>
+            <span class="s1">extra_validators </span><span class="s2">= </span><span class="s1">vg</span><span class="s2">.</span><span class="s1">get_validators</span><span class="s2">(</span><span class="s1">f</span><span class="s2">.</span><span class="s1">name</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">extra_validators</span><span class="s2">:</span>
+                <span class="s1">f</span><span class="s2">.</span><span class="s1">class_validators</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">extra_validators</span><span class="s2">)</span>
+                <span class="s5"># re-run prepare to add extra validators</span>
+                <span class="s1">f</span><span class="s2">.</span><span class="s1">populate_validators</span><span class="s2">()</span>
+
+        <span class="s1">prepare_config</span><span class="s2">(</span><span class="s1">config</span><span class="s2">, </span><span class="s1">name</span><span class="s2">)</span>
+
+        <span class="s1">untouched_types </span><span class="s2">= </span><span class="s1">ANNOTATED_FIELD_UNTOUCHED_TYPES</span>
+
+        <span class="s0">def </span><span class="s1">is_untouched</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">untouched_types</span><span class="s2">) </span><span class="s0">or </span><span class="s1">v</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">.</span><span class="s1">__name__ </span><span class="s2">== </span><span class="s3">'cython_function_or_method'</span>
+
+        <span class="s0">if </span><span class="s2">(</span><span class="s1">namespace</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'__module__'</span><span class="s2">), </span><span class="s1">namespace</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'__qualname__'</span><span class="s2">)) != (</span><span class="s3">'pydantic.main'</span><span class="s2">, </span><span class="s3">'BaseModel'</span><span class="s2">):</span>
+            <span class="s1">annotations </span><span class="s2">= </span><span class="s1">resolve_annotations</span><span class="s2">(</span><span class="s1">namespace</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'__annotations__'</span><span class="s2">, {}), </span><span class="s1">namespace</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'__module__'</span><span class="s2">, </span><span class="s0">None</span><span class="s2">))</span>
+            <span class="s5"># annotation only fields need to come first in fields</span>
+            <span class="s0">for </span><span class="s1">ann_name</span><span class="s2">, </span><span class="s1">ann_type </span><span class="s0">in </span><span class="s1">annotations</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+                <span class="s0">if </span><span class="s1">is_classvar</span><span class="s2">(</span><span class="s1">ann_type</span><span class="s2">):</span>
+                    <span class="s1">class_vars</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">ann_name</span><span class="s2">)</span>
+                <span class="s0">elif </span><span class="s1">is_finalvar_with_default_val</span><span class="s2">(</span><span class="s1">ann_type</span><span class="s2">, </span><span class="s1">namespace</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">ann_name</span><span class="s2">, </span><span class="s1">Undefined</span><span class="s2">)):</span>
+                    <span class="s1">class_vars</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">ann_name</span><span class="s2">)</span>
+                <span class="s0">elif </span><span class="s1">is_valid_field</span><span class="s2">(</span><span class="s1">ann_name</span><span class="s2">):</span>
+                    <span class="s1">validate_field_name</span><span class="s2">(</span><span class="s1">bases</span><span class="s2">, </span><span class="s1">ann_name</span><span class="s2">)</span>
+                    <span class="s1">value </span><span class="s2">= </span><span class="s1">namespace</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">ann_name</span><span class="s2">, </span><span class="s1">Undefined</span><span class="s2">)</span>
+                    <span class="s1">allowed_types </span><span class="s2">= </span><span class="s1">get_args</span><span class="s2">(</span><span class="s1">ann_type</span><span class="s2">) </span><span class="s0">if </span><span class="s1">is_union</span><span class="s2">(</span><span class="s1">get_origin</span><span class="s2">(</span><span class="s1">ann_type</span><span class="s2">)) </span><span class="s0">else </span><span class="s2">(</span><span class="s1">ann_type</span><span class="s2">,)</span>
+                    <span class="s0">if </span><span class="s2">(</span>
+                        <span class="s1">is_untouched</span><span class="s2">(</span><span class="s1">value</span><span class="s2">)</span>
+                        <span class="s0">and </span><span class="s1">ann_type </span><span class="s2">!= </span><span class="s1">PyObject</span>
+                        <span class="s0">and not </span><span class="s1">any</span><span class="s2">(</span>
+                            <span class="s1">lenient_issubclass</span><span class="s2">(</span><span class="s1">get_origin</span><span class="s2">(</span><span class="s1">allowed_type</span><span class="s2">), </span><span class="s1">Type</span><span class="s2">) </span><span class="s0">for </span><span class="s1">allowed_type </span><span class="s0">in </span><span class="s1">allowed_types</span>
+                        <span class="s2">)</span>
+                    <span class="s2">):</span>
+                        <span class="s0">continue</span>
+                    <span class="s1">fields</span><span class="s2">[</span><span class="s1">ann_name</span><span class="s2">] = </span><span class="s1">ModelField</span><span class="s2">.</span><span class="s1">infer</span><span class="s2">(</span>
+                        <span class="s1">name</span><span class="s2">=</span><span class="s1">ann_name</span><span class="s2">,</span>
+                        <span class="s1">value</span><span class="s2">=</span><span class="s1">value</span><span class="s2">,</span>
+                        <span class="s1">annotation</span><span class="s2">=</span><span class="s1">ann_type</span><span class="s2">,</span>
+                        <span class="s1">class_validators</span><span class="s2">=</span><span class="s1">vg</span><span class="s2">.</span><span class="s1">get_validators</span><span class="s2">(</span><span class="s1">ann_name</span><span class="s2">),</span>
+                        <span class="s1">config</span><span class="s2">=</span><span class="s1">config</span><span class="s2">,</span>
+                    <span class="s2">)</span>
+                <span class="s0">elif </span><span class="s1">ann_name </span><span class="s0">not in </span><span class="s1">namespace </span><span class="s0">and </span><span class="s1">config</span><span class="s2">.</span><span class="s1">underscore_attrs_are_private</span><span class="s2">:</span>
+                    <span class="s1">private_attributes</span><span class="s2">[</span><span class="s1">ann_name</span><span class="s2">] = </span><span class="s1">PrivateAttr</span><span class="s2">()</span>
+
+            <span class="s1">untouched_types </span><span class="s2">= </span><span class="s1">UNTOUCHED_TYPES </span><span class="s2">+ </span><span class="s1">config</span><span class="s2">.</span><span class="s1">keep_untouched</span>
+            <span class="s0">for </span><span class="s1">var_name</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">namespace</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+                <span class="s1">can_be_changed </span><span class="s2">= </span><span class="s1">var_name </span><span class="s0">not in </span><span class="s1">class_vars </span><span class="s0">and not </span><span class="s1">is_untouched</span><span class="s2">(</span><span class="s1">value</span><span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">value</span><span class="s2">, </span><span class="s1">ModelPrivateAttr</span><span class="s2">):</span>
+                    <span class="s0">if not </span><span class="s1">is_valid_private_name</span><span class="s2">(</span><span class="s1">var_name</span><span class="s2">):</span>
+                        <span class="s0">raise </span><span class="s1">NameError</span><span class="s2">(</span>
+                            <span class="s3">f'Private attributes &quot;</span><span class="s0">{</span><span class="s1">var_name</span><span class="s0">}</span><span class="s3">&quot; must not be a valid field name; '</span>
+                            <span class="s3">f'Use sunder or dunder names, e. g. &quot;_</span><span class="s0">{</span><span class="s1">var_name</span><span class="s0">}</span><span class="s3">&quot; or &quot;__</span><span class="s0">{</span><span class="s1">var_name</span><span class="s0">}</span><span class="s3">__&quot;'</span>
+                        <span class="s2">)</span>
+                    <span class="s1">private_attributes</span><span class="s2">[</span><span class="s1">var_name</span><span class="s2">] = </span><span class="s1">value</span>
+                <span class="s0">elif </span><span class="s1">config</span><span class="s2">.</span><span class="s1">underscore_attrs_are_private </span><span class="s0">and </span><span class="s1">is_valid_private_name</span><span class="s2">(</span><span class="s1">var_name</span><span class="s2">) </span><span class="s0">and </span><span class="s1">can_be_changed</span><span class="s2">:</span>
+                    <span class="s1">private_attributes</span><span class="s2">[</span><span class="s1">var_name</span><span class="s2">] = </span><span class="s1">PrivateAttr</span><span class="s2">(</span><span class="s1">default</span><span class="s2">=</span><span class="s1">value</span><span class="s2">)</span>
+                <span class="s0">elif </span><span class="s1">is_valid_field</span><span class="s2">(</span><span class="s1">var_name</span><span class="s2">) </span><span class="s0">and </span><span class="s1">var_name </span><span class="s0">not in </span><span class="s1">annotations </span><span class="s0">and </span><span class="s1">can_be_changed</span><span class="s2">:</span>
+                    <span class="s1">validate_field_name</span><span class="s2">(</span><span class="s1">bases</span><span class="s2">, </span><span class="s1">var_name</span><span class="s2">)</span>
+                    <span class="s1">inferred </span><span class="s2">= </span><span class="s1">ModelField</span><span class="s2">.</span><span class="s1">infer</span><span class="s2">(</span>
+                        <span class="s1">name</span><span class="s2">=</span><span class="s1">var_name</span><span class="s2">,</span>
+                        <span class="s1">value</span><span class="s2">=</span><span class="s1">value</span><span class="s2">,</span>
+                        <span class="s1">annotation</span><span class="s2">=</span><span class="s1">annotations</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">var_name</span><span class="s2">, </span><span class="s1">Undefined</span><span class="s2">),</span>
+                        <span class="s1">class_validators</span><span class="s2">=</span><span class="s1">vg</span><span class="s2">.</span><span class="s1">get_validators</span><span class="s2">(</span><span class="s1">var_name</span><span class="s2">),</span>
+                        <span class="s1">config</span><span class="s2">=</span><span class="s1">config</span><span class="s2">,</span>
+                    <span class="s2">)</span>
+                    <span class="s0">if </span><span class="s1">var_name </span><span class="s0">in </span><span class="s1">fields</span><span class="s2">:</span>
+                        <span class="s0">if </span><span class="s1">lenient_issubclass</span><span class="s2">(</span><span class="s1">inferred</span><span class="s2">.</span><span class="s1">type_</span><span class="s2">, </span><span class="s1">fields</span><span class="s2">[</span><span class="s1">var_name</span><span class="s2">].</span><span class="s1">type_</span><span class="s2">):</span>
+                            <span class="s1">inferred</span><span class="s2">.</span><span class="s1">type_ </span><span class="s2">= </span><span class="s1">fields</span><span class="s2">[</span><span class="s1">var_name</span><span class="s2">].</span><span class="s1">type_</span>
+                        <span class="s0">else</span><span class="s2">:</span>
+                            <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span>
+                                <span class="s3">f'The type of </span><span class="s0">{</span><span class="s1">name</span><span class="s0">}</span><span class="s3">.</span><span class="s0">{</span><span class="s1">var_name</span><span class="s0">} </span><span class="s3">differs from the new default value; '</span>
+                                <span class="s3">f'if you wish to change the type of this field, please use a type annotation'</span>
+                            <span class="s2">)</span>
+                    <span class="s1">fields</span><span class="s2">[</span><span class="s1">var_name</span><span class="s2">] = </span><span class="s1">inferred</span>
+
+        <span class="s1">_custom_root_type </span><span class="s2">= </span><span class="s1">ROOT_KEY </span><span class="s0">in </span><span class="s1">fields</span>
+        <span class="s0">if </span><span class="s1">_custom_root_type</span><span class="s2">:</span>
+            <span class="s1">validate_custom_root_type</span><span class="s2">(</span><span class="s1">fields</span><span class="s2">)</span>
+        <span class="s1">vg</span><span class="s2">.</span><span class="s1">check_for_unused</span><span class="s2">()</span>
+        <span class="s0">if </span><span class="s1">config</span><span class="s2">.</span><span class="s1">json_encoders</span><span class="s2">:</span>
+            <span class="s1">json_encoder </span><span class="s2">= </span><span class="s1">partial</span><span class="s2">(</span><span class="s1">custom_pydantic_encoder</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">json_encoders</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">json_encoder </span><span class="s2">= </span><span class="s1">pydantic_encoder</span>
+        <span class="s1">pre_rv_new</span><span class="s2">, </span><span class="s1">post_rv_new </span><span class="s2">= </span><span class="s1">extract_root_validators</span><span class="s2">(</span><span class="s1">namespace</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">hash_func </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">hash_func </span><span class="s2">= </span><span class="s1">generate_hash_function</span><span class="s2">(</span><span class="s1">config</span><span class="s2">.</span><span class="s1">frozen</span><span class="s2">)</span>
+
+        <span class="s1">exclude_from_namespace </span><span class="s2">= </span><span class="s1">fields </span><span class="s2">| </span><span class="s1">private_attributes</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">() | {</span><span class="s3">'__slots__'</span><span class="s2">}</span>
+        <span class="s1">new_namespace </span><span class="s2">= {</span>
+            <span class="s3">'__config__'</span><span class="s2">: </span><span class="s1">config</span><span class="s2">,</span>
+            <span class="s3">'__fields__'</span><span class="s2">: </span><span class="s1">fields</span><span class="s2">,</span>
+            <span class="s3">'__exclude_fields__'</span><span class="s2">: {</span>
+                <span class="s1">name</span><span class="s2">: </span><span class="s1">field</span><span class="s2">.</span><span class="s1">field_info</span><span class="s2">.</span><span class="s1">exclude </span><span class="s0">for </span><span class="s1">name</span><span class="s2">, </span><span class="s1">field </span><span class="s0">in </span><span class="s1">fields</span><span class="s2">.</span><span class="s1">items</span><span class="s2">() </span><span class="s0">if </span><span class="s1">field</span><span class="s2">.</span><span class="s1">field_info</span><span class="s2">.</span><span class="s1">exclude </span><span class="s0">is not None</span>
+            <span class="s2">}</span>
+            <span class="s0">or None</span><span class="s2">,</span>
+            <span class="s3">'__include_fields__'</span><span class="s2">: {</span>
+                <span class="s1">name</span><span class="s2">: </span><span class="s1">field</span><span class="s2">.</span><span class="s1">field_info</span><span class="s2">.</span><span class="s1">include </span><span class="s0">for </span><span class="s1">name</span><span class="s2">, </span><span class="s1">field </span><span class="s0">in </span><span class="s1">fields</span><span class="s2">.</span><span class="s1">items</span><span class="s2">() </span><span class="s0">if </span><span class="s1">field</span><span class="s2">.</span><span class="s1">field_info</span><span class="s2">.</span><span class="s1">include </span><span class="s0">is not None</span>
+            <span class="s2">}</span>
+            <span class="s0">or None</span><span class="s2">,</span>
+            <span class="s3">'__validators__'</span><span class="s2">: </span><span class="s1">vg</span><span class="s2">.</span><span class="s1">validators</span><span class="s2">,</span>
+            <span class="s3">'__pre_root_validators__'</span><span class="s2">: </span><span class="s1">unique_list</span><span class="s2">(</span>
+                <span class="s1">pre_root_validators </span><span class="s2">+ </span><span class="s1">pre_rv_new</span><span class="s2">,</span>
+                <span class="s1">name_factory</span><span class="s2">=</span><span class="s0">lambda </span><span class="s1">v</span><span class="s2">: </span><span class="s1">v</span><span class="s2">.</span><span class="s1">__name__</span><span class="s2">,</span>
+            <span class="s2">),</span>
+            <span class="s3">'__post_root_validators__'</span><span class="s2">: </span><span class="s1">unique_list</span><span class="s2">(</span>
+                <span class="s1">post_root_validators </span><span class="s2">+ </span><span class="s1">post_rv_new</span><span class="s2">,</span>
+                <span class="s1">name_factory</span><span class="s2">=</span><span class="s0">lambda </span><span class="s1">skip_on_failure_and_v</span><span class="s2">: </span><span class="s1">skip_on_failure_and_v</span><span class="s2">[</span><span class="s4">1</span><span class="s2">].</span><span class="s1">__name__</span><span class="s2">,</span>
+            <span class="s2">),</span>
+            <span class="s3">'__schema_cache__'</span><span class="s2">: {},</span>
+            <span class="s3">'__json_encoder__'</span><span class="s2">: </span><span class="s1">staticmethod</span><span class="s2">(</span><span class="s1">json_encoder</span><span class="s2">),</span>
+            <span class="s3">'__custom_root_type__'</span><span class="s2">: </span><span class="s1">_custom_root_type</span><span class="s2">,</span>
+            <span class="s3">'__private_attributes__'</span><span class="s2">: {**</span><span class="s1">base_private_attributes</span><span class="s2">, **</span><span class="s1">private_attributes</span><span class="s2">},</span>
+            <span class="s3">'__slots__'</span><span class="s2">: </span><span class="s1">slots </span><span class="s2">| </span><span class="s1">private_attributes</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">(),</span>
+            <span class="s3">'__hash__'</span><span class="s2">: </span><span class="s1">hash_func</span><span class="s2">,</span>
+            <span class="s3">'__class_vars__'</span><span class="s2">: </span><span class="s1">class_vars</span><span class="s2">,</span>
+            <span class="s2">**{</span><span class="s1">n</span><span class="s2">: </span><span class="s1">v </span><span class="s0">for </span><span class="s1">n</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">namespace</span><span class="s2">.</span><span class="s1">items</span><span class="s2">() </span><span class="s0">if </span><span class="s1">n </span><span class="s0">not in </span><span class="s1">exclude_from_namespace</span><span class="s2">},</span>
+        <span class="s2">}</span>
+
+        <span class="s1">cls </span><span class="s2">= </span><span class="s1">super</span><span class="s2">().</span><span class="s1">__new__</span><span class="s2">(</span><span class="s1">mcs</span><span class="s2">, </span><span class="s1">name</span><span class="s2">, </span><span class="s1">bases</span><span class="s2">, </span><span class="s1">new_namespace</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+        <span class="s5"># set __signature__ attr only for model class, but not for its instances</span>
+        <span class="s1">cls</span><span class="s2">.</span><span class="s1">__signature__ </span><span class="s2">= </span><span class="s1">ClassAttribute</span><span class="s2">(</span><span class="s3">'__signature__'</span><span class="s2">, </span><span class="s1">generate_model_signature</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__init__</span><span class="s2">, </span><span class="s1">fields</span><span class="s2">, </span><span class="s1">config</span><span class="s2">))</span>
+        <span class="s0">if </span><span class="s1">resolve_forward_refs</span><span class="s2">:</span>
+            <span class="s1">cls</span><span class="s2">.</span><span class="s1">__try_update_forward_refs__</span><span class="s2">()</span>
+
+        <span class="s5"># preserve `__set_name__` protocol defined in https://peps.python.org/pep-0487</span>
+        <span class="s5"># for attributes not in `new_namespace` (e.g. private attributes)</span>
+        <span class="s0">for </span><span class="s1">name</span><span class="s2">, </span><span class="s1">obj </span><span class="s0">in </span><span class="s1">namespace</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+            <span class="s0">if </span><span class="s1">name </span><span class="s0">not in </span><span class="s1">new_namespace</span><span class="s2">:</span>
+                <span class="s1">set_name </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s3">'__set_name__'</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">callable</span><span class="s2">(</span><span class="s1">set_name</span><span class="s2">):</span>
+                    <span class="s1">set_name</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, </span><span class="s1">name</span><span class="s2">)</span>
+
+        <span class="s0">return </span><span class="s1">cls</span>
+
+    <span class="s0">def </span><span class="s1">__instancecheck__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">instance</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Avoid calling ABC _abc_subclasscheck unless we're pretty sure. 
+ 
+        See #3829 and python/cpython#92810 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">instance</span><span class="s2">, </span><span class="s3">'__post_root_validators__'</span><span class="s2">) </span><span class="s0">and </span><span class="s1">super</span><span class="s2">().</span><span class="s1">__instancecheck__</span><span class="s2">(</span><span class="s1">instance</span><span class="s2">)</span>
+
+
+<span class="s1">object_setattr </span><span class="s2">= </span><span class="s1">object</span><span class="s2">.</span><span class="s1">__setattr__</span>
+
+
+<span class="s0">class </span><span class="s1">BaseModel</span><span class="s2">(</span><span class="s1">Representation</span><span class="s2">, </span><span class="s1">metaclass</span><span class="s2">=</span><span class="s1">ModelMetaclass</span><span class="s2">):</span>
+    <span class="s0">if </span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+        <span class="s5"># populated by the metaclass, defined here to help IDEs only</span>
+        <span class="s1">__fields__</span><span class="s2">: </span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">ModelField</span><span class="s2">]] = {}</span>
+        <span class="s1">__include_fields__</span><span class="s2">: </span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]]] = </span><span class="s0">None</span>
+        <span class="s1">__exclude_fields__</span><span class="s2">: </span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]]] = </span><span class="s0">None</span>
+        <span class="s1">__validators__</span><span class="s2">: </span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">AnyCallable</span><span class="s2">]] = {}</span>
+        <span class="s1">__pre_root_validators__</span><span class="s2">: </span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">List</span><span class="s2">[</span><span class="s1">AnyCallable</span><span class="s2">]]</span>
+        <span class="s1">__post_root_validators__</span><span class="s2">: </span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">List</span><span class="s2">[</span><span class="s1">Tuple</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">, </span><span class="s1">AnyCallable</span><span class="s2">]]]</span>
+        <span class="s1">__config__</span><span class="s2">: </span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">Type</span><span class="s2">[</span><span class="s1">BaseConfig</span><span class="s2">]] = </span><span class="s1">BaseConfig</span>
+        <span class="s1">__json_encoder__</span><span class="s2">: </span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">Any</span><span class="s2">]] = </span><span class="s0">lambda </span><span class="s1">x</span><span class="s2">: </span><span class="s1">x</span>
+        <span class="s1">__schema_cache__</span><span class="s2">: </span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s3">'DictAny'</span><span class="s2">] = {}</span>
+        <span class="s1">__custom_root_type__</span><span class="s2">: </span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">] = </span><span class="s0">False</span>
+        <span class="s1">__signature__</span><span class="s2">: </span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s3">'Signature'</span><span class="s2">]</span>
+        <span class="s1">__private_attributes__</span><span class="s2">: </span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">ModelPrivateAttr</span><span class="s2">]]</span>
+        <span class="s1">__class_vars__</span><span class="s2">: </span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">SetStr</span><span class="s2">]</span>
+        <span class="s1">__fields_set__</span><span class="s2">: </span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">SetStr</span><span class="s2">] = </span><span class="s1">set</span><span class="s2">()</span>
+
+    <span class="s1">Config </span><span class="s2">= </span><span class="s1">BaseConfig</span>
+    <span class="s1">__slots__ </span><span class="s2">= (</span><span class="s3">'__dict__'</span><span class="s2">, </span><span class="s3">'__fields_set__'</span><span class="s2">)</span>
+    <span class="s1">__doc__ </span><span class="s2">= </span><span class="s3">''  </span><span class="s5"># Null out the Representation docstring</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">__pydantic_self__</span><span class="s2">, **</span><span class="s1">data</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Create a new model by parsing and validating input data from keyword arguments. 
+ 
+        Raises ValidationError if the input data cannot be parsed to form a valid model. 
+        &quot;&quot;&quot;</span>
+        <span class="s5"># Uses something other than `self` the first arg to allow &quot;self&quot; as a settable attribute</span>
+        <span class="s1">values</span><span class="s2">, </span><span class="s1">fields_set</span><span class="s2">, </span><span class="s1">validation_error </span><span class="s2">= </span><span class="s1">validate_model</span><span class="s2">(</span><span class="s1">__pydantic_self__</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">, </span><span class="s1">data</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">validation_error</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">validation_error</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">object_setattr</span><span class="s2">(</span><span class="s1">__pydantic_self__</span><span class="s2">, </span><span class="s3">'__dict__'</span><span class="s2">, </span><span class="s1">values</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">TypeError </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span>
+                <span class="s3">'Model values must be a dict; you may not have returned a dictionary from a root validator'</span>
+            <span class="s2">) </span><span class="s0">from </span><span class="s1">e</span>
+        <span class="s1">object_setattr</span><span class="s2">(</span><span class="s1">__pydantic_self__</span><span class="s2">, </span><span class="s3">'__fields_set__'</span><span class="s2">, </span><span class="s1">fields_set</span><span class="s2">)</span>
+        <span class="s1">__pydantic_self__</span><span class="s2">.</span><span class="s1">_init_private_attributes</span><span class="s2">()</span>
+
+    <span class="s2">@</span><span class="s1">no_type_check</span>
+    <span class="s0">def </span><span class="s1">__setattr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">, </span><span class="s1">value</span><span class="s2">):  </span><span class="s5"># noqa: C901 (ignore complexity)</span>
+        <span class="s0">if </span><span class="s1">name </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__private_attributes__ </span><span class="s0">or </span><span class="s1">name </span><span class="s0">in </span><span class="s1">DUNDER_ATTRIBUTES</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">object_setattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">, </span><span class="s1">value</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">extra </span><span class="s0">is not </span><span class="s1">Extra</span><span class="s2">.</span><span class="s1">allow </span><span class="s0">and </span><span class="s1">name </span><span class="s0">not in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__fields__</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s3">f'&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">}</span><span class="s3">&quot; object has no field &quot;</span><span class="s0">{</span><span class="s1">name</span><span class="s0">}</span><span class="s3">&quot;'</span><span class="s2">)</span>
+        <span class="s0">elif not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">allow_mutation </span><span class="s0">or </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">frozen</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span><span class="s3">f'&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">}</span><span class="s3">&quot; is immutable and does not support item assignment'</span><span class="s2">)</span>
+        <span class="s0">elif </span><span class="s1">name </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__fields__ </span><span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__fields__</span><span class="s2">[</span><span class="s1">name</span><span class="s2">].</span><span class="s1">final</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span>
+                <span class="s3">f'&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">}</span><span class="s3">&quot; object &quot;</span><span class="s0">{</span><span class="s1">name</span><span class="s0">}</span><span class="s3">&quot; field is final and does not support reassignment'</span>
+            <span class="s2">)</span>
+        <span class="s0">elif </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">validate_assignment</span><span class="s2">:</span>
+            <span class="s1">new_values </span><span class="s2">= {**</span><span class="s1">self</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">value</span><span class="s2">}</span>
+
+            <span class="s0">for </span><span class="s1">validator </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__pre_root_validators__</span><span class="s2">:</span>
+                <span class="s0">try</span><span class="s2">:</span>
+                    <span class="s1">new_values </span><span class="s2">= </span><span class="s1">validator</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">, </span><span class="s1">new_values</span><span class="s2">)</span>
+                <span class="s0">except </span><span class="s2">(</span><span class="s1">ValueError</span><span class="s2">, </span><span class="s1">TypeError</span><span class="s2">, </span><span class="s1">AssertionError</span><span class="s2">) </span><span class="s0">as </span><span class="s1">exc</span><span class="s2">:</span>
+                    <span class="s0">raise </span><span class="s1">ValidationError</span><span class="s2">([</span><span class="s1">ErrorWrapper</span><span class="s2">(</span><span class="s1">exc</span><span class="s2">, </span><span class="s1">loc</span><span class="s2">=</span><span class="s1">ROOT_KEY</span><span class="s2">)], </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">)</span>
+
+            <span class="s1">known_field </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__fields__</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">name</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">known_field</span><span class="s2">:</span>
+                <span class="s5"># We want to</span>
+                <span class="s5"># - make sure validators are called without the current value for this field inside `values`</span>
+                <span class="s5"># - keep other values (e.g. submodels) untouched (using `BaseModel.dict()` will change them into dicts)</span>
+                <span class="s5"># - keep the order of the fields</span>
+                <span class="s0">if not </span><span class="s1">known_field</span><span class="s2">.</span><span class="s1">field_info</span><span class="s2">.</span><span class="s1">allow_mutation</span><span class="s2">:</span>
+                    <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span><span class="s3">f'&quot;</span><span class="s0">{</span><span class="s1">known_field</span><span class="s2">.</span><span class="s1">name</span><span class="s0">}</span><span class="s3">&quot; has allow_mutation set to False and cannot be assigned'</span><span class="s2">)</span>
+                <span class="s1">dict_without_original_value </span><span class="s2">= {</span><span class="s1">k</span><span class="s2">: </span><span class="s1">v </span><span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">.</span><span class="s1">items</span><span class="s2">() </span><span class="s0">if </span><span class="s1">k </span><span class="s2">!= </span><span class="s1">name</span><span class="s2">}</span>
+                <span class="s1">value</span><span class="s2">, </span><span class="s1">error_ </span><span class="s2">= </span><span class="s1">known_field</span><span class="s2">.</span><span class="s1">validate</span><span class="s2">(</span><span class="s1">value</span><span class="s2">, </span><span class="s1">dict_without_original_value</span><span class="s2">, </span><span class="s1">loc</span><span class="s2">=</span><span class="s1">name</span><span class="s2">, </span><span class="s1">cls</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">error_</span><span class="s2">:</span>
+                    <span class="s0">raise </span><span class="s1">ValidationError</span><span class="s2">([</span><span class="s1">error_</span><span class="s2">], </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">)</span>
+                <span class="s0">else</span><span class="s2">:</span>
+                    <span class="s1">new_values</span><span class="s2">[</span><span class="s1">name</span><span class="s2">] = </span><span class="s1">value</span>
+
+            <span class="s1">errors </span><span class="s2">= []</span>
+            <span class="s0">for </span><span class="s1">skip_on_failure</span><span class="s2">, </span><span class="s1">validator </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__post_root_validators__</span><span class="s2">:</span>
+                <span class="s0">if </span><span class="s1">skip_on_failure </span><span class="s0">and </span><span class="s1">errors</span><span class="s2">:</span>
+                    <span class="s0">continue</span>
+                <span class="s0">try</span><span class="s2">:</span>
+                    <span class="s1">new_values </span><span class="s2">= </span><span class="s1">validator</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">, </span><span class="s1">new_values</span><span class="s2">)</span>
+                <span class="s0">except </span><span class="s2">(</span><span class="s1">ValueError</span><span class="s2">, </span><span class="s1">TypeError</span><span class="s2">, </span><span class="s1">AssertionError</span><span class="s2">) </span><span class="s0">as </span><span class="s1">exc</span><span class="s2">:</span>
+                    <span class="s1">errors</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">ErrorWrapper</span><span class="s2">(</span><span class="s1">exc</span><span class="s2">, </span><span class="s1">loc</span><span class="s2">=</span><span class="s1">ROOT_KEY</span><span class="s2">))</span>
+            <span class="s0">if </span><span class="s1">errors</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">ValidationError</span><span class="s2">(</span><span class="s1">errors</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">)</span>
+
+            <span class="s5"># update the whole __dict__ as other values than just `value`</span>
+            <span class="s5"># may be changed (e.g. with `root_validator`)</span>
+            <span class="s1">object_setattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s3">'__dict__'</span><span class="s2">, </span><span class="s1">new_values</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">[</span><span class="s1">name</span><span class="s2">] = </span><span class="s1">value</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">__fields_set__</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">name</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">__getstate__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s3">'DictAny'</span><span class="s2">:</span>
+        <span class="s1">private_attrs </span><span class="s2">= ((</span><span class="s1">k</span><span class="s2">, </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">k</span><span class="s2">, </span><span class="s1">Undefined</span><span class="s2">)) </span><span class="s0">for </span><span class="s1">k </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__private_attributes__</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s2">{</span>
+            <span class="s3">'__dict__'</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">,</span>
+            <span class="s3">'__fields_set__'</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__fields_set__</span><span class="s2">,</span>
+            <span class="s3">'__private_attribute_values__'</span><span class="s2">: {</span><span class="s1">k</span><span class="s2">: </span><span class="s1">v </span><span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">private_attrs </span><span class="s0">if </span><span class="s1">v </span><span class="s0">is not </span><span class="s1">Undefined</span><span class="s2">},</span>
+        <span class="s2">}</span>
+
+    <span class="s0">def </span><span class="s1">__setstate__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">state</span><span class="s2">: </span><span class="s3">'DictAny'</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">object_setattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s3">'__dict__'</span><span class="s2">, </span><span class="s1">state</span><span class="s2">[</span><span class="s3">'__dict__'</span><span class="s2">])</span>
+        <span class="s1">object_setattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s3">'__fields_set__'</span><span class="s2">, </span><span class="s1">state</span><span class="s2">[</span><span class="s3">'__fields_set__'</span><span class="s2">])</span>
+        <span class="s0">for </span><span class="s1">name</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">state</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'__private_attribute_values__'</span><span class="s2">, {}).</span><span class="s1">items</span><span class="s2">():</span>
+            <span class="s1">object_setattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">, </span><span class="s1">value</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_init_private_attributes</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">for </span><span class="s1">name</span><span class="s2">, </span><span class="s1">private_attr </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__private_attributes__</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+            <span class="s1">default </span><span class="s2">= </span><span class="s1">private_attr</span><span class="s2">.</span><span class="s1">get_default</span><span class="s2">()</span>
+            <span class="s0">if </span><span class="s1">default </span><span class="s0">is not </span><span class="s1">Undefined</span><span class="s2">:</span>
+                <span class="s1">object_setattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">, </span><span class="s1">default</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">dict</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s2">*,</span>
+        <span class="s1">include</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Union</span><span class="s2">[</span><span class="s3">'AbstractSetIntStr'</span><span class="s2">, </span><span class="s3">'MappingIntStrAny'</span><span class="s2">]] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">exclude</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Union</span><span class="s2">[</span><span class="s3">'AbstractSetIntStr'</span><span class="s2">, </span><span class="s3">'MappingIntStrAny'</span><span class="s2">]] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">by_alias</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">skip_defaults</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">exclude_unset</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">exclude_defaults</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">exclude_none</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s3">'DictStrAny'</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Generate a dictionary representation of the model, optionally specifying which fields to include or exclude. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">skip_defaults </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+                <span class="s3">f'</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">}</span><span class="s3">.dict(): &quot;skip_defaults&quot; is deprecated and replaced by &quot;exclude_unset&quot;'</span><span class="s2">,</span>
+                <span class="s1">DeprecationWarning</span><span class="s2">,</span>
+            <span class="s2">)</span>
+            <span class="s1">exclude_unset </span><span class="s2">= </span><span class="s1">skip_defaults</span>
+
+        <span class="s0">return </span><span class="s1">dict</span><span class="s2">(</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_iter</span><span class="s2">(</span>
+                <span class="s1">to_dict</span><span class="s2">=</span><span class="s0">True</span><span class="s2">,</span>
+                <span class="s1">by_alias</span><span class="s2">=</span><span class="s1">by_alias</span><span class="s2">,</span>
+                <span class="s1">include</span><span class="s2">=</span><span class="s1">include</span><span class="s2">,</span>
+                <span class="s1">exclude</span><span class="s2">=</span><span class="s1">exclude</span><span class="s2">,</span>
+                <span class="s1">exclude_unset</span><span class="s2">=</span><span class="s1">exclude_unset</span><span class="s2">,</span>
+                <span class="s1">exclude_defaults</span><span class="s2">=</span><span class="s1">exclude_defaults</span><span class="s2">,</span>
+                <span class="s1">exclude_none</span><span class="s2">=</span><span class="s1">exclude_none</span><span class="s2">,</span>
+            <span class="s2">)</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">json</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s2">*,</span>
+        <span class="s1">include</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Union</span><span class="s2">[</span><span class="s3">'AbstractSetIntStr'</span><span class="s2">, </span><span class="s3">'MappingIntStrAny'</span><span class="s2">]] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">exclude</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Union</span><span class="s2">[</span><span class="s3">'AbstractSetIntStr'</span><span class="s2">, </span><span class="s3">'MappingIntStrAny'</span><span class="s2">]] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">by_alias</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">skip_defaults</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">exclude_unset</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">exclude_defaults</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">exclude_none</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">encoder</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">Any</span><span class="s2">]] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">models_as_dict</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">,</span>
+        <span class="s2">**</span><span class="s1">dumps_kwargs</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Generate a JSON representation of the model, `include` and `exclude` arguments as per `dict()`. 
+ 
+        `encoder` is an optional function to supply as `default` to json.dumps(), other arguments as per `json.dumps()`. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">skip_defaults </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+                <span class="s3">f'</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">}</span><span class="s3">.json(): &quot;skip_defaults&quot; is deprecated and replaced by &quot;exclude_unset&quot;'</span><span class="s2">,</span>
+                <span class="s1">DeprecationWarning</span><span class="s2">,</span>
+            <span class="s2">)</span>
+            <span class="s1">exclude_unset </span><span class="s2">= </span><span class="s1">skip_defaults</span>
+        <span class="s1">encoder </span><span class="s2">= </span><span class="s1">cast</span><span class="s2">(</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">Any</span><span class="s2">], </span><span class="s1">encoder </span><span class="s0">or </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__json_encoder__</span><span class="s2">)</span>
+
+        <span class="s5"># We don't directly call `self.dict()`, which does exactly this with `to_dict=True`</span>
+        <span class="s5"># because we want to be able to keep raw `BaseModel` instances and not as `dict`.</span>
+        <span class="s5"># This allows users to write custom JSON encoders for given `BaseModel` classes.</span>
+        <span class="s1">data </span><span class="s2">= </span><span class="s1">dict</span><span class="s2">(</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_iter</span><span class="s2">(</span>
+                <span class="s1">to_dict</span><span class="s2">=</span><span class="s1">models_as_dict</span><span class="s2">,</span>
+                <span class="s1">by_alias</span><span class="s2">=</span><span class="s1">by_alias</span><span class="s2">,</span>
+                <span class="s1">include</span><span class="s2">=</span><span class="s1">include</span><span class="s2">,</span>
+                <span class="s1">exclude</span><span class="s2">=</span><span class="s1">exclude</span><span class="s2">,</span>
+                <span class="s1">exclude_unset</span><span class="s2">=</span><span class="s1">exclude_unset</span><span class="s2">,</span>
+                <span class="s1">exclude_defaults</span><span class="s2">=</span><span class="s1">exclude_defaults</span><span class="s2">,</span>
+                <span class="s1">exclude_none</span><span class="s2">=</span><span class="s1">exclude_none</span><span class="s2">,</span>
+            <span class="s2">)</span>
+        <span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__custom_root_type__</span><span class="s2">:</span>
+            <span class="s1">data </span><span class="s2">= </span><span class="s1">data</span><span class="s2">[</span><span class="s1">ROOT_KEY</span><span class="s2">]</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">json_dumps</span><span class="s2">(</span><span class="s1">data</span><span class="s2">, </span><span class="s1">default</span><span class="s2">=</span><span class="s1">encoder</span><span class="s2">, **</span><span class="s1">dumps_kwargs</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">_enforce_dict_if_root</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, </span><span class="s1">obj</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__custom_root_type__ </span><span class="s0">and </span><span class="s2">(</span>
+            <span class="s0">not </span><span class="s2">(</span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s1">dict</span><span class="s2">) </span><span class="s0">and </span><span class="s1">obj</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">() == {</span><span class="s1">ROOT_KEY</span><span class="s2">})</span>
+            <span class="s0">and not </span><span class="s2">(</span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s1">BaseModel</span><span class="s2">) </span><span class="s0">and </span><span class="s1">obj</span><span class="s2">.</span><span class="s1">__fields__</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">() == {</span><span class="s1">ROOT_KEY</span><span class="s2">})</span>
+            <span class="s0">or </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__fields__</span><span class="s2">[</span><span class="s1">ROOT_KEY</span><span class="s2">].</span><span class="s1">shape </span><span class="s0">in </span><span class="s1">MAPPING_LIKE_SHAPES</span>
+        <span class="s2">):</span>
+            <span class="s0">return </span><span class="s2">{</span><span class="s1">ROOT_KEY</span><span class="s2">: </span><span class="s1">obj</span><span class="s2">}</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">obj</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">parse_obj</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s3">'Model'</span><span class="s2">], </span><span class="s1">obj</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s3">'Model'</span><span class="s2">:</span>
+        <span class="s1">obj </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">_enforce_dict_if_root</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)</span>
+        <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s1">dict</span><span class="s2">):</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">obj </span><span class="s2">= </span><span class="s1">dict</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)</span>
+            <span class="s0">except </span><span class="s2">(</span><span class="s1">TypeError</span><span class="s2">, </span><span class="s1">ValueError</span><span class="s2">) </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+                <span class="s1">exc </span><span class="s2">= </span><span class="s1">TypeError</span><span class="s2">(</span><span class="s3">f'</span><span class="s0">{</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">} </span><span class="s3">expected dict not </span><span class="s0">{</span><span class="s1">obj</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">}</span><span class="s3">'</span><span class="s2">)</span>
+                <span class="s0">raise </span><span class="s1">ValidationError</span><span class="s2">([</span><span class="s1">ErrorWrapper</span><span class="s2">(</span><span class="s1">exc</span><span class="s2">, </span><span class="s1">loc</span><span class="s2">=</span><span class="s1">ROOT_KEY</span><span class="s2">)], </span><span class="s1">cls</span><span class="s2">) </span><span class="s0">from </span><span class="s1">e</span>
+        <span class="s0">return </span><span class="s1">cls</span><span class="s2">(**</span><span class="s1">obj</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">parse_raw</span><span class="s2">(</span>
+        <span class="s1">cls</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s3">'Model'</span><span class="s2">],</span>
+        <span class="s1">b</span><span class="s2">: </span><span class="s1">StrBytes</span><span class="s2">,</span>
+        <span class="s2">*,</span>
+        <span class="s1">content_type</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">encoding</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s3">'utf8'</span><span class="s2">,</span>
+        <span class="s1">proto</span><span class="s2">: </span><span class="s1">Protocol </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">allow_pickle</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s3">'Model'</span><span class="s2">:</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">obj </span><span class="s2">= </span><span class="s1">load_str_bytes</span><span class="s2">(</span>
+                <span class="s1">b</span><span class="s2">,</span>
+                <span class="s1">proto</span><span class="s2">=</span><span class="s1">proto</span><span class="s2">,</span>
+                <span class="s1">content_type</span><span class="s2">=</span><span class="s1">content_type</span><span class="s2">,</span>
+                <span class="s1">encoding</span><span class="s2">=</span><span class="s1">encoding</span><span class="s2">,</span>
+                <span class="s1">allow_pickle</span><span class="s2">=</span><span class="s1">allow_pickle</span><span class="s2">,</span>
+                <span class="s1">json_loads</span><span class="s2">=</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">json_loads</span><span class="s2">,</span>
+            <span class="s2">)</span>
+        <span class="s0">except </span><span class="s2">(</span><span class="s1">ValueError</span><span class="s2">, </span><span class="s1">TypeError</span><span class="s2">, </span><span class="s1">UnicodeDecodeError</span><span class="s2">) </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">ValidationError</span><span class="s2">([</span><span class="s1">ErrorWrapper</span><span class="s2">(</span><span class="s1">e</span><span class="s2">, </span><span class="s1">loc</span><span class="s2">=</span><span class="s1">ROOT_KEY</span><span class="s2">)], </span><span class="s1">cls</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">parse_obj</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">parse_file</span><span class="s2">(</span>
+        <span class="s1">cls</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s3">'Model'</span><span class="s2">],</span>
+        <span class="s1">path</span><span class="s2">: </span><span class="s1">Union</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Path</span><span class="s2">],</span>
+        <span class="s2">*,</span>
+        <span class="s1">content_type</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">encoding</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s3">'utf8'</span><span class="s2">,</span>
+        <span class="s1">proto</span><span class="s2">: </span><span class="s1">Protocol </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">allow_pickle</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s3">'Model'</span><span class="s2">:</span>
+        <span class="s1">obj </span><span class="s2">= </span><span class="s1">load_file</span><span class="s2">(</span>
+            <span class="s1">path</span><span class="s2">,</span>
+            <span class="s1">proto</span><span class="s2">=</span><span class="s1">proto</span><span class="s2">,</span>
+            <span class="s1">content_type</span><span class="s2">=</span><span class="s1">content_type</span><span class="s2">,</span>
+            <span class="s1">encoding</span><span class="s2">=</span><span class="s1">encoding</span><span class="s2">,</span>
+            <span class="s1">allow_pickle</span><span class="s2">=</span><span class="s1">allow_pickle</span><span class="s2">,</span>
+            <span class="s1">json_loads</span><span class="s2">=</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">json_loads</span><span class="s2">,</span>
+        <span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">parse_obj</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">from_orm</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s3">'Model'</span><span class="s2">], </span><span class="s1">obj</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s3">'Model'</span><span class="s2">:</span>
+        <span class="s0">if not </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">orm_mode</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">ConfigError</span><span class="s2">(</span><span class="s3">'You must have the config attribute orm_mode=True to use from_orm'</span><span class="s2">)</span>
+        <span class="s1">obj </span><span class="s2">= {</span><span class="s1">ROOT_KEY</span><span class="s2">: </span><span class="s1">obj</span><span class="s2">} </span><span class="s0">if </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__custom_root_type__ </span><span class="s0">else </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">_decompose_class</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)</span>
+        <span class="s1">m </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__new__</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">)</span>
+        <span class="s1">values</span><span class="s2">, </span><span class="s1">fields_set</span><span class="s2">, </span><span class="s1">validation_error </span><span class="s2">= </span><span class="s1">validate_model</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, </span><span class="s1">obj</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">validation_error</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">validation_error</span>
+        <span class="s1">object_setattr</span><span class="s2">(</span><span class="s1">m</span><span class="s2">, </span><span class="s3">'__dict__'</span><span class="s2">, </span><span class="s1">values</span><span class="s2">)</span>
+        <span class="s1">object_setattr</span><span class="s2">(</span><span class="s1">m</span><span class="s2">, </span><span class="s3">'__fields_set__'</span><span class="s2">, </span><span class="s1">fields_set</span><span class="s2">)</span>
+        <span class="s1">m</span><span class="s2">.</span><span class="s1">_init_private_attributes</span><span class="s2">()</span>
+        <span class="s0">return </span><span class="s1">m</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">construct</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s3">'Model'</span><span class="s2">], </span><span class="s1">_fields_set</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s3">'SetStr'</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">, **</span><span class="s1">values</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s3">'Model'</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Creates a new model setting __dict__ and __fields_set__ from trusted or pre-validated data. 
+        Default values are respected, but no other validation is performed. 
+        Behaves as if `Config.extra = 'allow'` was set since it adds all passed values 
+        &quot;&quot;&quot;</span>
+        <span class="s1">m </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__new__</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">)</span>
+        <span class="s1">fields_values</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] = {}</span>
+        <span class="s0">for </span><span class="s1">name</span><span class="s2">, </span><span class="s1">field </span><span class="s0">in </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__fields__</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+            <span class="s0">if </span><span class="s1">field</span><span class="s2">.</span><span class="s1">alt_alias </span><span class="s0">and </span><span class="s1">field</span><span class="s2">.</span><span class="s1">alias </span><span class="s0">in </span><span class="s1">values</span><span class="s2">:</span>
+                <span class="s1">fields_values</span><span class="s2">[</span><span class="s1">name</span><span class="s2">] = </span><span class="s1">values</span><span class="s2">[</span><span class="s1">field</span><span class="s2">.</span><span class="s1">alias</span><span class="s2">]</span>
+            <span class="s0">elif </span><span class="s1">name </span><span class="s0">in </span><span class="s1">values</span><span class="s2">:</span>
+                <span class="s1">fields_values</span><span class="s2">[</span><span class="s1">name</span><span class="s2">] = </span><span class="s1">values</span><span class="s2">[</span><span class="s1">name</span><span class="s2">]</span>
+            <span class="s0">elif not </span><span class="s1">field</span><span class="s2">.</span><span class="s1">required</span><span class="s2">:</span>
+                <span class="s1">fields_values</span><span class="s2">[</span><span class="s1">name</span><span class="s2">] = </span><span class="s1">field</span><span class="s2">.</span><span class="s1">get_default</span><span class="s2">()</span>
+        <span class="s1">fields_values</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">values</span><span class="s2">)</span>
+        <span class="s1">object_setattr</span><span class="s2">(</span><span class="s1">m</span><span class="s2">, </span><span class="s3">'__dict__'</span><span class="s2">, </span><span class="s1">fields_values</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">_fields_set </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">_fields_set </span><span class="s2">= </span><span class="s1">set</span><span class="s2">(</span><span class="s1">values</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">())</span>
+        <span class="s1">object_setattr</span><span class="s2">(</span><span class="s1">m</span><span class="s2">, </span><span class="s3">'__fields_set__'</span><span class="s2">, </span><span class="s1">_fields_set</span><span class="s2">)</span>
+        <span class="s1">m</span><span class="s2">.</span><span class="s1">_init_private_attributes</span><span class="s2">()</span>
+        <span class="s0">return </span><span class="s1">m</span>
+
+    <span class="s0">def </span><span class="s1">_copy_and_set_values</span><span class="s2">(</span><span class="s1">self</span><span class="s2">: </span><span class="s3">'Model'</span><span class="s2">, </span><span class="s1">values</span><span class="s2">: </span><span class="s3">'DictStrAny'</span><span class="s2">, </span><span class="s1">fields_set</span><span class="s2">: </span><span class="s3">'SetStr'</span><span class="s2">, *, </span><span class="s1">deep</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s3">'Model'</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">deep</span><span class="s2">:</span>
+            <span class="s5"># chances of having empty dict here are quite low for using smart_deepcopy</span>
+            <span class="s1">values </span><span class="s2">= </span><span class="s1">deepcopy</span><span class="s2">(</span><span class="s1">values</span><span class="s2">)</span>
+
+        <span class="s1">cls </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__class__</span>
+        <span class="s1">m </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__new__</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">)</span>
+        <span class="s1">object_setattr</span><span class="s2">(</span><span class="s1">m</span><span class="s2">, </span><span class="s3">'__dict__'</span><span class="s2">, </span><span class="s1">values</span><span class="s2">)</span>
+        <span class="s1">object_setattr</span><span class="s2">(</span><span class="s1">m</span><span class="s2">, </span><span class="s3">'__fields_set__'</span><span class="s2">, </span><span class="s1">fields_set</span><span class="s2">)</span>
+        <span class="s0">for </span><span class="s1">name </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__private_attributes__</span><span class="s2">:</span>
+            <span class="s1">value </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">, </span><span class="s1">Undefined</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">value </span><span class="s0">is not </span><span class="s1">Undefined</span><span class="s2">:</span>
+                <span class="s0">if </span><span class="s1">deep</span><span class="s2">:</span>
+                    <span class="s1">value </span><span class="s2">= </span><span class="s1">deepcopy</span><span class="s2">(</span><span class="s1">value</span><span class="s2">)</span>
+                <span class="s1">object_setattr</span><span class="s2">(</span><span class="s1">m</span><span class="s2">, </span><span class="s1">name</span><span class="s2">, </span><span class="s1">value</span><span class="s2">)</span>
+
+        <span class="s0">return </span><span class="s1">m</span>
+
+    <span class="s0">def </span><span class="s1">copy</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">: </span><span class="s3">'Model'</span><span class="s2">,</span>
+        <span class="s2">*,</span>
+        <span class="s1">include</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Union</span><span class="s2">[</span><span class="s3">'AbstractSetIntStr'</span><span class="s2">, </span><span class="s3">'MappingIntStrAny'</span><span class="s2">]] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">exclude</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Union</span><span class="s2">[</span><span class="s3">'AbstractSetIntStr'</span><span class="s2">, </span><span class="s3">'MappingIntStrAny'</span><span class="s2">]] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">update</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s3">'DictStrAny'</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">deep</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s3">'Model'</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Duplicate a model, optionally choose which fields to include, exclude and change. 
+ 
+        :param include: fields to include in new model 
+        :param exclude: fields to exclude from new model, as with values this takes precedence over include 
+        :param update: values to change/add in the new model. Note: the data is not validated before creating 
+            the new model: you should trust this data 
+        :param deep: set to `True` to make a deep copy of the model 
+        :return: new model instance 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">values </span><span class="s2">= </span><span class="s1">dict</span><span class="s2">(</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_iter</span><span class="s2">(</span><span class="s1">to_dict</span><span class="s2">=</span><span class="s0">False</span><span class="s2">, </span><span class="s1">by_alias</span><span class="s2">=</span><span class="s0">False</span><span class="s2">, </span><span class="s1">include</span><span class="s2">=</span><span class="s1">include</span><span class="s2">, </span><span class="s1">exclude</span><span class="s2">=</span><span class="s1">exclude</span><span class="s2">, </span><span class="s1">exclude_unset</span><span class="s2">=</span><span class="s0">False</span><span class="s2">),</span>
+            <span class="s2">**(</span><span class="s1">update </span><span class="s0">or </span><span class="s2">{}),</span>
+        <span class="s2">)</span>
+
+        <span class="s5"># new `__fields_set__` can have unset optional fields with a set value in `update` kwarg</span>
+        <span class="s0">if </span><span class="s1">update</span><span class="s2">:</span>
+            <span class="s1">fields_set </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__fields_set__ </span><span class="s2">| </span><span class="s1">update</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">()</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">fields_set </span><span class="s2">= </span><span class="s1">set</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">__fields_set__</span><span class="s2">)</span>
+
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_copy_and_set_values</span><span class="s2">(</span><span class="s1">values</span><span class="s2">, </span><span class="s1">fields_set</span><span class="s2">, </span><span class="s1">deep</span><span class="s2">=</span><span class="s1">deep</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">schema</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, </span><span class="s1">by_alias</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">, </span><span class="s1">ref_template</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s1">default_ref_template</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s3">'DictStrAny'</span><span class="s2">:</span>
+        <span class="s1">cached </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__schema_cache__</span><span class="s2">.</span><span class="s1">get</span><span class="s2">((</span><span class="s1">by_alias</span><span class="s2">, </span><span class="s1">ref_template</span><span class="s2">))</span>
+        <span class="s0">if </span><span class="s1">cached </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">cached</span>
+        <span class="s1">s </span><span class="s2">= </span><span class="s1">model_schema</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, </span><span class="s1">by_alias</span><span class="s2">=</span><span class="s1">by_alias</span><span class="s2">, </span><span class="s1">ref_template</span><span class="s2">=</span><span class="s1">ref_template</span><span class="s2">)</span>
+        <span class="s1">cls</span><span class="s2">.</span><span class="s1">__schema_cache__</span><span class="s2">[(</span><span class="s1">by_alias</span><span class="s2">, </span><span class="s1">ref_template</span><span class="s2">)] = </span><span class="s1">s</span>
+        <span class="s0">return </span><span class="s1">s</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">schema_json</span><span class="s2">(</span>
+        <span class="s1">cls</span><span class="s2">, *, </span><span class="s1">by_alias</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">, </span><span class="s1">ref_template</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s1">default_ref_template</span><span class="s2">, **</span><span class="s1">dumps_kwargs</span><span class="s2">: </span><span class="s1">Any</span>
+    <span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">json </span><span class="s0">import </span><span class="s1">pydantic_encoder</span>
+
+        <span class="s0">return </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">json_dumps</span><span class="s2">(</span>
+            <span class="s1">cls</span><span class="s2">.</span><span class="s1">schema</span><span class="s2">(</span><span class="s1">by_alias</span><span class="s2">=</span><span class="s1">by_alias</span><span class="s2">, </span><span class="s1">ref_template</span><span class="s2">=</span><span class="s1">ref_template</span><span class="s2">), </span><span class="s1">default</span><span class="s2">=</span><span class="s1">pydantic_encoder</span><span class="s2">, **</span><span class="s1">dumps_kwargs</span>
+        <span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">__get_validators__</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s3">'CallableGenerator'</span><span class="s2">:</span>
+        <span class="s0">yield </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">validate</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">validate</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s3">'Model'</span><span class="s2">], </span><span class="s1">value</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s3">'Model'</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">value</span><span class="s2">, </span><span class="s1">cls</span><span class="s2">):</span>
+            <span class="s1">copy_on_model_validation </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">copy_on_model_validation</span>
+            <span class="s5"># whether to deep or shallow copy the model on validation, None means do not copy</span>
+            <span class="s1">deep_copy</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">] = </span><span class="s0">None</span>
+            <span class="s0">if </span><span class="s1">copy_on_model_validation </span><span class="s0">not in </span><span class="s2">{</span><span class="s3">'deep'</span><span class="s2">, </span><span class="s3">'shallow'</span><span class="s2">, </span><span class="s3">'none'</span><span class="s2">}:</span>
+                <span class="s5"># Warn about deprecated behavior</span>
+                <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+                    <span class="s3">&quot;`copy_on_model_validation` should be a string: 'deep', 'shallow' or 'none'&quot;</span><span class="s2">, </span><span class="s1">DeprecationWarning</span>
+                <span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">copy_on_model_validation</span><span class="s2">:</span>
+                    <span class="s1">deep_copy </span><span class="s2">= </span><span class="s0">False</span>
+
+            <span class="s0">if </span><span class="s1">copy_on_model_validation </span><span class="s2">== </span><span class="s3">'shallow'</span><span class="s2">:</span>
+                <span class="s5"># shallow copy</span>
+                <span class="s1">deep_copy </span><span class="s2">= </span><span class="s0">False</span>
+            <span class="s0">elif </span><span class="s1">copy_on_model_validation </span><span class="s2">== </span><span class="s3">'deep'</span><span class="s2">:</span>
+                <span class="s5"># deep copy</span>
+                <span class="s1">deep_copy </span><span class="s2">= </span><span class="s0">True</span>
+
+            <span class="s0">if </span><span class="s1">deep_copy </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">value</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">value</span><span class="s2">.</span><span class="s1">_copy_and_set_values</span><span class="s2">(</span><span class="s1">value</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">, </span><span class="s1">value</span><span class="s2">.</span><span class="s1">__fields_set__</span><span class="s2">, </span><span class="s1">deep</span><span class="s2">=</span><span class="s1">deep_copy</span><span class="s2">)</span>
+
+        <span class="s1">value </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">_enforce_dict_if_root</span><span class="s2">(</span><span class="s1">value</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">value</span><span class="s2">, </span><span class="s1">dict</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">cls</span><span class="s2">(**</span><span class="s1">value</span><span class="s2">)</span>
+        <span class="s0">elif </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">orm_mode</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">from_orm</span><span class="s2">(</span><span class="s1">value</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">value_as_dict </span><span class="s2">= </span><span class="s1">dict</span><span class="s2">(</span><span class="s1">value</span><span class="s2">)</span>
+            <span class="s0">except </span><span class="s2">(</span><span class="s1">TypeError</span><span class="s2">, </span><span class="s1">ValueError</span><span class="s2">) </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">DictError</span><span class="s2">() </span><span class="s0">from </span><span class="s1">e</span>
+            <span class="s0">return </span><span class="s1">cls</span><span class="s2">(**</span><span class="s1">value_as_dict</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">_decompose_class</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s3">'Model'</span><span class="s2">], </span><span class="s1">obj</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; GetterDict</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s1">GetterDict</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">obj</span>
+        <span class="s0">return </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">getter_dict</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s2">@</span><span class="s1">no_type_check</span>
+    <span class="s0">def </span><span class="s1">_get_value</span><span class="s2">(</span>
+        <span class="s1">cls</span><span class="s2">,</span>
+        <span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">,</span>
+        <span class="s1">to_dict</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">,</span>
+        <span class="s1">by_alias</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">,</span>
+        <span class="s1">include</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Union</span><span class="s2">[</span><span class="s3">'AbstractSetIntStr'</span><span class="s2">, </span><span class="s3">'MappingIntStrAny'</span><span class="s2">]],</span>
+        <span class="s1">exclude</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Union</span><span class="s2">[</span><span class="s3">'AbstractSetIntStr'</span><span class="s2">, </span><span class="s3">'MappingIntStrAny'</span><span class="s2">]],</span>
+        <span class="s1">exclude_unset</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">,</span>
+        <span class="s1">exclude_defaults</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">,</span>
+        <span class="s1">exclude_none</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">BaseModel</span><span class="s2">):</span>
+            <span class="s0">if </span><span class="s1">to_dict</span><span class="s2">:</span>
+                <span class="s1">v_dict </span><span class="s2">= </span><span class="s1">v</span><span class="s2">.</span><span class="s1">dict</span><span class="s2">(</span>
+                    <span class="s1">by_alias</span><span class="s2">=</span><span class="s1">by_alias</span><span class="s2">,</span>
+                    <span class="s1">exclude_unset</span><span class="s2">=</span><span class="s1">exclude_unset</span><span class="s2">,</span>
+                    <span class="s1">exclude_defaults</span><span class="s2">=</span><span class="s1">exclude_defaults</span><span class="s2">,</span>
+                    <span class="s1">include</span><span class="s2">=</span><span class="s1">include</span><span class="s2">,</span>
+                    <span class="s1">exclude</span><span class="s2">=</span><span class="s1">exclude</span><span class="s2">,</span>
+                    <span class="s1">exclude_none</span><span class="s2">=</span><span class="s1">exclude_none</span><span class="s2">,</span>
+                <span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">ROOT_KEY </span><span class="s0">in </span><span class="s1">v_dict</span><span class="s2">:</span>
+                    <span class="s0">return </span><span class="s1">v_dict</span><span class="s2">[</span><span class="s1">ROOT_KEY</span><span class="s2">]</span>
+                <span class="s0">return </span><span class="s1">v_dict</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">v</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">(</span><span class="s1">include</span><span class="s2">=</span><span class="s1">include</span><span class="s2">, </span><span class="s1">exclude</span><span class="s2">=</span><span class="s1">exclude</span><span class="s2">)</span>
+
+        <span class="s1">value_exclude </span><span class="s2">= </span><span class="s1">ValueItems</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">exclude</span><span class="s2">) </span><span class="s0">if </span><span class="s1">exclude </span><span class="s0">else None</span>
+        <span class="s1">value_include </span><span class="s2">= </span><span class="s1">ValueItems</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">include</span><span class="s2">) </span><span class="s0">if </span><span class="s1">include </span><span class="s0">else None</span>
+
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">dict</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s2">{</span>
+                <span class="s1">k_</span><span class="s2">: </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">_get_value</span><span class="s2">(</span>
+                    <span class="s1">v_</span><span class="s2">,</span>
+                    <span class="s1">to_dict</span><span class="s2">=</span><span class="s1">to_dict</span><span class="s2">,</span>
+                    <span class="s1">by_alias</span><span class="s2">=</span><span class="s1">by_alias</span><span class="s2">,</span>
+                    <span class="s1">exclude_unset</span><span class="s2">=</span><span class="s1">exclude_unset</span><span class="s2">,</span>
+                    <span class="s1">exclude_defaults</span><span class="s2">=</span><span class="s1">exclude_defaults</span><span class="s2">,</span>
+                    <span class="s1">include</span><span class="s2">=</span><span class="s1">value_include </span><span class="s0">and </span><span class="s1">value_include</span><span class="s2">.</span><span class="s1">for_element</span><span class="s2">(</span><span class="s1">k_</span><span class="s2">),</span>
+                    <span class="s1">exclude</span><span class="s2">=</span><span class="s1">value_exclude </span><span class="s0">and </span><span class="s1">value_exclude</span><span class="s2">.</span><span class="s1">for_element</span><span class="s2">(</span><span class="s1">k_</span><span class="s2">),</span>
+                    <span class="s1">exclude_none</span><span class="s2">=</span><span class="s1">exclude_none</span><span class="s2">,</span>
+                <span class="s2">)</span>
+                <span class="s0">for </span><span class="s1">k_</span><span class="s2">, </span><span class="s1">v_ </span><span class="s0">in </span><span class="s1">v</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()</span>
+                <span class="s0">if </span><span class="s2">(</span><span class="s0">not </span><span class="s1">value_exclude </span><span class="s0">or not </span><span class="s1">value_exclude</span><span class="s2">.</span><span class="s1">is_excluded</span><span class="s2">(</span><span class="s1">k_</span><span class="s2">))</span>
+                <span class="s0">and </span><span class="s2">(</span><span class="s0">not </span><span class="s1">value_include </span><span class="s0">or </span><span class="s1">value_include</span><span class="s2">.</span><span class="s1">is_included</span><span class="s2">(</span><span class="s1">k_</span><span class="s2">))</span>
+            <span class="s2">}</span>
+
+        <span class="s0">elif </span><span class="s1">sequence_like</span><span class="s2">(</span><span class="s1">v</span><span class="s2">):</span>
+            <span class="s1">seq_args </span><span class="s2">= (</span>
+                <span class="s1">cls</span><span class="s2">.</span><span class="s1">_get_value</span><span class="s2">(</span>
+                    <span class="s1">v_</span><span class="s2">,</span>
+                    <span class="s1">to_dict</span><span class="s2">=</span><span class="s1">to_dict</span><span class="s2">,</span>
+                    <span class="s1">by_alias</span><span class="s2">=</span><span class="s1">by_alias</span><span class="s2">,</span>
+                    <span class="s1">exclude_unset</span><span class="s2">=</span><span class="s1">exclude_unset</span><span class="s2">,</span>
+                    <span class="s1">exclude_defaults</span><span class="s2">=</span><span class="s1">exclude_defaults</span><span class="s2">,</span>
+                    <span class="s1">include</span><span class="s2">=</span><span class="s1">value_include </span><span class="s0">and </span><span class="s1">value_include</span><span class="s2">.</span><span class="s1">for_element</span><span class="s2">(</span><span class="s1">i</span><span class="s2">),</span>
+                    <span class="s1">exclude</span><span class="s2">=</span><span class="s1">value_exclude </span><span class="s0">and </span><span class="s1">value_exclude</span><span class="s2">.</span><span class="s1">for_element</span><span class="s2">(</span><span class="s1">i</span><span class="s2">),</span>
+                    <span class="s1">exclude_none</span><span class="s2">=</span><span class="s1">exclude_none</span><span class="s2">,</span>
+                <span class="s2">)</span>
+                <span class="s0">for </span><span class="s1">i</span><span class="s2">, </span><span class="s1">v_ </span><span class="s0">in </span><span class="s1">enumerate</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+                <span class="s0">if </span><span class="s2">(</span><span class="s0">not </span><span class="s1">value_exclude </span><span class="s0">or not </span><span class="s1">value_exclude</span><span class="s2">.</span><span class="s1">is_excluded</span><span class="s2">(</span><span class="s1">i</span><span class="s2">))</span>
+                <span class="s0">and </span><span class="s2">(</span><span class="s0">not </span><span class="s1">value_include </span><span class="s0">or </span><span class="s1">value_include</span><span class="s2">.</span><span class="s1">is_included</span><span class="s2">(</span><span class="s1">i</span><span class="s2">))</span>
+            <span class="s2">)</span>
+
+            <span class="s0">return </span><span class="s1">v</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">(*</span><span class="s1">seq_args</span><span class="s2">) </span><span class="s0">if </span><span class="s1">is_namedtuple</span><span class="s2">(</span><span class="s1">v</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">) </span><span class="s0">else </span><span class="s1">v</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">(</span><span class="s1">seq_args</span><span class="s2">)</span>
+
+        <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">Enum</span><span class="s2">) </span><span class="s0">and </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">Config</span><span class="s2">, </span><span class="s3">'use_enum_values'</span><span class="s2">, </span><span class="s0">False</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">v</span><span class="s2">.</span><span class="s1">value</span>
+
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">v</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">__try_update_forward_refs__</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, **</span><span class="s1">localns</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Same as update_forward_refs but will not raise exception 
+        when forward references are not defined. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">update_model_forward_refs</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__fields__</span><span class="s2">.</span><span class="s1">values</span><span class="s2">(), </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">json_encoders</span><span class="s2">, </span><span class="s1">localns</span><span class="s2">, (</span><span class="s1">NameError</span><span class="s2">,))</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">update_forward_refs</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, **</span><span class="s1">localns</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Try to update ForwardRefs on fields based on this Model, globalns and localns. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">update_model_forward_refs</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__fields__</span><span class="s2">.</span><span class="s1">values</span><span class="s2">(), </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">json_encoders</span><span class="s2">, </span><span class="s1">localns</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">__iter__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s3">'TupleGenerator'</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        so `dict(model)` works 
+        &quot;&quot;&quot;</span>
+        <span class="s0">yield from </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">_iter</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">to_dict</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">by_alias</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">include</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Union</span><span class="s2">[</span><span class="s3">'AbstractSetIntStr'</span><span class="s2">, </span><span class="s3">'MappingIntStrAny'</span><span class="s2">]] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">exclude</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Union</span><span class="s2">[</span><span class="s3">'AbstractSetIntStr'</span><span class="s2">, </span><span class="s3">'MappingIntStrAny'</span><span class="s2">]] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">exclude_unset</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">exclude_defaults</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">exclude_none</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s3">'TupleGenerator'</span><span class="s2">:</span>
+        <span class="s5"># Merge field set excludes with explicit exclude parameter with explicit overriding field set options.</span>
+        <span class="s5"># The extra &quot;is not None&quot; guards are not logically necessary but optimizes performance for the simple case.</span>
+        <span class="s0">if </span><span class="s1">exclude </span><span class="s0">is not None or </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__exclude_fields__ </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">exclude </span><span class="s2">= </span><span class="s1">ValueItems</span><span class="s2">.</span><span class="s1">merge</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">__exclude_fields__</span><span class="s2">, </span><span class="s1">exclude</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">include </span><span class="s0">is not None or </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__include_fields__ </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">include </span><span class="s2">= </span><span class="s1">ValueItems</span><span class="s2">.</span><span class="s1">merge</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">__include_fields__</span><span class="s2">, </span><span class="s1">include</span><span class="s2">, </span><span class="s1">intersect</span><span class="s2">=</span><span class="s0">True</span><span class="s2">)</span>
+
+        <span class="s1">allowed_keys </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_calculate_keys</span><span class="s2">(</span>
+            <span class="s1">include</span><span class="s2">=</span><span class="s1">include</span><span class="s2">, </span><span class="s1">exclude</span><span class="s2">=</span><span class="s1">exclude</span><span class="s2">, </span><span class="s1">exclude_unset</span><span class="s2">=</span><span class="s1">exclude_unset  </span><span class="s5"># type: ignore</span>
+        <span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">allowed_keys </span><span class="s0">is None and not </span><span class="s2">(</span><span class="s1">to_dict </span><span class="s0">or </span><span class="s1">by_alias </span><span class="s0">or </span><span class="s1">exclude_unset </span><span class="s0">or </span><span class="s1">exclude_defaults </span><span class="s0">or </span><span class="s1">exclude_none</span><span class="s2">):</span>
+            <span class="s5"># huge boost for plain _iter()</span>
+            <span class="s0">yield from </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()</span>
+            <span class="s0">return</span>
+
+        <span class="s1">value_exclude </span><span class="s2">= </span><span class="s1">ValueItems</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">exclude</span><span class="s2">) </span><span class="s0">if </span><span class="s1">exclude </span><span class="s0">is not None else None</span>
+        <span class="s1">value_include </span><span class="s2">= </span><span class="s1">ValueItems</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">include</span><span class="s2">) </span><span class="s0">if </span><span class="s1">include </span><span class="s0">is not None else None</span>
+
+        <span class="s0">for </span><span class="s1">field_key</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+            <span class="s0">if </span><span class="s2">(</span><span class="s1">allowed_keys </span><span class="s0">is not None and </span><span class="s1">field_key </span><span class="s0">not in </span><span class="s1">allowed_keys</span><span class="s2">) </span><span class="s0">or </span><span class="s2">(</span><span class="s1">exclude_none </span><span class="s0">and </span><span class="s1">v </span><span class="s0">is None</span><span class="s2">):</span>
+                <span class="s0">continue</span>
+
+            <span class="s0">if </span><span class="s1">exclude_defaults</span><span class="s2">:</span>
+                <span class="s1">model_field </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__fields__</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">field_key</span><span class="s2">)</span>
+                <span class="s0">if not </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">model_field</span><span class="s2">, </span><span class="s3">'required'</span><span class="s2">, </span><span class="s0">True</span><span class="s2">) </span><span class="s0">and </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">model_field</span><span class="s2">, </span><span class="s3">'default'</span><span class="s2">, </span><span class="s1">_missing</span><span class="s2">) == </span><span class="s1">v</span><span class="s2">:</span>
+                    <span class="s0">continue</span>
+
+            <span class="s0">if </span><span class="s1">by_alias </span><span class="s0">and </span><span class="s1">field_key </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__fields__</span><span class="s2">:</span>
+                <span class="s1">dict_key </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__fields__</span><span class="s2">[</span><span class="s1">field_key</span><span class="s2">].</span><span class="s1">alias</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">dict_key </span><span class="s2">= </span><span class="s1">field_key</span>
+
+            <span class="s0">if </span><span class="s1">to_dict </span><span class="s0">or </span><span class="s1">value_include </span><span class="s0">or </span><span class="s1">value_exclude</span><span class="s2">:</span>
+                <span class="s1">v </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_get_value</span><span class="s2">(</span>
+                    <span class="s1">v</span><span class="s2">,</span>
+                    <span class="s1">to_dict</span><span class="s2">=</span><span class="s1">to_dict</span><span class="s2">,</span>
+                    <span class="s1">by_alias</span><span class="s2">=</span><span class="s1">by_alias</span><span class="s2">,</span>
+                    <span class="s1">include</span><span class="s2">=</span><span class="s1">value_include </span><span class="s0">and </span><span class="s1">value_include</span><span class="s2">.</span><span class="s1">for_element</span><span class="s2">(</span><span class="s1">field_key</span><span class="s2">),</span>
+                    <span class="s1">exclude</span><span class="s2">=</span><span class="s1">value_exclude </span><span class="s0">and </span><span class="s1">value_exclude</span><span class="s2">.</span><span class="s1">for_element</span><span class="s2">(</span><span class="s1">field_key</span><span class="s2">),</span>
+                    <span class="s1">exclude_unset</span><span class="s2">=</span><span class="s1">exclude_unset</span><span class="s2">,</span>
+                    <span class="s1">exclude_defaults</span><span class="s2">=</span><span class="s1">exclude_defaults</span><span class="s2">,</span>
+                    <span class="s1">exclude_none</span><span class="s2">=</span><span class="s1">exclude_none</span><span class="s2">,</span>
+                <span class="s2">)</span>
+            <span class="s0">yield </span><span class="s1">dict_key</span><span class="s2">, </span><span class="s1">v</span>
+
+    <span class="s0">def </span><span class="s1">_calculate_keys</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">include</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s3">'MappingIntStrAny'</span><span class="s2">],</span>
+        <span class="s1">exclude</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s3">'MappingIntStrAny'</span><span class="s2">],</span>
+        <span class="s1">exclude_unset</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">,</span>
+        <span class="s1">update</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s3">'DictStrAny'</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; Optional</span><span class="s2">[</span><span class="s1">AbstractSet</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]]:</span>
+        <span class="s0">if </span><span class="s1">include </span><span class="s0">is None and </span><span class="s1">exclude </span><span class="s0">is None and </span><span class="s1">exclude_unset </span><span class="s0">is False</span><span class="s2">:</span>
+            <span class="s0">return None</span>
+
+        <span class="s1">keys</span><span class="s2">: </span><span class="s1">AbstractSet</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]</span>
+        <span class="s0">if </span><span class="s1">exclude_unset</span><span class="s2">:</span>
+            <span class="s1">keys </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__fields_set__</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">()</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">keys </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">()</span>
+
+        <span class="s0">if </span><span class="s1">include </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">keys </span><span class="s2">&amp;= </span><span class="s1">include</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">()</span>
+
+        <span class="s0">if </span><span class="s1">update</span><span class="s2">:</span>
+            <span class="s1">keys </span><span class="s2">-= </span><span class="s1">update</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">()</span>
+
+        <span class="s0">if </span><span class="s1">exclude</span><span class="s2">:</span>
+            <span class="s1">keys </span><span class="s2">-= {</span><span class="s1">k </span><span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">exclude</span><span class="s2">.</span><span class="s1">items</span><span class="s2">() </span><span class="s0">if </span><span class="s1">ValueItems</span><span class="s2">.</span><span class="s1">is_true</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)}</span>
+
+        <span class="s0">return </span><span class="s1">keys</span>
+
+    <span class="s0">def </span><span class="s1">__eq__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">other</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">other</span><span class="s2">, </span><span class="s1">BaseModel</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">dict</span><span class="s2">() == </span><span class="s1">other</span><span class="s2">.</span><span class="s1">dict</span><span class="s2">()</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">dict</span><span class="s2">() == </span><span class="s1">other</span>
+
+    <span class="s0">def </span><span class="s1">__repr_args__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s3">'ReprArgs'</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s2">[</span>
+            <span class="s2">(</span><span class="s1">k</span><span class="s2">, </span><span class="s1">v</span><span class="s2">)</span>
+            <span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()</span>
+            <span class="s0">if </span><span class="s1">k </span><span class="s0">not in </span><span class="s1">DUNDER_ATTRIBUTES </span><span class="s0">and </span><span class="s2">(</span><span class="s1">k </span><span class="s0">not in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__fields__ </span><span class="s0">or </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__fields__</span><span class="s2">[</span><span class="s1">k</span><span class="s2">].</span><span class="s1">field_info</span><span class="s2">.</span><span class="s1">repr</span><span class="s2">)</span>
+        <span class="s2">]</span>
+
+
+<span class="s1">_is_base_model_class_defined </span><span class="s2">= </span><span class="s0">True</span>
+
+
+<span class="s2">@</span><span class="s1">overload</span>
+<span class="s0">def </span><span class="s1">create_model</span><span class="s2">(</span>
+    <span class="s1">__model_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s2">*,</span>
+    <span class="s1">__config__</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Type</span><span class="s2">[</span><span class="s1">BaseConfig</span><span class="s2">]] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">__base__</span><span class="s2">: </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">__module__</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s1">__name__</span><span class="s2">,</span>
+    <span class="s1">__validators__</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s3">'AnyClassMethod'</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">__cls_kwargs__</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">**</span><span class="s1">field_definitions</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">,</span>
+<span class="s2">) </span><span class="s1">-&gt; Type</span><span class="s2">[</span><span class="s3">'BaseModel'</span><span class="s2">]:</span>
+    <span class="s2">...</span>
+
+
+<span class="s2">@</span><span class="s1">overload</span>
+<span class="s0">def </span><span class="s1">create_model</span><span class="s2">(</span>
+    <span class="s1">__model_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s2">*,</span>
+    <span class="s1">__config__</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Type</span><span class="s2">[</span><span class="s1">BaseConfig</span><span class="s2">]] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">__base__</span><span class="s2">: </span><span class="s1">Union</span><span class="s2">[</span><span class="s1">Type</span><span class="s2">[</span><span class="s3">'Model'</span><span class="s2">], </span><span class="s1">Tuple</span><span class="s2">[</span><span class="s1">Type</span><span class="s2">[</span><span class="s3">'Model'</span><span class="s2">], ...]],</span>
+    <span class="s1">__module__</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s1">__name__</span><span class="s2">,</span>
+    <span class="s1">__validators__</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s3">'AnyClassMethod'</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">__cls_kwargs__</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">**</span><span class="s1">field_definitions</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">,</span>
+<span class="s2">) </span><span class="s1">-&gt; Type</span><span class="s2">[</span><span class="s3">'Model'</span><span class="s2">]:</span>
+    <span class="s2">...</span>
+
+
+<span class="s0">def </span><span class="s1">create_model</span><span class="s2">(</span>
+    <span class="s1">__model_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s2">*,</span>
+    <span class="s1">__config__</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Type</span><span class="s2">[</span><span class="s1">BaseConfig</span><span class="s2">]] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">__base__</span><span class="s2">: </span><span class="s1">Union</span><span class="s2">[</span><span class="s0">None</span><span class="s2">, </span><span class="s1">Type</span><span class="s2">[</span><span class="s3">'Model'</span><span class="s2">], </span><span class="s1">Tuple</span><span class="s2">[</span><span class="s1">Type</span><span class="s2">[</span><span class="s3">'Model'</span><span class="s2">], ...]] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">__module__</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s1">__name__</span><span class="s2">,</span>
+    <span class="s1">__validators__</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s3">'AnyClassMethod'</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">__cls_kwargs__</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">__slots__</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, ...]] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">**</span><span class="s1">field_definitions</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">,</span>
+<span class="s2">) </span><span class="s1">-&gt; Type</span><span class="s2">[</span><span class="s3">'Model'</span><span class="s2">]:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Dynamically create a model. 
+    :param __model_name: name of the created model 
+    :param __config__: config class to use for the new model 
+    :param __base__: base class for the new model to inherit from 
+    :param __module__: module of the created model 
+    :param __validators__: a dict of method names and @validator class methods 
+    :param __cls_kwargs__: a dict for class creation 
+    :param __slots__: Deprecated, `__slots__` should not be passed to `create_model` 
+    :param field_definitions: fields of the model (or extra fields if a base is supplied) 
+        in the format `&lt;name&gt;=(&lt;type&gt;, &lt;default default&gt;)` or `&lt;name&gt;=&lt;default value&gt;, e.g. 
+        `foobar=(str, ...)` or `foobar=123`, or, for complex use-cases, in the format 
+        `&lt;name&gt;=&lt;Field&gt;` or `&lt;name&gt;=(&lt;type&gt;, &lt;FieldInfo&gt;)`, e.g. 
+        `foo=Field(datetime, default_factory=datetime.utcnow, alias='bar')` or 
+        `foo=(str, FieldInfo(title='Foo'))` 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">__slots__ </span><span class="s0">is not None</span><span class="s2">:</span>
+        <span class="s5"># __slots__ will be ignored from here on</span>
+        <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span><span class="s3">'__slots__ should not be passed to create_model'</span><span class="s2">, </span><span class="s1">RuntimeWarning</span><span class="s2">)</span>
+
+    <span class="s0">if </span><span class="s1">__base__ </span><span class="s0">is not None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">__config__ </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">ConfigError</span><span class="s2">(</span><span class="s3">'to avoid confusion __config__ and __base__ cannot be used together'</span><span class="s2">)</span>
+        <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">__base__</span><span class="s2">, </span><span class="s1">tuple</span><span class="s2">):</span>
+            <span class="s1">__base__ </span><span class="s2">= (</span><span class="s1">__base__</span><span class="s2">,)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s1">__base__ </span><span class="s2">= (</span><span class="s1">cast</span><span class="s2">(</span><span class="s1">Type</span><span class="s2">[</span><span class="s3">'Model'</span><span class="s2">], </span><span class="s1">BaseModel</span><span class="s2">),)</span>
+
+    <span class="s1">__cls_kwargs__ </span><span class="s2">= </span><span class="s1">__cls_kwargs__ </span><span class="s0">or </span><span class="s2">{}</span>
+
+    <span class="s1">fields </span><span class="s2">= {}</span>
+    <span class="s1">annotations </span><span class="s2">= {}</span>
+
+    <span class="s0">for </span><span class="s1">f_name</span><span class="s2">, </span><span class="s1">f_def </span><span class="s0">in </span><span class="s1">field_definitions</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+        <span class="s0">if not </span><span class="s1">is_valid_field</span><span class="s2">(</span><span class="s1">f_name</span><span class="s2">):</span>
+            <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span><span class="s3">f'fields may not start with an underscore, ignoring &quot;</span><span class="s0">{</span><span class="s1">f_name</span><span class="s0">}</span><span class="s3">&quot;'</span><span class="s2">, </span><span class="s1">RuntimeWarning</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">f_def</span><span class="s2">, </span><span class="s1">tuple</span><span class="s2">):</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">f_annotation</span><span class="s2">, </span><span class="s1">f_value </span><span class="s2">= </span><span class="s1">f_def</span>
+            <span class="s0">except </span><span class="s1">ValueError </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">ConfigError</span><span class="s2">(</span>
+                    <span class="s3">'field definitions should either be a tuple of (&lt;type&gt;, &lt;default&gt;) or just a '</span>
+                    <span class="s3">'default value, unfortunately this means tuples as '</span>
+                    <span class="s3">'default values are not allowed'</span>
+                <span class="s2">) </span><span class="s0">from </span><span class="s1">e</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">f_annotation</span><span class="s2">, </span><span class="s1">f_value </span><span class="s2">= </span><span class="s0">None</span><span class="s2">, </span><span class="s1">f_def</span>
+
+        <span class="s0">if </span><span class="s1">f_annotation</span><span class="s2">:</span>
+            <span class="s1">annotations</span><span class="s2">[</span><span class="s1">f_name</span><span class="s2">] = </span><span class="s1">f_annotation</span>
+        <span class="s1">fields</span><span class="s2">[</span><span class="s1">f_name</span><span class="s2">] = </span><span class="s1">f_value</span>
+
+    <span class="s1">namespace</span><span class="s2">: </span><span class="s3">'DictStrAny' </span><span class="s2">= {</span><span class="s3">'__annotations__'</span><span class="s2">: </span><span class="s1">annotations</span><span class="s2">, </span><span class="s3">'__module__'</span><span class="s2">: </span><span class="s1">__module__</span><span class="s2">}</span>
+    <span class="s0">if </span><span class="s1">__validators__</span><span class="s2">:</span>
+        <span class="s1">namespace</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">__validators__</span><span class="s2">)</span>
+    <span class="s1">namespace</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">fields</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">__config__</span><span class="s2">:</span>
+        <span class="s1">namespace</span><span class="s2">[</span><span class="s3">'Config'</span><span class="s2">] = </span><span class="s1">inherit_config</span><span class="s2">(</span><span class="s1">__config__</span><span class="s2">, </span><span class="s1">BaseConfig</span><span class="s2">)</span>
+    <span class="s1">resolved_bases </span><span class="s2">= </span><span class="s1">resolve_bases</span><span class="s2">(</span><span class="s1">__base__</span><span class="s2">)</span>
+    <span class="s1">meta</span><span class="s2">, </span><span class="s1">ns</span><span class="s2">, </span><span class="s1">kwds </span><span class="s2">= </span><span class="s1">prepare_class</span><span class="s2">(</span><span class="s1">__model_name</span><span class="s2">, </span><span class="s1">resolved_bases</span><span class="s2">, </span><span class="s1">kwds</span><span class="s2">=</span><span class="s1">__cls_kwargs__</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">resolved_bases </span><span class="s0">is not </span><span class="s1">__base__</span><span class="s2">:</span>
+        <span class="s1">ns</span><span class="s2">[</span><span class="s3">'__orig_bases__'</span><span class="s2">] = </span><span class="s1">__base__</span>
+    <span class="s1">namespace</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">ns</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">meta</span><span class="s2">(</span><span class="s1">__model_name</span><span class="s2">, </span><span class="s1">resolved_bases</span><span class="s2">, </span><span class="s1">namespace</span><span class="s2">, **</span><span class="s1">kwds</span><span class="s2">)</span>
+
+
+<span class="s1">_missing </span><span class="s2">= </span><span class="s1">object</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">validate_model</span><span class="s2">(  </span><span class="s5"># noqa: C901 (ignore complexity)</span>
+    <span class="s1">model</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">], </span><span class="s1">input_data</span><span class="s2">: </span><span class="s3">'DictStrAny'</span><span class="s2">, </span><span class="s1">cls</span><span class="s2">: </span><span class="s3">'ModelOrDc' </span><span class="s2">= </span><span class="s0">None</span>
+<span class="s2">) </span><span class="s1">-&gt; Tuple</span><span class="s2">[</span><span class="s3">'DictStrAny'</span><span class="s2">, </span><span class="s3">'SetStr'</span><span class="s2">, </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">ValidationError</span><span class="s2">]]:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    validate data against a model. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">values </span><span class="s2">= {}</span>
+    <span class="s1">errors </span><span class="s2">= []</span>
+    <span class="s5"># input_data names, possibly alias</span>
+    <span class="s1">names_used </span><span class="s2">= </span><span class="s1">set</span><span class="s2">()</span>
+    <span class="s5"># field names, never aliases</span>
+    <span class="s1">fields_set </span><span class="s2">= </span><span class="s1">set</span><span class="s2">()</span>
+    <span class="s1">config </span><span class="s2">= </span><span class="s1">model</span><span class="s2">.</span><span class="s1">__config__</span>
+    <span class="s1">check_extra </span><span class="s2">= </span><span class="s1">config</span><span class="s2">.</span><span class="s1">extra </span><span class="s0">is not </span><span class="s1">Extra</span><span class="s2">.</span><span class="s1">ignore</span>
+    <span class="s1">cls_ </span><span class="s2">= </span><span class="s1">cls </span><span class="s0">or </span><span class="s1">model</span>
+
+    <span class="s0">for </span><span class="s1">validator </span><span class="s0">in </span><span class="s1">model</span><span class="s2">.</span><span class="s1">__pre_root_validators__</span><span class="s2">:</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">input_data </span><span class="s2">= </span><span class="s1">validator</span><span class="s2">(</span><span class="s1">cls_</span><span class="s2">, </span><span class="s1">input_data</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s2">(</span><span class="s1">ValueError</span><span class="s2">, </span><span class="s1">TypeError</span><span class="s2">, </span><span class="s1">AssertionError</span><span class="s2">) </span><span class="s0">as </span><span class="s1">exc</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s2">{}, </span><span class="s1">set</span><span class="s2">(), </span><span class="s1">ValidationError</span><span class="s2">([</span><span class="s1">ErrorWrapper</span><span class="s2">(</span><span class="s1">exc</span><span class="s2">, </span><span class="s1">loc</span><span class="s2">=</span><span class="s1">ROOT_KEY</span><span class="s2">)], </span><span class="s1">cls_</span><span class="s2">)</span>
+
+    <span class="s0">for </span><span class="s1">name</span><span class="s2">, </span><span class="s1">field </span><span class="s0">in </span><span class="s1">model</span><span class="s2">.</span><span class="s1">__fields__</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+        <span class="s1">value </span><span class="s2">= </span><span class="s1">input_data</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">field</span><span class="s2">.</span><span class="s1">alias</span><span class="s2">, </span><span class="s1">_missing</span><span class="s2">)</span>
+        <span class="s1">using_name </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s0">if </span><span class="s1">value </span><span class="s0">is </span><span class="s1">_missing </span><span class="s0">and </span><span class="s1">config</span><span class="s2">.</span><span class="s1">allow_population_by_field_name </span><span class="s0">and </span><span class="s1">field</span><span class="s2">.</span><span class="s1">alt_alias</span><span class="s2">:</span>
+            <span class="s1">value </span><span class="s2">= </span><span class="s1">input_data</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">field</span><span class="s2">.</span><span class="s1">name</span><span class="s2">, </span><span class="s1">_missing</span><span class="s2">)</span>
+            <span class="s1">using_name </span><span class="s2">= </span><span class="s0">True</span>
+
+        <span class="s0">if </span><span class="s1">value </span><span class="s0">is </span><span class="s1">_missing</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">field</span><span class="s2">.</span><span class="s1">required</span><span class="s2">:</span>
+                <span class="s1">errors</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">ErrorWrapper</span><span class="s2">(</span><span class="s1">MissingError</span><span class="s2">(), </span><span class="s1">loc</span><span class="s2">=</span><span class="s1">field</span><span class="s2">.</span><span class="s1">alias</span><span class="s2">))</span>
+                <span class="s0">continue</span>
+
+            <span class="s1">value </span><span class="s2">= </span><span class="s1">field</span><span class="s2">.</span><span class="s1">get_default</span><span class="s2">()</span>
+
+            <span class="s0">if not </span><span class="s1">config</span><span class="s2">.</span><span class="s1">validate_all </span><span class="s0">and not </span><span class="s1">field</span><span class="s2">.</span><span class="s1">validate_always</span><span class="s2">:</span>
+                <span class="s1">values</span><span class="s2">[</span><span class="s1">name</span><span class="s2">] = </span><span class="s1">value</span>
+                <span class="s0">continue</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">fields_set</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">name</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">check_extra</span><span class="s2">:</span>
+                <span class="s1">names_used</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">field</span><span class="s2">.</span><span class="s1">name </span><span class="s0">if </span><span class="s1">using_name </span><span class="s0">else </span><span class="s1">field</span><span class="s2">.</span><span class="s1">alias</span><span class="s2">)</span>
+
+        <span class="s1">v_</span><span class="s2">, </span><span class="s1">errors_ </span><span class="s2">= </span><span class="s1">field</span><span class="s2">.</span><span class="s1">validate</span><span class="s2">(</span><span class="s1">value</span><span class="s2">, </span><span class="s1">values</span><span class="s2">, </span><span class="s1">loc</span><span class="s2">=</span><span class="s1">field</span><span class="s2">.</span><span class="s1">alias</span><span class="s2">, </span><span class="s1">cls</span><span class="s2">=</span><span class="s1">cls_</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">errors_</span><span class="s2">, </span><span class="s1">ErrorWrapper</span><span class="s2">):</span>
+            <span class="s1">errors</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">errors_</span><span class="s2">)</span>
+        <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">errors_</span><span class="s2">, </span><span class="s1">list</span><span class="s2">):</span>
+            <span class="s1">errors</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">(</span><span class="s1">errors_</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">values</span><span class="s2">[</span><span class="s1">name</span><span class="s2">] = </span><span class="s1">v_</span>
+
+    <span class="s0">if </span><span class="s1">check_extra</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">input_data</span><span class="s2">, </span><span class="s1">GetterDict</span><span class="s2">):</span>
+            <span class="s1">extra </span><span class="s2">= </span><span class="s1">input_data</span><span class="s2">.</span><span class="s1">extra_keys</span><span class="s2">() - </span><span class="s1">names_used</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">extra </span><span class="s2">= </span><span class="s1">input_data</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">() - </span><span class="s1">names_used</span>
+        <span class="s0">if </span><span class="s1">extra</span><span class="s2">:</span>
+            <span class="s1">fields_set </span><span class="s2">|= </span><span class="s1">extra</span>
+            <span class="s0">if </span><span class="s1">config</span><span class="s2">.</span><span class="s1">extra </span><span class="s0">is </span><span class="s1">Extra</span><span class="s2">.</span><span class="s1">allow</span><span class="s2">:</span>
+                <span class="s0">for </span><span class="s1">f </span><span class="s0">in </span><span class="s1">extra</span><span class="s2">:</span>
+                    <span class="s1">values</span><span class="s2">[</span><span class="s1">f</span><span class="s2">] = </span><span class="s1">input_data</span><span class="s2">[</span><span class="s1">f</span><span class="s2">]</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s0">for </span><span class="s1">f </span><span class="s0">in </span><span class="s1">sorted</span><span class="s2">(</span><span class="s1">extra</span><span class="s2">):</span>
+                    <span class="s1">errors</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">ErrorWrapper</span><span class="s2">(</span><span class="s1">ExtraError</span><span class="s2">(), </span><span class="s1">loc</span><span class="s2">=</span><span class="s1">f</span><span class="s2">))</span>
+
+    <span class="s0">for </span><span class="s1">skip_on_failure</span><span class="s2">, </span><span class="s1">validator </span><span class="s0">in </span><span class="s1">model</span><span class="s2">.</span><span class="s1">__post_root_validators__</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">skip_on_failure </span><span class="s0">and </span><span class="s1">errors</span><span class="s2">:</span>
+            <span class="s0">continue</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">values </span><span class="s2">= </span><span class="s1">validator</span><span class="s2">(</span><span class="s1">cls_</span><span class="s2">, </span><span class="s1">values</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s2">(</span><span class="s1">ValueError</span><span class="s2">, </span><span class="s1">TypeError</span><span class="s2">, </span><span class="s1">AssertionError</span><span class="s2">) </span><span class="s0">as </span><span class="s1">exc</span><span class="s2">:</span>
+            <span class="s1">errors</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">ErrorWrapper</span><span class="s2">(</span><span class="s1">exc</span><span class="s2">, </span><span class="s1">loc</span><span class="s2">=</span><span class="s1">ROOT_KEY</span><span class="s2">))</span>
+
+    <span class="s0">if </span><span class="s1">errors</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">values</span><span class="s2">, </span><span class="s1">fields_set</span><span class="s2">, </span><span class="s1">ValidationError</span><span class="s2">(</span><span class="s1">errors</span><span class="s2">, </span><span class="s1">cls_</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">values</span><span class="s2">, </span><span class="s1">fields_set</span><span class="s2">, </span><span class="s0">None</span>
+</pre>
+</body>
+</html>

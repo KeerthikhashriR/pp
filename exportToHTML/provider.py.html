@@ -1,0 +1,238 @@
+<html>
+<head>
+<title>provider.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #7a7e85;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #6aab73;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+provider.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">dataclasses</span>
+<span class="s0">import </span><span class="s1">decimal</span>
+<span class="s0">import </span><span class="s1">json</span>
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+<span class="s0">import </span><span class="s1">uuid</span>
+<span class="s0">import </span><span class="s1">weakref</span>
+<span class="s0">from </span><span class="s1">datetime </span><span class="s0">import </span><span class="s1">date</span>
+
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">http </span><span class="s0">import </span><span class="s1">http_date</span>
+
+<span class="s0">if </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TYPE_CHECKING</span><span class="s2">:  </span><span class="s3"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">sansio</span><span class="s2">.</span><span class="s1">response </span><span class="s0">import </span><span class="s1">Response</span>
+
+    <span class="s0">from </span><span class="s2">..</span><span class="s1">sansio</span><span class="s2">.</span><span class="s1">app </span><span class="s0">import </span><span class="s1">App</span>
+
+
+<span class="s0">class </span><span class="s1">JSONProvider</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;A standard set of JSON operations for an application. Subclasses 
+    of this can be used to customize JSON behavior or use different 
+    JSON libraries. 
+ 
+    To implement a provider for a specific library, subclass this base 
+    class and implement at least :meth:`dumps` and :meth:`loads`. All 
+    other methods have default implementations. 
+ 
+    To use a different provider, either subclass ``Flask`` and set 
+    :attr:`~flask.Flask.json_provider_class` to a provider class, or set 
+    :attr:`app.json &lt;flask.Flask.json&gt;` to an instance of the class. 
+ 
+    :param app: An application instance. This will be stored as a 
+        :class:`weakref.proxy` on the :attr:`_app` attribute. 
+ 
+    .. versionadded:: 2.2 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">app</span><span class="s2">: </span><span class="s1">App</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_app</span><span class="s2">: </span><span class="s1">App </span><span class="s2">= </span><span class="s1">weakref</span><span class="s2">.</span><span class="s1">proxy</span><span class="s2">(</span><span class="s1">app</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">dumps</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">obj</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Serialize data as JSON. 
+ 
+        :param obj: The data to serialize. 
+        :param kwargs: May be passed to the underlying JSON library. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">raise </span><span class="s1">NotImplementedError</span>
+
+    <span class="s0">def </span><span class="s1">dump</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">obj</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">IO</span><span class="s2">[</span><span class="s1">str</span><span class="s2">], **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Serialize data as JSON and write to a file. 
+ 
+        :param obj: The data to serialize. 
+        :param fp: A file opened for writing text. Should use the UTF-8 
+            encoding to be valid JSON. 
+        :param kwargs: May be passed to the underlying JSON library. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">fp</span><span class="s2">.</span><span class="s1">write</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">dumps</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">))</span>
+
+    <span class="s0">def </span><span class="s1">loads</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">s</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s1">bytes</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Deserialize data as JSON. 
+ 
+        :param s: Text or UTF-8 bytes. 
+        :param kwargs: May be passed to the underlying JSON library. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">raise </span><span class="s1">NotImplementedError</span>
+
+    <span class="s0">def </span><span class="s1">load</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">fp</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">IO</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">AnyStr</span><span class="s2">], **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Deserialize data as JSON read from a file. 
+ 
+        :param fp: A file opened for reading text or UTF-8 bytes. 
+        :param kwargs: May be passed to the underlying JSON library. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">loads</span><span class="s2">(</span><span class="s1">fp</span><span class="s2">.</span><span class="s1">read</span><span class="s2">(), **</span><span class="s1">kwargs</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_prepare_response_obj</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">args</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, ...], </span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]</span>
+    <span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">args </span><span class="s0">and </span><span class="s1">kwargs</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span><span class="s5">&quot;app.json.response() takes either args or kwargs, not both&quot;</span><span class="s2">)</span>
+
+        <span class="s0">if not </span><span class="s1">args </span><span class="s0">and not </span><span class="s1">kwargs</span><span class="s2">:</span>
+            <span class="s0">return None</span>
+
+        <span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">args</span><span class="s2">) == </span><span class="s6">1</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">args</span><span class="s2">[</span><span class="s6">0</span><span class="s2">]</span>
+
+        <span class="s0">return </span><span class="s1">args </span><span class="s0">or </span><span class="s1">kwargs</span>
+
+    <span class="s0">def </span><span class="s1">response</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Response</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Serialize the given arguments as JSON, and return a 
+        :class:`~flask.Response` object with the ``application/json`` 
+        mimetype. 
+ 
+        The :func:`~flask.json.jsonify` function calls this method for 
+        the current application. 
+ 
+        Either positional or keyword arguments can be given, not both. 
+        If no arguments are given, ``None`` is serialized. 
+ 
+        :param args: A single value to serialize, or multiple values to 
+            treat as a list to serialize. 
+        :param kwargs: Treat as a dict to serialize. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">obj </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_prepare_response_obj</span><span class="s2">(</span><span class="s1">args</span><span class="s2">, </span><span class="s1">kwargs</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_app</span><span class="s2">.</span><span class="s1">response_class</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">dumps</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">), </span><span class="s1">mimetype</span><span class="s2">=</span><span class="s5">&quot;application/json&quot;</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">_default</span><span class="s2">(</span><span class="s1">o</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">o</span><span class="s2">, </span><span class="s1">date</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">http_date</span><span class="s2">(</span><span class="s1">o</span><span class="s2">)</span>
+
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">o</span><span class="s2">, (</span><span class="s1">decimal</span><span class="s2">.</span><span class="s1">Decimal</span><span class="s2">, </span><span class="s1">uuid</span><span class="s2">.</span><span class="s1">UUID</span><span class="s2">)):</span>
+        <span class="s0">return </span><span class="s1">str</span><span class="s2">(</span><span class="s1">o</span><span class="s2">)</span>
+
+    <span class="s0">if </span><span class="s1">dataclasses </span><span class="s0">and </span><span class="s1">dataclasses</span><span class="s2">.</span><span class="s1">is_dataclass</span><span class="s2">(</span><span class="s1">o</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">dataclasses</span><span class="s2">.</span><span class="s1">asdict</span><span class="s2">(</span><span class="s1">o</span><span class="s2">)  </span><span class="s3"># type: ignore[arg-type]</span>
+
+    <span class="s0">if </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">o</span><span class="s2">, </span><span class="s5">&quot;__html__&quot;</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">str</span><span class="s2">(</span><span class="s1">o</span><span class="s2">.</span><span class="s1">__html__</span><span class="s2">())</span>
+
+    <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span><span class="s5">f&quot;Object of type </span><span class="s0">{</span><span class="s1">type</span><span class="s2">(</span><span class="s1">o</span><span class="s2">).</span><span class="s1">__name__</span><span class="s0">} </span><span class="s5">is not JSON serializable&quot;</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">DefaultJSONProvider</span><span class="s2">(</span><span class="s1">JSONProvider</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;Provide JSON operations using Python's built-in :mod:`json` 
+    library. Serializes the following additional data types: 
+ 
+    -   :class:`datetime.datetime` and :class:`datetime.date` are 
+        serialized to :rfc:`822` strings. This is the same as the HTTP 
+        date format. 
+    -   :class:`uuid.UUID` is serialized to a string. 
+    -   :class:`dataclasses.dataclass` is passed to 
+        :func:`dataclasses.asdict`. 
+    -   :class:`~markupsafe.Markup` (or any object with a ``__html__`` 
+        method) will call the ``__html__`` method to get a string. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">default</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] = </span><span class="s1">staticmethod</span><span class="s2">(</span><span class="s1">_default</span><span class="s2">)  </span><span class="s3"># type: ignore[assignment]</span>
+    <span class="s5">&quot;&quot;&quot;Apply this function to any object that :meth:`json.dumps` does 
+    not know how to serialize. It should return a valid JSON type or 
+    raise a ``TypeError``. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">ensure_ascii </span><span class="s2">= </span><span class="s0">True</span>
+    <span class="s5">&quot;&quot;&quot;Replace non-ASCII characters with escape sequences. This may be 
+    more compatible with some clients, but can be disabled for better 
+    performance and size. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">sort_keys </span><span class="s2">= </span><span class="s0">True</span>
+    <span class="s5">&quot;&quot;&quot;Sort the keys in any serialized dicts. This may be useful for 
+    some caching situations, but can be disabled for better performance. 
+    When enabled, keys must all be strings, they are not converted 
+    before sorting. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">compact</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s5">&quot;&quot;&quot;If ``True``, or ``None`` out of debug mode, the :meth:`response` 
+    output will not add indentation, newlines, or spaces. If ``False``, 
+    or ``None`` in debug mode, it will use a non-compact representation. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">mimetype </span><span class="s2">= </span><span class="s5">&quot;application/json&quot;</span>
+    <span class="s5">&quot;&quot;&quot;The mimetype set in :meth:`response`.&quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">dumps</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">obj</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Serialize data as JSON to a string. 
+ 
+        Keyword arguments are passed to :func:`json.dumps`. Sets some 
+        parameter defaults from the :attr:`default`, 
+        :attr:`ensure_ascii`, and :attr:`sort_keys` attributes. 
+ 
+        :param obj: The data to serialize. 
+        :param kwargs: Passed to :func:`json.dumps`. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">kwargs</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s5">&quot;default&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">default</span><span class="s2">)</span>
+        <span class="s1">kwargs</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s5">&quot;ensure_ascii&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">ensure_ascii</span><span class="s2">)</span>
+        <span class="s1">kwargs</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s5">&quot;sort_keys&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">sort_keys</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">json</span><span class="s2">.</span><span class="s1">dumps</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">loads</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">s</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s1">bytes</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Deserialize data as JSON from a string or bytes. 
+ 
+        :param s: Text or UTF-8 bytes. 
+        :param kwargs: Passed to :func:`json.loads`. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">json</span><span class="s2">.</span><span class="s1">loads</span><span class="s2">(</span><span class="s1">s</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">response</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Response</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Serialize the given arguments as JSON, and return a 
+        :class:`~flask.Response` object with it. The response mimetype 
+        will be &quot;application/json&quot; and can be changed with 
+        :attr:`mimetype`. 
+ 
+        If :attr:`compact` is ``False`` or debug mode is enabled, the 
+        output will be formatted to be easier to read. 
+ 
+        Either positional or keyword arguments can be given, not both. 
+        If no arguments are given, ``None`` is serialized. 
+ 
+        :param args: A single value to serialize, or multiple values to 
+            treat as a list to serialize. 
+        :param kwargs: Treat as a dict to serialize. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">obj </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_prepare_response_obj</span><span class="s2">(</span><span class="s1">args</span><span class="s2">, </span><span class="s1">kwargs</span><span class="s2">)</span>
+        <span class="s1">dump_args</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] = {}</span>
+
+        <span class="s0">if </span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">compact </span><span class="s0">is None and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_app</span><span class="s2">.</span><span class="s1">debug</span><span class="s2">) </span><span class="s0">or </span><span class="s1">self</span><span class="s2">.</span><span class="s1">compact </span><span class="s0">is False</span><span class="s2">:</span>
+            <span class="s1">dump_args</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s5">&quot;indent&quot;</span><span class="s2">, </span><span class="s6">2</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">dump_args</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s5">&quot;separators&quot;</span><span class="s2">, (</span><span class="s5">&quot;,&quot;</span><span class="s2">, </span><span class="s5">&quot;:&quot;</span><span class="s2">))</span>
+
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_app</span><span class="s2">.</span><span class="s1">response_class</span><span class="s2">(</span>
+            <span class="s5">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">dumps</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, **</span><span class="s1">dump_args</span><span class="s2">)</span><span class="s0">}\n</span><span class="s5">&quot;</span><span class="s2">, </span><span class="s1">mimetype</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">mimetype</span>
+        <span class="s2">)</span>
+</pre>
+</body>
+</html>

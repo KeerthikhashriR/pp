@@ -1,0 +1,755 @@
+<html>
+<head>
+<title>ImageOps.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #2aacb8;}
+.s5 { color: #6aab73;}
+.s6 { color: #5f826b; font-style: italic;}
+.s7 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageOps.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># standard image operations</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 2001-10-20 fl   Created</span>
+<span class="s0"># 2001-10-23 fl   Added autocontrast operator</span>
+<span class="s0"># 2001-12-18 fl   Added Kevin's fit operator</span>
+<span class="s0"># 2004-03-14 fl   Fixed potential division by zero in equalize</span>
+<span class="s0"># 2005-05-05 fl   Fixed equalize for low number of values</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 2001-2004 by Secret Labs AB</span>
+<span class="s0"># Copyright (c) 2001-2004 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">functools</span>
+<span class="s2">import </span><span class="s1">operator</span>
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">from </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">abc </span><span class="s2">import </span><span class="s1">Sequence</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Protocol</span><span class="s3">, </span><span class="s1">cast</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">ExifTags</span><span class="s3">, </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">ImagePalette</span>
+
+<span class="s0">#</span>
+<span class="s0"># helpers</span>
+
+
+<span class="s2">def </span><span class="s1">_border</span><span class="s3">(</span><span class="s1">border</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, ...]) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]:</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">border</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">):</span>
+        <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">border</span><span class="s3">) == </span><span class="s4">2</span><span class="s3">:</span>
+            <span class="s1">left</span><span class="s3">, </span><span class="s1">top </span><span class="s3">= </span><span class="s1">right</span><span class="s3">, </span><span class="s1">bottom </span><span class="s3">= </span><span class="s1">border</span>
+        <span class="s2">elif </span><span class="s1">len</span><span class="s3">(</span><span class="s1">border</span><span class="s3">) == </span><span class="s4">4</span><span class="s3">:</span>
+            <span class="s1">left</span><span class="s3">, </span><span class="s1">top</span><span class="s3">, </span><span class="s1">right</span><span class="s3">, </span><span class="s1">bottom </span><span class="s3">= </span><span class="s1">border</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">left </span><span class="s3">= </span><span class="s1">top </span><span class="s3">= </span><span class="s1">right </span><span class="s3">= </span><span class="s1">bottom </span><span class="s3">= </span><span class="s1">border</span>
+    <span class="s2">return </span><span class="s1">left</span><span class="s3">, </span><span class="s1">top</span><span class="s3">, </span><span class="s1">right</span><span class="s3">, </span><span class="s1">bottom</span>
+
+
+<span class="s2">def </span><span class="s1">_color</span><span class="s3">(</span><span class="s1">color</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">int </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, ...], </span><span class="s1">mode</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; int </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, ...]:</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">color</span><span class="s3">, </span><span class="s1">str</span><span class="s3">):</span>
+        <span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">ImageColor</span>
+
+        <span class="s1">color </span><span class="s3">= </span><span class="s1">ImageColor</span><span class="s3">.</span><span class="s1">getcolor</span><span class="s3">(</span><span class="s1">color</span><span class="s3">, </span><span class="s1">mode</span><span class="s3">)</span>
+    <span class="s2">return </span><span class="s1">color</span>
+
+
+<span class="s2">def </span><span class="s1">_lut</span><span class="s3">(</span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">lut</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">int</span><span class="s3">]) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s2">if </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s5">&quot;P&quot;</span><span class="s3">:</span>
+        <span class="s0"># FIXME: apply to lookup table, not image data</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;mode P support coming soon&quot;</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">in </span><span class="s3">(</span><span class="s5">&quot;L&quot;</span><span class="s3">, </span><span class="s5">&quot;RGB&quot;</span><span class="s3">):</span>
+        <span class="s2">if </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s5">&quot;RGB&quot; </span><span class="s2">and </span><span class="s1">len</span><span class="s3">(</span><span class="s1">lut</span><span class="s3">) == </span><span class="s4">256</span><span class="s3">:</span>
+            <span class="s1">lut </span><span class="s3">= </span><span class="s1">lut </span><span class="s3">+ </span><span class="s1">lut </span><span class="s3">+ </span><span class="s1">lut</span>
+        <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">point</span><span class="s3">(</span><span class="s1">lut</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s5">f&quot;not supported for mode </span><span class="s2">{</span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode</span><span class="s2">}</span><span class="s5">&quot;</span>
+        <span class="s2">raise </span><span class="s1">OSError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># actions</span>
+
+
+<span class="s2">def </span><span class="s1">autocontrast</span><span class="s3">(</span>
+    <span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">,</span>
+    <span class="s1">cutoff</span><span class="s3">: </span><span class="s1">float </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">float</span><span class="s3">, </span><span class="s1">float</span><span class="s3">] = </span><span class="s4">0</span><span class="s3">,</span>
+    <span class="s1">ignore</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s1">Sequence</span><span class="s3">[</span><span class="s1">int</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">mask</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">preserve_tone</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Maximize (normalize) image contrast. This function calculates a 
+    histogram of the input image (or mask region), removes ``cutoff`` percent of the 
+    lightest and darkest pixels from the histogram, and remaps the image 
+    so that the darkest pixel becomes black (0), and the lightest 
+    becomes white (255). 
+ 
+    :param image: The image to process. 
+    :param cutoff: The percent to cut off from the histogram on the low and 
+                   high ends. Either a tuple of (low, high), or a single 
+                   number for both. 
+    :param ignore: The background pixel value (use None for no background). 
+    :param mask: Histogram used in contrast operation is computed using pixels 
+                 within the mask. If no mask is given the entire image is used 
+                 for histogram computation. 
+    :param preserve_tone: Preserve image tone in Photoshop-like style autocontrast. 
+ 
+                          .. versionadded:: 8.2.0 
+ 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">preserve_tone</span><span class="s3">:</span>
+        <span class="s1">histogram </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s5">&quot;L&quot;</span><span class="s3">).</span><span class="s1">histogram</span><span class="s3">(</span><span class="s1">mask</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">histogram </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">histogram</span><span class="s3">(</span><span class="s1">mask</span><span class="s3">)</span>
+
+    <span class="s1">lut </span><span class="s3">= []</span>
+    <span class="s2">for </span><span class="s1">layer </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">0</span><span class="s3">, </span><span class="s1">len</span><span class="s3">(</span><span class="s1">histogram</span><span class="s3">), </span><span class="s4">256</span><span class="s3">):</span>
+        <span class="s1">h </span><span class="s3">= </span><span class="s1">histogram</span><span class="s3">[</span><span class="s1">layer </span><span class="s3">: </span><span class="s1">layer </span><span class="s3">+ </span><span class="s4">256</span><span class="s3">]</span>
+        <span class="s2">if </span><span class="s1">ignore </span><span class="s2">is not None</span><span class="s3">:</span>
+            <span class="s0"># get rid of outliers</span>
+            <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">ignore</span><span class="s3">, </span><span class="s1">int</span><span class="s3">):</span>
+                <span class="s1">h</span><span class="s3">[</span><span class="s1">ignore</span><span class="s3">] = </span><span class="s4">0</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s2">for </span><span class="s1">ix </span><span class="s2">in </span><span class="s1">ignore</span><span class="s3">:</span>
+                    <span class="s1">h</span><span class="s3">[</span><span class="s1">ix</span><span class="s3">] = </span><span class="s4">0</span>
+        <span class="s2">if </span><span class="s1">cutoff</span><span class="s3">:</span>
+            <span class="s0"># cut off pixels from both ends of the histogram</span>
+            <span class="s2">if not </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">cutoff</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">):</span>
+                <span class="s1">cutoff </span><span class="s3">= (</span><span class="s1">cutoff</span><span class="s3">, </span><span class="s1">cutoff</span><span class="s3">)</span>
+            <span class="s0"># get number of pixels</span>
+            <span class="s1">n </span><span class="s3">= </span><span class="s4">0</span>
+            <span class="s2">for </span><span class="s1">ix </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">256</span><span class="s3">):</span>
+                <span class="s1">n </span><span class="s3">= </span><span class="s1">n </span><span class="s3">+ </span><span class="s1">h</span><span class="s3">[</span><span class="s1">ix</span><span class="s3">]</span>
+            <span class="s0"># remove cutoff% pixels from the low end</span>
+            <span class="s1">cut </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">n </span><span class="s3">* </span><span class="s1">cutoff</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] // </span><span class="s4">100</span><span class="s3">)</span>
+            <span class="s2">for </span><span class="s1">lo </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">256</span><span class="s3">):</span>
+                <span class="s2">if </span><span class="s1">cut </span><span class="s3">&gt; </span><span class="s1">h</span><span class="s3">[</span><span class="s1">lo</span><span class="s3">]:</span>
+                    <span class="s1">cut </span><span class="s3">= </span><span class="s1">cut </span><span class="s3">- </span><span class="s1">h</span><span class="s3">[</span><span class="s1">lo</span><span class="s3">]</span>
+                    <span class="s1">h</span><span class="s3">[</span><span class="s1">lo</span><span class="s3">] = </span><span class="s4">0</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">h</span><span class="s3">[</span><span class="s1">lo</span><span class="s3">] -= </span><span class="s1">cut</span>
+                    <span class="s1">cut </span><span class="s3">= </span><span class="s4">0</span>
+                <span class="s2">if </span><span class="s1">cut </span><span class="s3">&lt;= </span><span class="s4">0</span><span class="s3">:</span>
+                    <span class="s2">break</span>
+            <span class="s0"># remove cutoff% samples from the high end</span>
+            <span class="s1">cut </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">n </span><span class="s3">* </span><span class="s1">cutoff</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] // </span><span class="s4">100</span><span class="s3">)</span>
+            <span class="s2">for </span><span class="s1">hi </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">255</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">):</span>
+                <span class="s2">if </span><span class="s1">cut </span><span class="s3">&gt; </span><span class="s1">h</span><span class="s3">[</span><span class="s1">hi</span><span class="s3">]:</span>
+                    <span class="s1">cut </span><span class="s3">= </span><span class="s1">cut </span><span class="s3">- </span><span class="s1">h</span><span class="s3">[</span><span class="s1">hi</span><span class="s3">]</span>
+                    <span class="s1">h</span><span class="s3">[</span><span class="s1">hi</span><span class="s3">] = </span><span class="s4">0</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">h</span><span class="s3">[</span><span class="s1">hi</span><span class="s3">] -= </span><span class="s1">cut</span>
+                    <span class="s1">cut </span><span class="s3">= </span><span class="s4">0</span>
+                <span class="s2">if </span><span class="s1">cut </span><span class="s3">&lt;= </span><span class="s4">0</span><span class="s3">:</span>
+                    <span class="s2">break</span>
+        <span class="s0"># find lowest/highest samples after preprocessing</span>
+        <span class="s2">for </span><span class="s1">lo </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">256</span><span class="s3">):</span>
+            <span class="s2">if </span><span class="s1">h</span><span class="s3">[</span><span class="s1">lo</span><span class="s3">]:</span>
+                <span class="s2">break</span>
+        <span class="s2">for </span><span class="s1">hi </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">255</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">):</span>
+            <span class="s2">if </span><span class="s1">h</span><span class="s3">[</span><span class="s1">hi</span><span class="s3">]:</span>
+                <span class="s2">break</span>
+        <span class="s2">if </span><span class="s1">hi </span><span class="s3">&lt;= </span><span class="s1">lo</span><span class="s3">:</span>
+            <span class="s0"># don't bother</span>
+            <span class="s1">lut</span><span class="s3">.</span><span class="s1">extend</span><span class="s3">(</span><span class="s1">list</span><span class="s3">(</span><span class="s1">range</span><span class="s3">(</span><span class="s4">256</span><span class="s3">)))</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">scale </span><span class="s3">= </span><span class="s4">255.0 </span><span class="s3">/ (</span><span class="s1">hi </span><span class="s3">- </span><span class="s1">lo</span><span class="s3">)</span>
+            <span class="s1">offset </span><span class="s3">= -</span><span class="s1">lo </span><span class="s3">* </span><span class="s1">scale</span>
+            <span class="s2">for </span><span class="s1">ix </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">256</span><span class="s3">):</span>
+                <span class="s1">ix </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">ix </span><span class="s3">* </span><span class="s1">scale </span><span class="s3">+ </span><span class="s1">offset</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">ix </span><span class="s3">&lt; </span><span class="s4">0</span><span class="s3">:</span>
+                    <span class="s1">ix </span><span class="s3">= </span><span class="s4">0</span>
+                <span class="s2">elif </span><span class="s1">ix </span><span class="s3">&gt; </span><span class="s4">255</span><span class="s3">:</span>
+                    <span class="s1">ix </span><span class="s3">= </span><span class="s4">255</span>
+                <span class="s1">lut</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">ix</span><span class="s3">)</span>
+    <span class="s2">return </span><span class="s1">_lut</span><span class="s3">(</span><span class="s1">image</span><span class="s3">, </span><span class="s1">lut</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">colorize</span><span class="s3">(</span>
+    <span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">,</span>
+    <span class="s1">black</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, ...],</span>
+    <span class="s1">white</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, ...],</span>
+    <span class="s1">mid</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">int </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, ...] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">blackpoint</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s4">0</span><span class="s3">,</span>
+    <span class="s1">whitepoint</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s4">255</span><span class="s3">,</span>
+    <span class="s1">midpoint</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s4">127</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Colorize grayscale image. 
+    This function calculates a color wedge which maps all black pixels in 
+    the source image to the first color and all white pixels to the 
+    second color. If ``mid`` is specified, it uses three-color mapping. 
+    The ``black`` and ``white`` arguments should be RGB tuples or color names; 
+    optionally you can use three-color mapping by also specifying ``mid``. 
+    Mapping positions for any of the colors can be specified 
+    (e.g. ``blackpoint``), where these parameters are the integer 
+    value corresponding to where the corresponding color should be mapped. 
+    These parameters must have logical order, such that 
+    ``blackpoint &lt;= midpoint &lt;= whitepoint`` (if ``mid`` is specified). 
+ 
+    :param image: The image to colorize. 
+    :param black: The color to use for black input pixels. 
+    :param white: The color to use for white input pixels. 
+    :param mid: The color to use for midtone input pixels. 
+    :param blackpoint: an int value [0, 255] for the black mapping. 
+    :param whitepoint: an int value [0, 255] for the white mapping. 
+    :param midpoint: an int value [0, 255] for the midtone mapping. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0"># Initial asserts</span>
+    <span class="s2">assert </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s5">&quot;L&quot;</span>
+    <span class="s2">if </span><span class="s1">mid </span><span class="s2">is None</span><span class="s3">:</span>
+        <span class="s2">assert </span><span class="s4">0 </span><span class="s3">&lt;= </span><span class="s1">blackpoint </span><span class="s3">&lt;= </span><span class="s1">whitepoint </span><span class="s3">&lt;= </span><span class="s4">255</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">assert </span><span class="s4">0 </span><span class="s3">&lt;= </span><span class="s1">blackpoint </span><span class="s3">&lt;= </span><span class="s1">midpoint </span><span class="s3">&lt;= </span><span class="s1">whitepoint </span><span class="s3">&lt;= </span><span class="s4">255</span>
+
+    <span class="s0"># Define colors from arguments</span>
+    <span class="s1">rgb_black </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">Sequence</span><span class="s3">[</span><span class="s1">int</span><span class="s3">], </span><span class="s1">_color</span><span class="s3">(</span><span class="s1">black</span><span class="s3">, </span><span class="s5">&quot;RGB&quot;</span><span class="s3">))</span>
+    <span class="s1">rgb_white </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">Sequence</span><span class="s3">[</span><span class="s1">int</span><span class="s3">], </span><span class="s1">_color</span><span class="s3">(</span><span class="s1">white</span><span class="s3">, </span><span class="s5">&quot;RGB&quot;</span><span class="s3">))</span>
+    <span class="s1">rgb_mid </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">Sequence</span><span class="s3">[</span><span class="s1">int</span><span class="s3">], </span><span class="s1">_color</span><span class="s3">(</span><span class="s1">mid</span><span class="s3">, </span><span class="s5">&quot;RGB&quot;</span><span class="s3">)) </span><span class="s2">if </span><span class="s1">mid </span><span class="s2">is not None else None</span>
+
+    <span class="s0"># Empty lists for the mapping</span>
+    <span class="s1">red </span><span class="s3">= []</span>
+    <span class="s1">green </span><span class="s3">= []</span>
+    <span class="s1">blue </span><span class="s3">= []</span>
+
+    <span class="s0"># Create the low-end values</span>
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">0</span><span class="s3">, </span><span class="s1">blackpoint</span><span class="s3">):</span>
+        <span class="s1">red</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">rgb_black</span><span class="s3">[</span><span class="s4">0</span><span class="s3">])</span>
+        <span class="s1">green</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">rgb_black</span><span class="s3">[</span><span class="s4">1</span><span class="s3">])</span>
+        <span class="s1">blue</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">rgb_black</span><span class="s3">[</span><span class="s4">2</span><span class="s3">])</span>
+
+    <span class="s0"># Create the mapping (2-color)</span>
+    <span class="s2">if </span><span class="s1">rgb_mid </span><span class="s2">is None</span><span class="s3">:</span>
+        <span class="s1">range_map </span><span class="s3">= </span><span class="s1">range</span><span class="s3">(</span><span class="s4">0</span><span class="s3">, </span><span class="s1">whitepoint </span><span class="s3">- </span><span class="s1">blackpoint</span><span class="s3">)</span>
+
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range_map</span><span class="s3">:</span>
+            <span class="s1">red</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span>
+                <span class="s1">rgb_black</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] + </span><span class="s1">i </span><span class="s3">* (</span><span class="s1">rgb_white</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] - </span><span class="s1">rgb_black</span><span class="s3">[</span><span class="s4">0</span><span class="s3">]) // </span><span class="s1">len</span><span class="s3">(</span><span class="s1">range_map</span><span class="s3">)</span>
+            <span class="s3">)</span>
+            <span class="s1">green</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span>
+                <span class="s1">rgb_black</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] + </span><span class="s1">i </span><span class="s3">* (</span><span class="s1">rgb_white</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] - </span><span class="s1">rgb_black</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]) // </span><span class="s1">len</span><span class="s3">(</span><span class="s1">range_map</span><span class="s3">)</span>
+            <span class="s3">)</span>
+            <span class="s1">blue</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span>
+                <span class="s1">rgb_black</span><span class="s3">[</span><span class="s4">2</span><span class="s3">] + </span><span class="s1">i </span><span class="s3">* (</span><span class="s1">rgb_white</span><span class="s3">[</span><span class="s4">2</span><span class="s3">] - </span><span class="s1">rgb_black</span><span class="s3">[</span><span class="s4">2</span><span class="s3">]) // </span><span class="s1">len</span><span class="s3">(</span><span class="s1">range_map</span><span class="s3">)</span>
+            <span class="s3">)</span>
+
+    <span class="s0"># Create the mapping (3-color)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">range_map1 </span><span class="s3">= </span><span class="s1">range</span><span class="s3">(</span><span class="s4">0</span><span class="s3">, </span><span class="s1">midpoint </span><span class="s3">- </span><span class="s1">blackpoint</span><span class="s3">)</span>
+        <span class="s1">range_map2 </span><span class="s3">= </span><span class="s1">range</span><span class="s3">(</span><span class="s4">0</span><span class="s3">, </span><span class="s1">whitepoint </span><span class="s3">- </span><span class="s1">midpoint</span><span class="s3">)</span>
+
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range_map1</span><span class="s3">:</span>
+            <span class="s1">red</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span>
+                <span class="s1">rgb_black</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] + </span><span class="s1">i </span><span class="s3">* (</span><span class="s1">rgb_mid</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] - </span><span class="s1">rgb_black</span><span class="s3">[</span><span class="s4">0</span><span class="s3">]) // </span><span class="s1">len</span><span class="s3">(</span><span class="s1">range_map1</span><span class="s3">)</span>
+            <span class="s3">)</span>
+            <span class="s1">green</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span>
+                <span class="s1">rgb_black</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] + </span><span class="s1">i </span><span class="s3">* (</span><span class="s1">rgb_mid</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] - </span><span class="s1">rgb_black</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]) // </span><span class="s1">len</span><span class="s3">(</span><span class="s1">range_map1</span><span class="s3">)</span>
+            <span class="s3">)</span>
+            <span class="s1">blue</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span>
+                <span class="s1">rgb_black</span><span class="s3">[</span><span class="s4">2</span><span class="s3">] + </span><span class="s1">i </span><span class="s3">* (</span><span class="s1">rgb_mid</span><span class="s3">[</span><span class="s4">2</span><span class="s3">] - </span><span class="s1">rgb_black</span><span class="s3">[</span><span class="s4">2</span><span class="s3">]) // </span><span class="s1">len</span><span class="s3">(</span><span class="s1">range_map1</span><span class="s3">)</span>
+            <span class="s3">)</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range_map2</span><span class="s3">:</span>
+            <span class="s1">red</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">rgb_mid</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] + </span><span class="s1">i </span><span class="s3">* (</span><span class="s1">rgb_white</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] - </span><span class="s1">rgb_mid</span><span class="s3">[</span><span class="s4">0</span><span class="s3">]) // </span><span class="s1">len</span><span class="s3">(</span><span class="s1">range_map2</span><span class="s3">))</span>
+            <span class="s1">green</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span>
+                <span class="s1">rgb_mid</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] + </span><span class="s1">i </span><span class="s3">* (</span><span class="s1">rgb_white</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] - </span><span class="s1">rgb_mid</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]) // </span><span class="s1">len</span><span class="s3">(</span><span class="s1">range_map2</span><span class="s3">)</span>
+            <span class="s3">)</span>
+            <span class="s1">blue</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">rgb_mid</span><span class="s3">[</span><span class="s4">2</span><span class="s3">] + </span><span class="s1">i </span><span class="s3">* (</span><span class="s1">rgb_white</span><span class="s3">[</span><span class="s4">2</span><span class="s3">] - </span><span class="s1">rgb_mid</span><span class="s3">[</span><span class="s4">2</span><span class="s3">]) // </span><span class="s1">len</span><span class="s3">(</span><span class="s1">range_map2</span><span class="s3">))</span>
+
+    <span class="s0"># Create the high-end values</span>
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">0</span><span class="s3">, </span><span class="s4">256 </span><span class="s3">- </span><span class="s1">whitepoint</span><span class="s3">):</span>
+        <span class="s1">red</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">rgb_white</span><span class="s3">[</span><span class="s4">0</span><span class="s3">])</span>
+        <span class="s1">green</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">rgb_white</span><span class="s3">[</span><span class="s4">1</span><span class="s3">])</span>
+        <span class="s1">blue</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">rgb_white</span><span class="s3">[</span><span class="s4">2</span><span class="s3">])</span>
+
+    <span class="s0"># Return converted image</span>
+    <span class="s1">image </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s5">&quot;RGB&quot;</span><span class="s3">)</span>
+    <span class="s2">return </span><span class="s1">_lut</span><span class="s3">(</span><span class="s1">image</span><span class="s3">, </span><span class="s1">red </span><span class="s3">+ </span><span class="s1">green </span><span class="s3">+ </span><span class="s1">blue</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">contain</span><span class="s3">(</span>
+    <span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">size</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">], </span><span class="s1">method</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Resampling</span><span class="s3">.</span><span class="s1">BICUBIC</span>
+<span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Returns a resized version of the image, set to the maximum width and height 
+    within the requested size, while maintaining the original aspect ratio. 
+ 
+    :param image: The image to resize. 
+    :param size: The requested output size in pixels, given as a 
+                 (width, height) tuple. 
+    :param method: Resampling method to use. Default is 
+                   :py:attr:`~PIL.Image.Resampling.BICUBIC`. 
+                   See :ref:`concept-filters`. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">im_ratio </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">width </span><span class="s3">/ </span><span class="s1">image</span><span class="s3">.</span><span class="s1">height</span>
+    <span class="s1">dest_ratio </span><span class="s3">= </span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] / </span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]</span>
+
+    <span class="s2">if </span><span class="s1">im_ratio </span><span class="s3">!= </span><span class="s1">dest_ratio</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">im_ratio </span><span class="s3">&gt; </span><span class="s1">dest_ratio</span><span class="s3">:</span>
+            <span class="s1">new_height </span><span class="s3">= </span><span class="s1">round</span><span class="s3">(</span><span class="s1">image</span><span class="s3">.</span><span class="s1">height </span><span class="s3">/ </span><span class="s1">image</span><span class="s3">.</span><span class="s1">width </span><span class="s3">* </span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">])</span>
+            <span class="s2">if </span><span class="s1">new_height </span><span class="s3">!= </span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]:</span>
+                <span class="s1">size </span><span class="s3">= (</span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">], </span><span class="s1">new_height</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">new_width </span><span class="s3">= </span><span class="s1">round</span><span class="s3">(</span><span class="s1">image</span><span class="s3">.</span><span class="s1">width </span><span class="s3">/ </span><span class="s1">image</span><span class="s3">.</span><span class="s1">height </span><span class="s3">* </span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">])</span>
+            <span class="s2">if </span><span class="s1">new_width </span><span class="s3">!= </span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">]:</span>
+                <span class="s1">size </span><span class="s3">= (</span><span class="s1">new_width</span><span class="s3">, </span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">])</span>
+    <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">resize</span><span class="s3">(</span><span class="s1">size</span><span class="s3">, </span><span class="s1">resample</span><span class="s3">=</span><span class="s1">method</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">cover</span><span class="s3">(</span>
+    <span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">size</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">], </span><span class="s1">method</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Resampling</span><span class="s3">.</span><span class="s1">BICUBIC</span>
+<span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Returns a resized version of the image, so that the requested size is 
+    covered, while maintaining the original aspect ratio. 
+ 
+    :param image: The image to resize. 
+    :param size: The requested output size in pixels, given as a 
+                 (width, height) tuple. 
+    :param method: Resampling method to use. Default is 
+                   :py:attr:`~PIL.Image.Resampling.BICUBIC`. 
+                   See :ref:`concept-filters`. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">im_ratio </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">width </span><span class="s3">/ </span><span class="s1">image</span><span class="s3">.</span><span class="s1">height</span>
+    <span class="s1">dest_ratio </span><span class="s3">= </span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] / </span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]</span>
+
+    <span class="s2">if </span><span class="s1">im_ratio </span><span class="s3">!= </span><span class="s1">dest_ratio</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">im_ratio </span><span class="s3">&lt; </span><span class="s1">dest_ratio</span><span class="s3">:</span>
+            <span class="s1">new_height </span><span class="s3">= </span><span class="s1">round</span><span class="s3">(</span><span class="s1">image</span><span class="s3">.</span><span class="s1">height </span><span class="s3">/ </span><span class="s1">image</span><span class="s3">.</span><span class="s1">width </span><span class="s3">* </span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">])</span>
+            <span class="s2">if </span><span class="s1">new_height </span><span class="s3">!= </span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]:</span>
+                <span class="s1">size </span><span class="s3">= (</span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">], </span><span class="s1">new_height</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">new_width </span><span class="s3">= </span><span class="s1">round</span><span class="s3">(</span><span class="s1">image</span><span class="s3">.</span><span class="s1">width </span><span class="s3">/ </span><span class="s1">image</span><span class="s3">.</span><span class="s1">height </span><span class="s3">* </span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">])</span>
+            <span class="s2">if </span><span class="s1">new_width </span><span class="s3">!= </span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">]:</span>
+                <span class="s1">size </span><span class="s3">= (</span><span class="s1">new_width</span><span class="s3">, </span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">])</span>
+    <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">resize</span><span class="s3">(</span><span class="s1">size</span><span class="s3">, </span><span class="s1">resample</span><span class="s3">=</span><span class="s1">method</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">pad</span><span class="s3">(</span>
+    <span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">,</span>
+    <span class="s1">size</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">],</span>
+    <span class="s1">method</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Resampling</span><span class="s3">.</span><span class="s1">BICUBIC</span><span class="s3">,</span>
+    <span class="s1">color</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">int </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, ...] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">centering</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">float</span><span class="s3">, </span><span class="s1">float</span><span class="s3">] = (</span><span class="s4">0.5</span><span class="s3">, </span><span class="s4">0.5</span><span class="s3">),</span>
+<span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Returns a resized and padded version of the image, expanded to fill the 
+    requested aspect ratio and size. 
+ 
+    :param image: The image to resize and crop. 
+    :param size: The requested output size in pixels, given as a 
+                 (width, height) tuple. 
+    :param method: Resampling method to use. Default is 
+                   :py:attr:`~PIL.Image.Resampling.BICUBIC`. 
+                   See :ref:`concept-filters`. 
+    :param color: The background color of the padded image. 
+    :param centering: Control the position of the original image within the 
+                      padded version. 
+ 
+                          (0.5, 0.5) will keep the image centered 
+                          (0, 0) will keep the image aligned to the top left 
+                          (1, 1) will keep the image aligned to the bottom 
+                          right 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">resized </span><span class="s3">= </span><span class="s1">contain</span><span class="s3">(</span><span class="s1">image</span><span class="s3">, </span><span class="s1">size</span><span class="s3">, </span><span class="s1">method</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">resized</span><span class="s3">.</span><span class="s1">size </span><span class="s3">== </span><span class="s1">size</span><span class="s3">:</span>
+        <span class="s1">out </span><span class="s3">= </span><span class="s1">resized</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">out </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">new</span><span class="s3">(</span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">, </span><span class="s1">size</span><span class="s3">, </span><span class="s1">color</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">resized</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">:</span>
+            <span class="s1">palette </span><span class="s3">= </span><span class="s1">resized</span><span class="s3">.</span><span class="s1">getpalette</span><span class="s3">()</span>
+            <span class="s2">if </span><span class="s1">palette </span><span class="s2">is not None</span><span class="s3">:</span>
+                <span class="s1">out</span><span class="s3">.</span><span class="s1">putpalette</span><span class="s3">(</span><span class="s1">palette</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">resized</span><span class="s3">.</span><span class="s1">width </span><span class="s3">!= </span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">]:</span>
+            <span class="s1">x </span><span class="s3">= </span><span class="s1">round</span><span class="s3">((</span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] - </span><span class="s1">resized</span><span class="s3">.</span><span class="s1">width</span><span class="s3">) * </span><span class="s1">max</span><span class="s3">(</span><span class="s4">0</span><span class="s3">, </span><span class="s1">min</span><span class="s3">(</span><span class="s1">centering</span><span class="s3">[</span><span class="s4">0</span><span class="s3">], </span><span class="s4">1</span><span class="s3">)))</span>
+            <span class="s1">out</span><span class="s3">.</span><span class="s1">paste</span><span class="s3">(</span><span class="s1">resized</span><span class="s3">, (</span><span class="s1">x</span><span class="s3">, </span><span class="s4">0</span><span class="s3">))</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">y </span><span class="s3">= </span><span class="s1">round</span><span class="s3">((</span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] - </span><span class="s1">resized</span><span class="s3">.</span><span class="s1">height</span><span class="s3">) * </span><span class="s1">max</span><span class="s3">(</span><span class="s4">0</span><span class="s3">, </span><span class="s1">min</span><span class="s3">(</span><span class="s1">centering</span><span class="s3">[</span><span class="s4">1</span><span class="s3">], </span><span class="s4">1</span><span class="s3">)))</span>
+            <span class="s1">out</span><span class="s3">.</span><span class="s1">paste</span><span class="s3">(</span><span class="s1">resized</span><span class="s3">, (</span><span class="s4">0</span><span class="s3">, </span><span class="s1">y</span><span class="s3">))</span>
+    <span class="s2">return </span><span class="s1">out</span>
+
+
+<span class="s2">def </span><span class="s1">crop</span><span class="s3">(</span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">border</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s4">0</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Remove border from image.  The same amount of pixels are removed 
+    from all four sides.  This function works on all image modes. 
+ 
+    .. seealso:: :py:meth:`~PIL.Image.Image.crop` 
+ 
+    :param image: The image to crop. 
+    :param border: The number of pixels to remove. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">left</span><span class="s3">, </span><span class="s1">top</span><span class="s3">, </span><span class="s1">right</span><span class="s3">, </span><span class="s1">bottom </span><span class="s3">= </span><span class="s1">_border</span><span class="s3">(</span><span class="s1">border</span><span class="s3">)</span>
+    <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">crop</span><span class="s3">((</span><span class="s1">left</span><span class="s3">, </span><span class="s1">top</span><span class="s3">, </span><span class="s1">image</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] - </span><span class="s1">right</span><span class="s3">, </span><span class="s1">image</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] - </span><span class="s1">bottom</span><span class="s3">))</span>
+
+
+<span class="s2">def </span><span class="s1">scale</span><span class="s3">(</span>
+    <span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">factor</span><span class="s3">: </span><span class="s1">float</span><span class="s3">, </span><span class="s1">resample</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Resampling</span><span class="s3">.</span><span class="s1">BICUBIC</span>
+<span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Returns a rescaled image by a specific factor given in parameter. 
+    A factor greater than 1 expands the image, between 0 and 1 contracts the 
+    image. 
+ 
+    :param image: The image to rescale. 
+    :param factor: The expansion factor, as a float. 
+    :param resample: Resampling method to use. Default is 
+                     :py:attr:`~PIL.Image.Resampling.BICUBIC`. 
+                     See :ref:`concept-filters`. 
+    :returns: An :py:class:`~PIL.Image.Image` object. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">factor </span><span class="s3">== </span><span class="s4">1</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+    <span class="s2">elif </span><span class="s1">factor </span><span class="s3">&lt;= </span><span class="s4">0</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;the factor must be greater than 0&quot;</span>
+        <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">size </span><span class="s3">= (</span><span class="s1">round</span><span class="s3">(</span><span class="s1">factor </span><span class="s3">* </span><span class="s1">image</span><span class="s3">.</span><span class="s1">width</span><span class="s3">), </span><span class="s1">round</span><span class="s3">(</span><span class="s1">factor </span><span class="s3">* </span><span class="s1">image</span><span class="s3">.</span><span class="s1">height</span><span class="s3">))</span>
+        <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">resize</span><span class="s3">(</span><span class="s1">size</span><span class="s3">, </span><span class="s1">resample</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">SupportsGetMesh</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+    <span class="s6">&quot;&quot;&quot; 
+    An object that supports the ``getmesh`` method, taking an image as an 
+    argument, and returning a list of tuples. Each tuple contains two tuples, 
+    the source box as a tuple of 4 integers, and a tuple of 8 integers for the 
+    final quadrilateral, in order of top left, bottom left, bottom right, top 
+    right. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">getmesh</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span>
+    <span class="s3">) </span><span class="s1">-&gt; list</span><span class="s3">[</span>
+        <span class="s1">tuple</span><span class="s3">[</span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">], </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]]</span>
+    <span class="s3">]: ...</span>
+
+
+<span class="s2">def </span><span class="s1">deform</span><span class="s3">(</span>
+    <span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">,</span>
+    <span class="s1">deformer</span><span class="s3">: </span><span class="s1">SupportsGetMesh</span><span class="s3">,</span>
+    <span class="s1">resample</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Resampling</span><span class="s3">.</span><span class="s1">BILINEAR</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Deform the image. 
+ 
+    :param image: The image to deform. 
+    :param deformer: A deformer object.  Any object that implements a 
+                    ``getmesh`` method can be used. 
+    :param resample: An optional resampling filter. Same values possible as 
+       in the PIL.Image.transform function. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">transform</span><span class="s3">(</span>
+        <span class="s1">image</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Transform</span><span class="s3">.</span><span class="s1">MESH</span><span class="s3">, </span><span class="s1">deformer</span><span class="s3">.</span><span class="s1">getmesh</span><span class="s3">(</span><span class="s1">image</span><span class="s3">), </span><span class="s1">resample</span>
+    <span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">equalize</span><span class="s3">(</span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">mask</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Equalize the image histogram. This function applies a non-linear 
+    mapping to the input image, in order to create a uniform 
+    distribution of grayscale values in the output image. 
+ 
+    :param image: The image to equalize. 
+    :param mask: An optional mask.  If given, only the pixels selected by 
+                 the mask are included in the analysis. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s5">&quot;P&quot;</span><span class="s3">:</span>
+        <span class="s1">image </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s5">&quot;RGB&quot;</span><span class="s3">)</span>
+    <span class="s1">h </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">histogram</span><span class="s3">(</span><span class="s1">mask</span><span class="s3">)</span>
+    <span class="s1">lut </span><span class="s3">= []</span>
+    <span class="s2">for </span><span class="s1">b </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">0</span><span class="s3">, </span><span class="s1">len</span><span class="s3">(</span><span class="s1">h</span><span class="s3">), </span><span class="s4">256</span><span class="s3">):</span>
+        <span class="s1">histo </span><span class="s3">= [</span><span class="s1">_f </span><span class="s2">for </span><span class="s1">_f </span><span class="s2">in </span><span class="s1">h</span><span class="s3">[</span><span class="s1">b </span><span class="s3">: </span><span class="s1">b </span><span class="s3">+ </span><span class="s4">256</span><span class="s3">] </span><span class="s2">if </span><span class="s1">_f</span><span class="s3">]</span>
+        <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">histo</span><span class="s3">) &lt;= </span><span class="s4">1</span><span class="s3">:</span>
+            <span class="s1">lut</span><span class="s3">.</span><span class="s1">extend</span><span class="s3">(</span><span class="s1">list</span><span class="s3">(</span><span class="s1">range</span><span class="s3">(</span><span class="s4">256</span><span class="s3">)))</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">step </span><span class="s3">= (</span><span class="s1">functools</span><span class="s3">.</span><span class="s1">reduce</span><span class="s3">(</span><span class="s1">operator</span><span class="s3">.</span><span class="s1">add</span><span class="s3">, </span><span class="s1">histo</span><span class="s3">) - </span><span class="s1">histo</span><span class="s3">[-</span><span class="s4">1</span><span class="s3">]) // </span><span class="s4">255</span>
+            <span class="s2">if not </span><span class="s1">step</span><span class="s3">:</span>
+                <span class="s1">lut</span><span class="s3">.</span><span class="s1">extend</span><span class="s3">(</span><span class="s1">list</span><span class="s3">(</span><span class="s1">range</span><span class="s3">(</span><span class="s4">256</span><span class="s3">)))</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">n </span><span class="s3">= </span><span class="s1">step </span><span class="s3">// </span><span class="s4">2</span>
+                <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">256</span><span class="s3">):</span>
+                    <span class="s1">lut</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">n </span><span class="s3">// </span><span class="s1">step</span><span class="s3">)</span>
+                    <span class="s1">n </span><span class="s3">= </span><span class="s1">n </span><span class="s3">+ </span><span class="s1">h</span><span class="s3">[</span><span class="s1">i </span><span class="s3">+ </span><span class="s1">b</span><span class="s3">]</span>
+    <span class="s2">return </span><span class="s1">_lut</span><span class="s3">(</span><span class="s1">image</span><span class="s3">, </span><span class="s1">lut</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">expand</span><span class="s3">(</span>
+    <span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">,</span>
+    <span class="s1">border</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, ...] = </span><span class="s4">0</span><span class="s3">,</span>
+    <span class="s1">fill</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">int </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, ...] = </span><span class="s4">0</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Add border to the image 
+ 
+    :param image: The image to expand. 
+    :param border: Border width, in pixels. 
+    :param fill: Pixel fill value (a color value).  Default is 0 (black). 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">left</span><span class="s3">, </span><span class="s1">top</span><span class="s3">, </span><span class="s1">right</span><span class="s3">, </span><span class="s1">bottom </span><span class="s3">= </span><span class="s1">_border</span><span class="s3">(</span><span class="s1">border</span><span class="s3">)</span>
+    <span class="s1">width </span><span class="s3">= </span><span class="s1">left </span><span class="s3">+ </span><span class="s1">image</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] + </span><span class="s1">right</span>
+    <span class="s1">height </span><span class="s3">= </span><span class="s1">top </span><span class="s3">+ </span><span class="s1">image</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] + </span><span class="s1">bottom</span>
+    <span class="s1">color </span><span class="s3">= </span><span class="s1">_color</span><span class="s3">(</span><span class="s1">fill</span><span class="s3">, </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">image</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">:</span>
+        <span class="s1">palette </span><span class="s3">= </span><span class="s1">ImagePalette</span><span class="s3">.</span><span class="s1">ImagePalette</span><span class="s3">(</span><span class="s1">palette</span><span class="s3">=</span><span class="s1">image</span><span class="s3">.</span><span class="s1">getpalette</span><span class="s3">())</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">color</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">) </span><span class="s2">and </span><span class="s3">(</span><span class="s1">len</span><span class="s3">(</span><span class="s1">color</span><span class="s3">) == </span><span class="s4">3 </span><span class="s2">or </span><span class="s1">len</span><span class="s3">(</span><span class="s1">color</span><span class="s3">) == </span><span class="s4">4</span><span class="s3">):</span>
+            <span class="s1">color </span><span class="s3">= </span><span class="s1">palette</span><span class="s3">.</span><span class="s1">getcolor</span><span class="s3">(</span><span class="s1">color</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">palette </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s1">out </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">new</span><span class="s3">(</span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">, (</span><span class="s1">width</span><span class="s3">, </span><span class="s1">height</span><span class="s3">), </span><span class="s1">color</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">palette</span><span class="s3">:</span>
+        <span class="s1">out</span><span class="s3">.</span><span class="s1">putpalette</span><span class="s3">(</span><span class="s1">palette</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">)</span>
+    <span class="s1">out</span><span class="s3">.</span><span class="s1">paste</span><span class="s3">(</span><span class="s1">image</span><span class="s3">, (</span><span class="s1">left</span><span class="s3">, </span><span class="s1">top</span><span class="s3">))</span>
+    <span class="s2">return </span><span class="s1">out</span>
+
+
+<span class="s2">def </span><span class="s1">fit</span><span class="s3">(</span>
+    <span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">,</span>
+    <span class="s1">size</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">],</span>
+    <span class="s1">method</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Resampling</span><span class="s3">.</span><span class="s1">BICUBIC</span><span class="s3">,</span>
+    <span class="s1">bleed</span><span class="s3">: </span><span class="s1">float </span><span class="s3">= </span><span class="s4">0.0</span><span class="s3">,</span>
+    <span class="s1">centering</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">float</span><span class="s3">, </span><span class="s1">float</span><span class="s3">] = (</span><span class="s4">0.5</span><span class="s3">, </span><span class="s4">0.5</span><span class="s3">),</span>
+<span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Returns a resized and cropped version of the image, cropped to the 
+    requested aspect ratio and size. 
+ 
+    This function was contributed by Kevin Cazabon. 
+ 
+    :param image: The image to resize and crop. 
+    :param size: The requested output size in pixels, given as a 
+                 (width, height) tuple. 
+    :param method: Resampling method to use. Default is 
+                   :py:attr:`~PIL.Image.Resampling.BICUBIC`. 
+                   See :ref:`concept-filters`. 
+    :param bleed: Remove a border around the outside of the image from all 
+                  four edges. The value is a decimal percentage (use 0.01 for 
+                  one percent). The default value is 0 (no border). 
+                  Cannot be greater than or equal to 0.5. 
+    :param centering: Control the cropping position.  Use (0.5, 0.5) for 
+                      center cropping (e.g. if cropping the width, take 50% off 
+                      of the left side, and therefore 50% off the right side). 
+                      (0.0, 0.0) will crop from the top left corner (i.e. if 
+                      cropping the width, take all of the crop off of the right 
+                      side, and if cropping the height, take all of it off the 
+                      bottom).  (1.0, 0.0) will crop from the bottom left 
+                      corner, etc. (i.e. if cropping the width, take all of the 
+                      crop off the left side, and if cropping the height take 
+                      none from the top, and therefore all off the bottom). 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0"># by Kevin Cazabon, Feb 17/2000</span>
+    <span class="s0"># kevin@cazabon.com</span>
+    <span class="s0"># https://www.cazabon.com</span>
+
+    <span class="s1">centering_x</span><span class="s3">, </span><span class="s1">centering_y </span><span class="s3">= </span><span class="s1">centering</span>
+
+    <span class="s2">if not </span><span class="s4">0.0 </span><span class="s3">&lt;= </span><span class="s1">centering_x </span><span class="s3">&lt;= </span><span class="s4">1.0</span><span class="s3">:</span>
+        <span class="s1">centering_x </span><span class="s3">= </span><span class="s4">0.5</span>
+    <span class="s2">if not </span><span class="s4">0.0 </span><span class="s3">&lt;= </span><span class="s1">centering_y </span><span class="s3">&lt;= </span><span class="s4">1.0</span><span class="s3">:</span>
+        <span class="s1">centering_y </span><span class="s3">= </span><span class="s4">0.5</span>
+
+    <span class="s2">if not </span><span class="s4">0.0 </span><span class="s3">&lt;= </span><span class="s1">bleed </span><span class="s3">&lt; </span><span class="s4">0.5</span><span class="s3">:</span>
+        <span class="s1">bleed </span><span class="s3">= </span><span class="s4">0.0</span>
+
+    <span class="s0"># calculate the area to use for resizing and cropping, subtracting</span>
+    <span class="s0"># the 'bleed' around the edges</span>
+
+    <span class="s0"># number of pixels to trim off on Top and Bottom, Left and Right</span>
+    <span class="s1">bleed_pixels </span><span class="s3">= (</span><span class="s1">bleed </span><span class="s3">* </span><span class="s1">image</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">], </span><span class="s1">bleed </span><span class="s3">* </span><span class="s1">image</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">])</span>
+
+    <span class="s1">live_size </span><span class="s3">= (</span>
+        <span class="s1">image</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] - </span><span class="s1">bleed_pixels</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] * </span><span class="s4">2</span><span class="s3">,</span>
+        <span class="s1">image</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] - </span><span class="s1">bleed_pixels</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] * </span><span class="s4">2</span><span class="s3">,</span>
+    <span class="s3">)</span>
+
+    <span class="s0"># calculate the aspect ratio of the live_size</span>
+    <span class="s1">live_size_ratio </span><span class="s3">= </span><span class="s1">live_size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] / </span><span class="s1">live_size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]</span>
+
+    <span class="s0"># calculate the aspect ratio of the output image</span>
+    <span class="s1">output_ratio </span><span class="s3">= </span><span class="s1">size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] / </span><span class="s1">size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]</span>
+
+    <span class="s0"># figure out if the sides or top/bottom will be cropped off</span>
+    <span class="s2">if </span><span class="s1">live_size_ratio </span><span class="s3">== </span><span class="s1">output_ratio</span><span class="s3">:</span>
+        <span class="s0"># live_size is already the needed ratio</span>
+        <span class="s1">crop_width </span><span class="s3">= </span><span class="s1">live_size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">]</span>
+        <span class="s1">crop_height </span><span class="s3">= </span><span class="s1">live_size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]</span>
+    <span class="s2">elif </span><span class="s1">live_size_ratio </span><span class="s3">&gt;= </span><span class="s1">output_ratio</span><span class="s3">:</span>
+        <span class="s0"># live_size is wider than what's needed, crop the sides</span>
+        <span class="s1">crop_width </span><span class="s3">= </span><span class="s1">output_ratio </span><span class="s3">* </span><span class="s1">live_size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]</span>
+        <span class="s1">crop_height </span><span class="s3">= </span><span class="s1">live_size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s0"># live_size is taller than what's needed, crop the top and bottom</span>
+        <span class="s1">crop_width </span><span class="s3">= </span><span class="s1">live_size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">]</span>
+        <span class="s1">crop_height </span><span class="s3">= </span><span class="s1">live_size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] / </span><span class="s1">output_ratio</span>
+
+    <span class="s0"># make the crop</span>
+    <span class="s1">crop_left </span><span class="s3">= </span><span class="s1">bleed_pixels</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] + (</span><span class="s1">live_size</span><span class="s3">[</span><span class="s4">0</span><span class="s3">] - </span><span class="s1">crop_width</span><span class="s3">) * </span><span class="s1">centering_x</span>
+    <span class="s1">crop_top </span><span class="s3">= </span><span class="s1">bleed_pixels</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] + (</span><span class="s1">live_size</span><span class="s3">[</span><span class="s4">1</span><span class="s3">] - </span><span class="s1">crop_height</span><span class="s3">) * </span><span class="s1">centering_y</span>
+
+    <span class="s1">crop </span><span class="s3">= (</span><span class="s1">crop_left</span><span class="s3">, </span><span class="s1">crop_top</span><span class="s3">, </span><span class="s1">crop_left </span><span class="s3">+ </span><span class="s1">crop_width</span><span class="s3">, </span><span class="s1">crop_top </span><span class="s3">+ </span><span class="s1">crop_height</span><span class="s3">)</span>
+
+    <span class="s0"># resize the image and return it</span>
+    <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">resize</span><span class="s3">(</span><span class="s1">size</span><span class="s3">, </span><span class="s1">method</span><span class="s3">, </span><span class="s1">box</span><span class="s3">=</span><span class="s1">crop</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">flip</span><span class="s3">(</span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Flip the image vertically (top to bottom). 
+ 
+    :param image: The image to flip. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">transpose</span><span class="s3">(</span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Transpose</span><span class="s3">.</span><span class="s1">FLIP_TOP_BOTTOM</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">grayscale</span><span class="s3">(</span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Convert the image to grayscale. 
+ 
+    :param image: The image to convert. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s5">&quot;L&quot;</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">invert</span><span class="s3">(</span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Invert (negate) the image. 
+ 
+    :param image: The image to invert. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">lut </span><span class="s3">= </span><span class="s1">list</span><span class="s3">(</span><span class="s1">range</span><span class="s3">(</span><span class="s4">255</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">, -</span><span class="s4">1</span><span class="s3">))</span>
+    <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">point</span><span class="s3">(</span><span class="s1">lut</span><span class="s3">) </span><span class="s2">if </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s5">&quot;1&quot; </span><span class="s2">else </span><span class="s1">_lut</span><span class="s3">(</span><span class="s1">image</span><span class="s3">, </span><span class="s1">lut</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">mirror</span><span class="s3">(</span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Flip image horizontally (left to right). 
+ 
+    :param image: The image to mirror. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">transpose</span><span class="s3">(</span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Transpose</span><span class="s3">.</span><span class="s1">FLIP_LEFT_RIGHT</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">posterize</span><span class="s3">(</span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">bits</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Reduce the number of bits for each color channel. 
+ 
+    :param image: The image to posterize. 
+    :param bits: The number of bits to keep for each channel (1-8). 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">mask </span><span class="s3">= ~(</span><span class="s4">2 </span><span class="s3">** (</span><span class="s4">8 </span><span class="s3">- </span><span class="s1">bits</span><span class="s3">) - </span><span class="s4">1</span><span class="s3">)</span>
+    <span class="s1">lut </span><span class="s3">= [</span><span class="s1">i </span><span class="s3">&amp; </span><span class="s1">mask </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">256</span><span class="s3">)]</span>
+    <span class="s2">return </span><span class="s1">_lut</span><span class="s3">(</span><span class="s1">image</span><span class="s3">, </span><span class="s1">lut</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">solarize</span><span class="s3">(</span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">threshold</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s4">128</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Invert all pixel values above a threshold. 
+ 
+    :param image: The image to solarize. 
+    :param threshold: All pixels above this grayscale level are inverted. 
+    :return: An image. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">lut </span><span class="s3">= []</span>
+    <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s4">256</span><span class="s3">):</span>
+        <span class="s2">if </span><span class="s1">i </span><span class="s3">&lt; </span><span class="s1">threshold</span><span class="s3">:</span>
+            <span class="s1">lut</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">i</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">lut</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s4">255 </span><span class="s3">- </span><span class="s1">i</span><span class="s3">)</span>
+    <span class="s2">return </span><span class="s1">_lut</span><span class="s3">(</span><span class="s1">image</span><span class="s3">, </span><span class="s1">lut</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">exif_transpose</span><span class="s3">(</span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, *, </span><span class="s1">in_place</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    If an image has an EXIF Orientation tag, other than 1, transpose the image 
+    accordingly, and remove the orientation data. 
+ 
+    :param image: The image to transpose. 
+    :param in_place: Boolean. Keyword-only argument. 
+        If ``True``, the original image is modified in-place, and ``None`` is returned. 
+        If ``False`` (default), a new :py:class:`~PIL.Image.Image` object is returned 
+        with the transposition applied. If there is no transposition, a copy of the 
+        image will be returned. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">image</span><span class="s3">.</span><span class="s1">load</span><span class="s3">()</span>
+    <span class="s1">image_exif </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">getexif</span><span class="s3">()</span>
+    <span class="s1">orientation </span><span class="s3">= </span><span class="s1">image_exif</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">ExifTags</span><span class="s3">.</span><span class="s1">Base</span><span class="s3">.</span><span class="s1">Orientation</span><span class="s3">, </span><span class="s4">1</span><span class="s3">)</span>
+    <span class="s1">method </span><span class="s3">= {</span>
+        <span class="s4">2</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Transpose</span><span class="s3">.</span><span class="s1">FLIP_LEFT_RIGHT</span><span class="s3">,</span>
+        <span class="s4">3</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Transpose</span><span class="s3">.</span><span class="s1">ROTATE_180</span><span class="s3">,</span>
+        <span class="s4">4</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Transpose</span><span class="s3">.</span><span class="s1">FLIP_TOP_BOTTOM</span><span class="s3">,</span>
+        <span class="s4">5</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Transpose</span><span class="s3">.</span><span class="s1">TRANSPOSE</span><span class="s3">,</span>
+        <span class="s4">6</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Transpose</span><span class="s3">.</span><span class="s1">ROTATE_270</span><span class="s3">,</span>
+        <span class="s4">7</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Transpose</span><span class="s3">.</span><span class="s1">TRANSVERSE</span><span class="s3">,</span>
+        <span class="s4">8</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Transpose</span><span class="s3">.</span><span class="s1">ROTATE_90</span><span class="s3">,</span>
+    <span class="s3">}.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">orientation</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">method </span><span class="s2">is not None</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">in_place</span><span class="s3">:</span>
+            <span class="s1">image</span><span class="s3">.</span><span class="s1">im </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">transpose</span><span class="s3">(</span><span class="s1">method</span><span class="s3">)</span>
+            <span class="s1">image</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">transposed_image </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">transpose</span><span class="s3">(</span><span class="s1">method</span><span class="s3">)</span>
+        <span class="s1">exif_image </span><span class="s3">= </span><span class="s1">image </span><span class="s2">if </span><span class="s1">in_place </span><span class="s2">else </span><span class="s1">transposed_image</span>
+
+        <span class="s1">exif </span><span class="s3">= </span><span class="s1">exif_image</span><span class="s3">.</span><span class="s1">getexif</span><span class="s3">()</span>
+        <span class="s2">if </span><span class="s1">ExifTags</span><span class="s3">.</span><span class="s1">Base</span><span class="s3">.</span><span class="s1">Orientation </span><span class="s2">in </span><span class="s1">exif</span><span class="s3">:</span>
+            <span class="s2">del </span><span class="s1">exif</span><span class="s3">[</span><span class="s1">ExifTags</span><span class="s3">.</span><span class="s1">Base</span><span class="s3">.</span><span class="s1">Orientation</span><span class="s3">]</span>
+            <span class="s2">if </span><span class="s5">&quot;exif&quot; </span><span class="s2">in </span><span class="s1">exif_image</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+                <span class="s1">exif_image</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;exif&quot;</span><span class="s3">] = </span><span class="s1">exif</span><span class="s3">.</span><span class="s1">tobytes</span><span class="s3">()</span>
+            <span class="s2">elif </span><span class="s5">&quot;Raw profile type exif&quot; </span><span class="s2">in </span><span class="s1">exif_image</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+                <span class="s1">exif_image</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;Raw profile type exif&quot;</span><span class="s3">] = </span><span class="s1">exif</span><span class="s3">.</span><span class="s1">tobytes</span><span class="s3">().</span><span class="s1">hex</span><span class="s3">()</span>
+            <span class="s2">for </span><span class="s1">key </span><span class="s2">in </span><span class="s3">(</span><span class="s5">&quot;XML:com.adobe.xmp&quot;</span><span class="s3">, </span><span class="s5">&quot;xmp&quot;</span><span class="s3">):</span>
+                <span class="s2">if </span><span class="s1">key </span><span class="s2">in </span><span class="s1">exif_image</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+                    <span class="s2">for </span><span class="s1">pattern </span><span class="s2">in </span><span class="s3">(</span>
+                        <span class="s5">r'tiff:Orientation=&quot;([0-9])&quot;'</span><span class="s3">,</span>
+                        <span class="s5">r&quot;&lt;tiff:Orientation&gt;([0-9])&lt;/tiff:Orientation&gt;&quot;</span><span class="s3">,</span>
+                    <span class="s3">):</span>
+                        <span class="s1">value </span><span class="s3">= </span><span class="s1">exif_image</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s1">key</span><span class="s3">]</span>
+                        <span class="s1">exif_image</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s1">key</span><span class="s3">] = (</span>
+                            <span class="s1">re</span><span class="s3">.</span><span class="s1">sub</span><span class="s3">(</span><span class="s1">pattern</span><span class="s3">, </span><span class="s5">&quot;&quot;</span><span class="s3">, </span><span class="s1">value</span><span class="s3">)</span>
+                            <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">value</span><span class="s3">, </span><span class="s1">str</span><span class="s3">)</span>
+                            <span class="s2">else </span><span class="s1">re</span><span class="s3">.</span><span class="s1">sub</span><span class="s3">(</span><span class="s1">pattern</span><span class="s3">.</span><span class="s1">encode</span><span class="s3">(), </span><span class="s7">b&quot;&quot;</span><span class="s3">, </span><span class="s1">value</span><span class="s3">)</span>
+                        <span class="s3">)</span>
+        <span class="s2">if not </span><span class="s1">in_place</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">transposed_image</span>
+    <span class="s2">elif not </span><span class="s1">in_place</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+    <span class="s2">return None</span>
+</pre>
+</body>
+</html>

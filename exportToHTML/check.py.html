@@ -1,0 +1,210 @@
+<html>
+<head>
+<title>check.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #7a7e85;}
+.s5 { color: #6aab73;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+check.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;Validation of dependencies of packages 
+&quot;&quot;&quot;</span>
+
+<span class="s2">import </span><span class="s1">logging</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Callable</span><span class="s3">, </span><span class="s1">Dict</span><span class="s3">, </span><span class="s1">List</span><span class="s3">, </span><span class="s1">NamedTuple</span><span class="s3">, </span><span class="s1">Optional</span><span class="s3">, </span><span class="s1">Set</span><span class="s3">, </span><span class="s1">Tuple</span>
+
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">packaging</span><span class="s3">.</span><span class="s1">requirements </span><span class="s2">import </span><span class="s1">Requirement</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">packaging</span><span class="s3">.</span><span class="s1">specifiers </span><span class="s2">import </span><span class="s1">LegacySpecifier</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">packaging</span><span class="s3">.</span><span class="s1">utils </span><span class="s2">import </span><span class="s1">NormalizedName</span><span class="s3">, </span><span class="s1">canonicalize_name</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">packaging</span><span class="s3">.</span><span class="s1">version </span><span class="s2">import </span><span class="s1">LegacyVersion</span>
+
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_internal</span><span class="s3">.</span><span class="s1">distributions </span><span class="s2">import </span><span class="s1">make_distribution_for_install_requirement</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_internal</span><span class="s3">.</span><span class="s1">metadata </span><span class="s2">import </span><span class="s1">get_default_environment</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_internal</span><span class="s3">.</span><span class="s1">metadata</span><span class="s3">.</span><span class="s1">base </span><span class="s2">import </span><span class="s1">DistributionVersion</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_internal</span><span class="s3">.</span><span class="s1">req</span><span class="s3">.</span><span class="s1">req_install </span><span class="s2">import </span><span class="s1">InstallRequirement</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_internal</span><span class="s3">.</span><span class="s1">utils</span><span class="s3">.</span><span class="s1">deprecation </span><span class="s2">import </span><span class="s1">deprecated</span>
+
+<span class="s1">logger </span><span class="s3">= </span><span class="s1">logging</span><span class="s3">.</span><span class="s1">getLogger</span><span class="s3">(</span><span class="s1">__name__</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">PackageDetails</span><span class="s3">(</span><span class="s1">NamedTuple</span><span class="s3">):</span>
+    <span class="s1">version</span><span class="s3">: </span><span class="s1">DistributionVersion</span>
+    <span class="s1">dependencies</span><span class="s3">: </span><span class="s1">List</span><span class="s3">[</span><span class="s1">Requirement</span><span class="s3">]</span>
+
+
+<span class="s4"># Shorthands</span>
+<span class="s1">PackageSet </span><span class="s3">= </span><span class="s1">Dict</span><span class="s3">[</span><span class="s1">NormalizedName</span><span class="s3">, </span><span class="s1">PackageDetails</span><span class="s3">]</span>
+<span class="s1">Missing </span><span class="s3">= </span><span class="s1">Tuple</span><span class="s3">[</span><span class="s1">NormalizedName</span><span class="s3">, </span><span class="s1">Requirement</span><span class="s3">]</span>
+<span class="s1">Conflicting </span><span class="s3">= </span><span class="s1">Tuple</span><span class="s3">[</span><span class="s1">NormalizedName</span><span class="s3">, </span><span class="s1">DistributionVersion</span><span class="s3">, </span><span class="s1">Requirement</span><span class="s3">]</span>
+
+<span class="s1">MissingDict </span><span class="s3">= </span><span class="s1">Dict</span><span class="s3">[</span><span class="s1">NormalizedName</span><span class="s3">, </span><span class="s1">List</span><span class="s3">[</span><span class="s1">Missing</span><span class="s3">]]</span>
+<span class="s1">ConflictingDict </span><span class="s3">= </span><span class="s1">Dict</span><span class="s3">[</span><span class="s1">NormalizedName</span><span class="s3">, </span><span class="s1">List</span><span class="s3">[</span><span class="s1">Conflicting</span><span class="s3">]]</span>
+<span class="s1">CheckResult </span><span class="s3">= </span><span class="s1">Tuple</span><span class="s3">[</span><span class="s1">MissingDict</span><span class="s3">, </span><span class="s1">ConflictingDict</span><span class="s3">]</span>
+<span class="s1">ConflictDetails </span><span class="s3">= </span><span class="s1">Tuple</span><span class="s3">[</span><span class="s1">PackageSet</span><span class="s3">, </span><span class="s1">CheckResult</span><span class="s3">]</span>
+
+
+<span class="s2">def </span><span class="s1">create_package_set_from_installed</span><span class="s3">() </span><span class="s1">-&gt; Tuple</span><span class="s3">[</span><span class="s1">PackageSet</span><span class="s3">, </span><span class="s1">bool</span><span class="s3">]:</span>
+    <span class="s0">&quot;&quot;&quot;Converts a list of distributions into a PackageSet.&quot;&quot;&quot;</span>
+    <span class="s1">package_set </span><span class="s3">= {}</span>
+    <span class="s1">problems </span><span class="s3">= </span><span class="s2">False</span>
+    <span class="s1">env </span><span class="s3">= </span><span class="s1">get_default_environment</span><span class="s3">()</span>
+    <span class="s2">for </span><span class="s1">dist </span><span class="s2">in </span><span class="s1">env</span><span class="s3">.</span><span class="s1">iter_installed_distributions</span><span class="s3">(</span><span class="s1">local_only</span><span class="s3">=</span><span class="s2">False</span><span class="s3">, </span><span class="s1">skip</span><span class="s3">=()):</span>
+        <span class="s1">name </span><span class="s3">= </span><span class="s1">dist</span><span class="s3">.</span><span class="s1">canonical_name</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">dependencies </span><span class="s3">= </span><span class="s1">list</span><span class="s3">(</span><span class="s1">dist</span><span class="s3">.</span><span class="s1">iter_dependencies</span><span class="s3">())</span>
+            <span class="s1">package_set</span><span class="s3">[</span><span class="s1">name</span><span class="s3">] = </span><span class="s1">PackageDetails</span><span class="s3">(</span><span class="s1">dist</span><span class="s3">.</span><span class="s1">version</span><span class="s3">, </span><span class="s1">dependencies</span><span class="s3">)</span>
+        <span class="s2">except </span><span class="s3">(</span><span class="s1">OSError</span><span class="s3">, </span><span class="s1">ValueError</span><span class="s3">) </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+            <span class="s4"># Don't crash on unreadable or broken metadata.</span>
+            <span class="s1">logger</span><span class="s3">.</span><span class="s1">warning</span><span class="s3">(</span><span class="s5">&quot;Error parsing requirements for %s: %s&quot;</span><span class="s3">, </span><span class="s1">name</span><span class="s3">, </span><span class="s1">e</span><span class="s3">)</span>
+            <span class="s1">problems </span><span class="s3">= </span><span class="s2">True</span>
+    <span class="s2">return </span><span class="s1">package_set</span><span class="s3">, </span><span class="s1">problems</span>
+
+
+<span class="s2">def </span><span class="s1">check_package_set</span><span class="s3">(</span>
+    <span class="s1">package_set</span><span class="s3">: </span><span class="s1">PackageSet</span><span class="s3">, </span><span class="s1">should_ignore</span><span class="s3">: </span><span class="s1">Optional</span><span class="s3">[</span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">str</span><span class="s3">], </span><span class="s1">bool</span><span class="s3">]] = </span><span class="s2">None</span>
+<span class="s3">) </span><span class="s1">-&gt; CheckResult</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Check if a package set is consistent 
+ 
+    If should_ignore is passed, it should be a callable that takes a 
+    package name and returns a boolean. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">warn_legacy_versions_and_specifiers</span><span class="s3">(</span><span class="s1">package_set</span><span class="s3">)</span>
+
+    <span class="s1">missing </span><span class="s3">= {}</span>
+    <span class="s1">conflicting </span><span class="s3">= {}</span>
+
+    <span class="s2">for </span><span class="s1">package_name</span><span class="s3">, </span><span class="s1">package_detail </span><span class="s2">in </span><span class="s1">package_set</span><span class="s3">.</span><span class="s1">items</span><span class="s3">():</span>
+        <span class="s4"># Info about dependencies of package_name</span>
+        <span class="s1">missing_deps</span><span class="s3">: </span><span class="s1">Set</span><span class="s3">[</span><span class="s1">Missing</span><span class="s3">] = </span><span class="s1">set</span><span class="s3">()</span>
+        <span class="s1">conflicting_deps</span><span class="s3">: </span><span class="s1">Set</span><span class="s3">[</span><span class="s1">Conflicting</span><span class="s3">] = </span><span class="s1">set</span><span class="s3">()</span>
+
+        <span class="s2">if </span><span class="s1">should_ignore </span><span class="s2">and </span><span class="s1">should_ignore</span><span class="s3">(</span><span class="s1">package_name</span><span class="s3">):</span>
+            <span class="s2">continue</span>
+
+        <span class="s2">for </span><span class="s1">req </span><span class="s2">in </span><span class="s1">package_detail</span><span class="s3">.</span><span class="s1">dependencies</span><span class="s3">:</span>
+            <span class="s1">name </span><span class="s3">= </span><span class="s1">canonicalize_name</span><span class="s3">(</span><span class="s1">req</span><span class="s3">.</span><span class="s1">name</span><span class="s3">)</span>
+
+            <span class="s4"># Check if it's missing</span>
+            <span class="s2">if </span><span class="s1">name </span><span class="s2">not in </span><span class="s1">package_set</span><span class="s3">:</span>
+                <span class="s1">missed </span><span class="s3">= </span><span class="s2">True</span>
+                <span class="s2">if </span><span class="s1">req</span><span class="s3">.</span><span class="s1">marker </span><span class="s2">is not None</span><span class="s3">:</span>
+                    <span class="s1">missed </span><span class="s3">= </span><span class="s1">req</span><span class="s3">.</span><span class="s1">marker</span><span class="s3">.</span><span class="s1">evaluate</span><span class="s3">({</span><span class="s5">&quot;extra&quot;</span><span class="s3">: </span><span class="s5">&quot;&quot;</span><span class="s3">})</span>
+                <span class="s2">if </span><span class="s1">missed</span><span class="s3">:</span>
+                    <span class="s1">missing_deps</span><span class="s3">.</span><span class="s1">add</span><span class="s3">((</span><span class="s1">name</span><span class="s3">, </span><span class="s1">req</span><span class="s3">))</span>
+                <span class="s2">continue</span>
+
+            <span class="s4"># Check if there's a conflict</span>
+            <span class="s1">version </span><span class="s3">= </span><span class="s1">package_set</span><span class="s3">[</span><span class="s1">name</span><span class="s3">].</span><span class="s1">version</span>
+            <span class="s2">if not </span><span class="s1">req</span><span class="s3">.</span><span class="s1">specifier</span><span class="s3">.</span><span class="s1">contains</span><span class="s3">(</span><span class="s1">version</span><span class="s3">, </span><span class="s1">prereleases</span><span class="s3">=</span><span class="s2">True</span><span class="s3">):</span>
+                <span class="s1">conflicting_deps</span><span class="s3">.</span><span class="s1">add</span><span class="s3">((</span><span class="s1">name</span><span class="s3">, </span><span class="s1">version</span><span class="s3">, </span><span class="s1">req</span><span class="s3">))</span>
+
+        <span class="s2">if </span><span class="s1">missing_deps</span><span class="s3">:</span>
+            <span class="s1">missing</span><span class="s3">[</span><span class="s1">package_name</span><span class="s3">] = </span><span class="s1">sorted</span><span class="s3">(</span><span class="s1">missing_deps</span><span class="s3">, </span><span class="s1">key</span><span class="s3">=</span><span class="s1">str</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">conflicting_deps</span><span class="s3">:</span>
+            <span class="s1">conflicting</span><span class="s3">[</span><span class="s1">package_name</span><span class="s3">] = </span><span class="s1">sorted</span><span class="s3">(</span><span class="s1">conflicting_deps</span><span class="s3">, </span><span class="s1">key</span><span class="s3">=</span><span class="s1">str</span><span class="s3">)</span>
+
+    <span class="s2">return </span><span class="s1">missing</span><span class="s3">, </span><span class="s1">conflicting</span>
+
+
+<span class="s2">def </span><span class="s1">check_install_conflicts</span><span class="s3">(</span><span class="s1">to_install</span><span class="s3">: </span><span class="s1">List</span><span class="s3">[</span><span class="s1">InstallRequirement</span><span class="s3">]) </span><span class="s1">-&gt; ConflictDetails</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;For checking if the dependency graph would be consistent after \ 
+    installing given requirements 
+    &quot;&quot;&quot;</span>
+    <span class="s4"># Start from the current state</span>
+    <span class="s1">package_set</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">create_package_set_from_installed</span><span class="s3">()</span>
+    <span class="s4"># Install packages</span>
+    <span class="s1">would_be_installed </span><span class="s3">= </span><span class="s1">_simulate_installation_of</span><span class="s3">(</span><span class="s1">to_install</span><span class="s3">, </span><span class="s1">package_set</span><span class="s3">)</span>
+
+    <span class="s4"># Only warn about directly-dependent packages; create a whitelist of them</span>
+    <span class="s1">whitelist </span><span class="s3">= </span><span class="s1">_create_whitelist</span><span class="s3">(</span><span class="s1">would_be_installed</span><span class="s3">, </span><span class="s1">package_set</span><span class="s3">)</span>
+
+    <span class="s2">return </span><span class="s3">(</span>
+        <span class="s1">package_set</span><span class="s3">,</span>
+        <span class="s1">check_package_set</span><span class="s3">(</span>
+            <span class="s1">package_set</span><span class="s3">, </span><span class="s1">should_ignore</span><span class="s3">=</span><span class="s2">lambda </span><span class="s1">name</span><span class="s3">: </span><span class="s1">name </span><span class="s2">not in </span><span class="s1">whitelist</span>
+        <span class="s3">),</span>
+    <span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_simulate_installation_of</span><span class="s3">(</span>
+    <span class="s1">to_install</span><span class="s3">: </span><span class="s1">List</span><span class="s3">[</span><span class="s1">InstallRequirement</span><span class="s3">], </span><span class="s1">package_set</span><span class="s3">: </span><span class="s1">PackageSet</span>
+<span class="s3">) </span><span class="s1">-&gt; Set</span><span class="s3">[</span><span class="s1">NormalizedName</span><span class="s3">]:</span>
+    <span class="s0">&quot;&quot;&quot;Computes the version of packages after installing to_install.&quot;&quot;&quot;</span>
+    <span class="s4"># Keep track of packages that were installed</span>
+    <span class="s1">installed </span><span class="s3">= </span><span class="s1">set</span><span class="s3">()</span>
+
+    <span class="s4"># Modify it as installing requirement_set would (assuming no errors)</span>
+    <span class="s2">for </span><span class="s1">inst_req </span><span class="s2">in </span><span class="s1">to_install</span><span class="s3">:</span>
+        <span class="s1">abstract_dist </span><span class="s3">= </span><span class="s1">make_distribution_for_install_requirement</span><span class="s3">(</span><span class="s1">inst_req</span><span class="s3">)</span>
+        <span class="s1">dist </span><span class="s3">= </span><span class="s1">abstract_dist</span><span class="s3">.</span><span class="s1">get_metadata_distribution</span><span class="s3">()</span>
+        <span class="s1">name </span><span class="s3">= </span><span class="s1">dist</span><span class="s3">.</span><span class="s1">canonical_name</span>
+        <span class="s1">package_set</span><span class="s3">[</span><span class="s1">name</span><span class="s3">] = </span><span class="s1">PackageDetails</span><span class="s3">(</span><span class="s1">dist</span><span class="s3">.</span><span class="s1">version</span><span class="s3">, </span><span class="s1">list</span><span class="s3">(</span><span class="s1">dist</span><span class="s3">.</span><span class="s1">iter_dependencies</span><span class="s3">()))</span>
+
+        <span class="s1">installed</span><span class="s3">.</span><span class="s1">add</span><span class="s3">(</span><span class="s1">name</span><span class="s3">)</span>
+
+    <span class="s2">return </span><span class="s1">installed</span>
+
+
+<span class="s2">def </span><span class="s1">_create_whitelist</span><span class="s3">(</span>
+    <span class="s1">would_be_installed</span><span class="s3">: </span><span class="s1">Set</span><span class="s3">[</span><span class="s1">NormalizedName</span><span class="s3">], </span><span class="s1">package_set</span><span class="s3">: </span><span class="s1">PackageSet</span>
+<span class="s3">) </span><span class="s1">-&gt; Set</span><span class="s3">[</span><span class="s1">NormalizedName</span><span class="s3">]:</span>
+    <span class="s1">packages_affected </span><span class="s3">= </span><span class="s1">set</span><span class="s3">(</span><span class="s1">would_be_installed</span><span class="s3">)</span>
+
+    <span class="s2">for </span><span class="s1">package_name </span><span class="s2">in </span><span class="s1">package_set</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">package_name </span><span class="s2">in </span><span class="s1">packages_affected</span><span class="s3">:</span>
+            <span class="s2">continue</span>
+
+        <span class="s2">for </span><span class="s1">req </span><span class="s2">in </span><span class="s1">package_set</span><span class="s3">[</span><span class="s1">package_name</span><span class="s3">].</span><span class="s1">dependencies</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">canonicalize_name</span><span class="s3">(</span><span class="s1">req</span><span class="s3">.</span><span class="s1">name</span><span class="s3">) </span><span class="s2">in </span><span class="s1">packages_affected</span><span class="s3">:</span>
+                <span class="s1">packages_affected</span><span class="s3">.</span><span class="s1">add</span><span class="s3">(</span><span class="s1">package_name</span><span class="s3">)</span>
+                <span class="s2">break</span>
+
+    <span class="s2">return </span><span class="s1">packages_affected</span>
+
+
+<span class="s2">def </span><span class="s1">warn_legacy_versions_and_specifiers</span><span class="s3">(</span><span class="s1">package_set</span><span class="s3">: </span><span class="s1">PackageSet</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s2">for </span><span class="s1">project_name</span><span class="s3">, </span><span class="s1">package_details </span><span class="s2">in </span><span class="s1">package_set</span><span class="s3">.</span><span class="s1">items</span><span class="s3">():</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">package_details</span><span class="s3">.</span><span class="s1">version</span><span class="s3">, </span><span class="s1">LegacyVersion</span><span class="s3">):</span>
+            <span class="s1">deprecated</span><span class="s3">(</span>
+                <span class="s1">reason</span><span class="s3">=(</span>
+                    <span class="s5">f&quot;</span><span class="s2">{</span><span class="s1">project_name</span><span class="s2">} {</span><span class="s1">package_details</span><span class="s3">.</span><span class="s1">version</span><span class="s2">} </span><span class="s5">&quot;</span>
+                    <span class="s5">f&quot;has a non-standard version number.&quot;</span>
+                <span class="s3">),</span>
+                <span class="s1">replacement</span><span class="s3">=(</span>
+                    <span class="s5">f&quot;to upgrade to a newer version of </span><span class="s2">{</span><span class="s1">project_name</span><span class="s2">} </span><span class="s5">&quot;</span>
+                    <span class="s5">f&quot;or contact the author to suggest that they &quot;</span>
+                    <span class="s5">f&quot;release a version with a conforming version number&quot;</span>
+                <span class="s3">),</span>
+                <span class="s1">issue</span><span class="s3">=</span><span class="s6">12063</span><span class="s3">,</span>
+                <span class="s1">gone_in</span><span class="s3">=</span><span class="s5">&quot;23.3&quot;</span><span class="s3">,</span>
+            <span class="s3">)</span>
+        <span class="s2">for </span><span class="s1">dep </span><span class="s2">in </span><span class="s1">package_details</span><span class="s3">.</span><span class="s1">dependencies</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">any</span><span class="s3">(</span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">spec</span><span class="s3">, </span><span class="s1">LegacySpecifier</span><span class="s3">) </span><span class="s2">for </span><span class="s1">spec </span><span class="s2">in </span><span class="s1">dep</span><span class="s3">.</span><span class="s1">specifier</span><span class="s3">):</span>
+                <span class="s1">deprecated</span><span class="s3">(</span>
+                    <span class="s1">reason</span><span class="s3">=(</span>
+                        <span class="s5">f&quot;</span><span class="s2">{</span><span class="s1">project_name</span><span class="s2">} {</span><span class="s1">package_details</span><span class="s3">.</span><span class="s1">version</span><span class="s2">} </span><span class="s5">&quot;</span>
+                        <span class="s5">f&quot;has a non-standard dependency specifier </span><span class="s2">{</span><span class="s1">dep</span><span class="s2">}</span><span class="s5">.&quot;</span>
+                    <span class="s3">),</span>
+                    <span class="s1">replacement</span><span class="s3">=(</span>
+                        <span class="s5">f&quot;to upgrade to a newer version of </span><span class="s2">{</span><span class="s1">project_name</span><span class="s2">} </span><span class="s5">&quot;</span>
+                        <span class="s5">f&quot;or contact the author to suggest that they &quot;</span>
+                        <span class="s5">f&quot;release a version with a conforming dependency specifiers&quot;</span>
+                    <span class="s3">),</span>
+                    <span class="s1">issue</span><span class="s3">=</span><span class="s6">12063</span><span class="s3">,</span>
+                    <span class="s1">gone_in</span><span class="s3">=</span><span class="s5">&quot;23.3&quot;</span><span class="s3">,</span>
+                <span class="s3">)</span>
+</pre>
+</body>
+</html>

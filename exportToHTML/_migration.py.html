@@ -1,0 +1,330 @@
+<html>
+<head>
+<title>_migration.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_migration.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Callable</span>
+
+<span class="s0">from </span><span class="s2">.</span><span class="s1">version </span><span class="s0">import </span><span class="s1">version_short</span>
+
+<span class="s1">MOVED_IN_V2 </span><span class="s2">= {</span>
+    <span class="s3">'pydantic.utils:version_info'</span><span class="s2">: </span><span class="s3">'pydantic.version:version_info'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.error_wrappers:ValidationError'</span><span class="s2">: </span><span class="s3">'pydantic:ValidationError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.utils:to_camel'</span><span class="s2">: </span><span class="s3">'pydantic.alias_generators:to_pascal'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.utils:to_lower_camel'</span><span class="s2">: </span><span class="s3">'pydantic.alias_generators:to_camel'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:PyObject'</span><span class="s2">: </span><span class="s3">'pydantic.types:ImportString'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.types:PyObject'</span><span class="s2">: </span><span class="s3">'pydantic.types:ImportString'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.generics:GenericModel'</span><span class="s2">: </span><span class="s3">'pydantic.BaseModel'</span><span class="s2">,</span>
+<span class="s2">}</span>
+
+<span class="s1">DEPRECATED_MOVED_IN_V2 </span><span class="s2">= {</span>
+    <span class="s3">'pydantic.tools:schema_of'</span><span class="s2">: </span><span class="s3">'pydantic.deprecated.tools:schema_of'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.tools:parse_obj_as'</span><span class="s2">: </span><span class="s3">'pydantic.deprecated.tools:parse_obj_as'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.tools:schema_json_of'</span><span class="s2">: </span><span class="s3">'pydantic.deprecated.tools:schema_json_of'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.json:pydantic_encoder'</span><span class="s2">: </span><span class="s3">'pydantic.deprecated.json:pydantic_encoder'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:validate_arguments'</span><span class="s2">: </span><span class="s3">'pydantic.deprecated.decorator:validate_arguments'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.json:custom_pydantic_encoder'</span><span class="s2">: </span><span class="s3">'pydantic.deprecated.json:custom_pydantic_encoder'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.json:timedelta_isoformat'</span><span class="s2">: </span><span class="s3">'pydantic.deprecated.json:timedelta_isoformat'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.decorator:validate_arguments'</span><span class="s2">: </span><span class="s3">'pydantic.deprecated.decorator:validate_arguments'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.class_validators:validator'</span><span class="s2">: </span><span class="s3">'pydantic.deprecated.class_validators:validator'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.class_validators:root_validator'</span><span class="s2">: </span><span class="s3">'pydantic.deprecated.class_validators:root_validator'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.config:BaseConfig'</span><span class="s2">: </span><span class="s3">'pydantic.deprecated.config:BaseConfig'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.config:Extra'</span><span class="s2">: </span><span class="s3">'pydantic.deprecated.config:Extra'</span><span class="s2">,</span>
+<span class="s2">}</span>
+
+<span class="s1">REDIRECT_TO_V1 </span><span class="s2">= {</span>
+    <span class="s3">f'pydantic.utils:</span><span class="s0">{</span><span class="s1">obj</span><span class="s0">}</span><span class="s3">'</span><span class="s2">: </span><span class="s3">f'pydantic.v1.utils:</span><span class="s0">{</span><span class="s1">obj</span><span class="s0">}</span><span class="s3">'</span>
+    <span class="s0">for </span><span class="s1">obj </span><span class="s0">in </span><span class="s2">(</span>
+        <span class="s3">'deep_update'</span><span class="s2">,</span>
+        <span class="s3">'GetterDict'</span><span class="s2">,</span>
+        <span class="s3">'lenient_issubclass'</span><span class="s2">,</span>
+        <span class="s3">'lenient_isinstance'</span><span class="s2">,</span>
+        <span class="s3">'is_valid_field'</span><span class="s2">,</span>
+        <span class="s3">'update_not_none'</span><span class="s2">,</span>
+        <span class="s3">'import_string'</span><span class="s2">,</span>
+        <span class="s3">'Representation'</span><span class="s2">,</span>
+        <span class="s3">'ROOT_KEY'</span><span class="s2">,</span>
+        <span class="s3">'smart_deepcopy'</span><span class="s2">,</span>
+        <span class="s3">'sequence_like'</span><span class="s2">,</span>
+    <span class="s2">)</span>
+<span class="s2">}</span>
+
+
+<span class="s1">REMOVED_IN_V2 </span><span class="s2">= {</span>
+    <span class="s3">'pydantic:ConstrainedBytes'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:ConstrainedDate'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:ConstrainedDecimal'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:ConstrainedFloat'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:ConstrainedFrozenSet'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:ConstrainedInt'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:ConstrainedList'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:ConstrainedSet'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:ConstrainedStr'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:JsonWrapper'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:NoneBytes'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:NoneStr'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:NoneStrBytes'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:Protocol'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:Required'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:StrBytes'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:compiled'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.config:get_config'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.config:inherit_config'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.config:prepare_config'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:create_model_from_namedtuple'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:create_model_from_typeddict'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.dataclasses:create_pydantic_model_from_dataclass'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.dataclasses:make_dataclass_validator'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.dataclasses:set_validation'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.datetime_parse:parse_date'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.datetime_parse:parse_time'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.datetime_parse:parse_datetime'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.datetime_parse:parse_duration'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.error_wrappers:ErrorWrapper'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:AnyStrMaxLengthError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:AnyStrMinLengthError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:ArbitraryTypeError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:BoolError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:BytesError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:CallableError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:ClassError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:ColorError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:ConfigError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:DataclassTypeError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:DateError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:DateNotInTheFutureError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:DateNotInThePastError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:DateTimeError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:DecimalError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:DecimalIsNotFiniteError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:DecimalMaxDigitsError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:DecimalMaxPlacesError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:DecimalWholeDigitsError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:DictError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:DurationError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:EmailError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:EnumError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:EnumMemberError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:ExtraError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:FloatError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:FrozenSetError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:FrozenSetMaxLengthError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:FrozenSetMinLengthError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:HashableError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:IPv4AddressError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:IPv4InterfaceError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:IPv4NetworkError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:IPv6AddressError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:IPv6InterfaceError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:IPv6NetworkError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:IPvAnyAddressError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:IPvAnyInterfaceError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:IPvAnyNetworkError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:IntEnumError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:IntegerError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:InvalidByteSize'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:InvalidByteSizeUnit'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:InvalidDiscriminator'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:InvalidLengthForBrand'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:JsonError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:JsonTypeError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:ListError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:ListMaxLengthError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:ListMinLengthError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:ListUniqueItemsError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:LuhnValidationError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:MissingDiscriminator'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:MissingError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:NoneIsAllowedError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:NoneIsNotAllowedError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:NotDigitError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:NotNoneError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:NumberNotGeError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:NumberNotGtError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:NumberNotLeError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:NumberNotLtError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:NumberNotMultipleError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:PathError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:PathNotADirectoryError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:PathNotAFileError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:PathNotExistsError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:PatternError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:PyObjectError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:PydanticTypeError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:PydanticValueError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:SequenceError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:SetError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:SetMaxLengthError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:SetMinLengthError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:StrError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:StrRegexError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:StrictBoolError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:SubclassError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:TimeError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:TupleError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:TupleLengthError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:UUIDError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:UUIDVersionError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:UrlError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:UrlExtraError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:UrlHostError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:UrlHostTldError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:UrlPortError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:UrlSchemeError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:UrlSchemePermittedError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:UrlUserInfoError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.errors:WrongConstantError'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.main:validate_model'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.networks:stricturl'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:parse_file_as'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:parse_raw_as'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:stricturl'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.tools:parse_file_as'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.tools:parse_raw_as'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.types:ConstrainedBytes'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.types:ConstrainedDate'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.types:ConstrainedDecimal'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.types:ConstrainedFloat'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.types:ConstrainedFrozenSet'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.types:ConstrainedInt'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.types:ConstrainedList'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.types:ConstrainedSet'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.types:ConstrainedStr'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.types:JsonWrapper'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.types:NoneBytes'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.types:NoneStr'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.types:NoneStrBytes'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.types:StrBytes'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:evaluate_forwardref'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:AbstractSetIntStr'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:AnyCallable'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:AnyClassMethod'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:CallableGenerator'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:DictAny'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:DictIntStrAny'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:DictStrAny'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:IntStr'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:ListStr'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:MappingIntStrAny'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:NoArgAnyCallable'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:NoneType'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:ReprArgs'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:SetStr'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:StrPath'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:TupleGenerator'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:WithArgsTypes'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:all_literal_values'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:display_as_type'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:get_all_type_hints'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:get_args'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:get_origin'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:get_sub_types'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:is_callable_type'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:is_classvar'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:is_finalvar'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:is_literal_type'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:is_namedtuple'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:is_new_type'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:is_none_type'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:is_typeddict'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:is_typeddict_special'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:is_union'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:new_type_supertype'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:resolve_annotations'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:typing_base'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:update_field_forward_refs'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.typing:update_model_forward_refs'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.utils:ClassAttribute'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.utils:DUNDER_ATTRIBUTES'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.utils:PyObjectStr'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.utils:ValueItems'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.utils:almost_equal_floats'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.utils:get_discriminator_alias_and_values'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.utils:get_model'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.utils:get_unique_discriminator_alias'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.utils:in_ipython'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.utils:is_valid_identifier'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.utils:path_type'</span><span class="s2">,</span>
+    <span class="s3">'pydantic.utils:validate_field_name'</span><span class="s2">,</span>
+    <span class="s3">'pydantic:validate_model'</span><span class="s2">,</span>
+<span class="s2">}</span>
+
+
+<span class="s0">def </span><span class="s1">getattr_migration</span><span class="s2">(</span><span class="s1">module</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; Callable</span><span class="s2">[[</span><span class="s1">str</span><span class="s2">], </span><span class="s1">Any</span><span class="s2">]:</span>
+    <span class="s4">&quot;&quot;&quot;Implement PEP 562 for objects that were either moved or removed on the migration 
+    to V2. 
+ 
+    Args: 
+        module: The module name. 
+ 
+    Returns: 
+        A callable that will raise an error if the object is not found. 
+    &quot;&quot;&quot;</span>
+    <span class="s5"># This avoids circular import with errors.py.</span>
+    <span class="s0">from </span><span class="s2">.</span><span class="s1">errors </span><span class="s0">import </span><span class="s1">PydanticImportError</span>
+
+    <span class="s0">def </span><span class="s1">wrapper</span><span class="s2">(</span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; object</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Raise an error if the object is not found, or warn if it was moved. 
+ 
+        In case it was moved, it still returns the object. 
+ 
+        Args: 
+            name: The object name. 
+ 
+        Returns: 
+            The object. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">name </span><span class="s2">== </span><span class="s3">'__path__'</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">AttributeError</span><span class="s2">(</span><span class="s3">f'module </span><span class="s0">{</span><span class="s1">module</span><span class="s0">!r} </span><span class="s3">has no attribute </span><span class="s0">{</span><span class="s1">name</span><span class="s0">!r}</span><span class="s3">'</span><span class="s2">)</span>
+
+        <span class="s0">import </span><span class="s1">warnings</span>
+
+        <span class="s0">from </span><span class="s2">.</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">_validators </span><span class="s0">import </span><span class="s1">import_string</span>
+
+        <span class="s1">import_path </span><span class="s2">= </span><span class="s3">f'</span><span class="s0">{</span><span class="s1">module</span><span class="s0">}</span><span class="s3">:</span><span class="s0">{</span><span class="s1">name</span><span class="s0">}</span><span class="s3">'</span>
+        <span class="s0">if </span><span class="s1">import_path </span><span class="s0">in </span><span class="s1">MOVED_IN_V2</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">():</span>
+            <span class="s1">new_location </span><span class="s2">= </span><span class="s1">MOVED_IN_V2</span><span class="s2">[</span><span class="s1">import_path</span><span class="s2">]</span>
+            <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span><span class="s3">f'`</span><span class="s0">{</span><span class="s1">import_path</span><span class="s0">}</span><span class="s3">` has been moved to `</span><span class="s0">{</span><span class="s1">new_location</span><span class="s0">}</span><span class="s3">`.'</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">import_string</span><span class="s2">(</span><span class="s1">MOVED_IN_V2</span><span class="s2">[</span><span class="s1">import_path</span><span class="s2">])</span>
+        <span class="s0">if </span><span class="s1">import_path </span><span class="s0">in </span><span class="s1">DEPRECATED_MOVED_IN_V2</span><span class="s2">:</span>
+            <span class="s5"># skip the warning here because a deprecation warning will be raised elsewhere</span>
+            <span class="s0">return </span><span class="s1">import_string</span><span class="s2">(</span><span class="s1">DEPRECATED_MOVED_IN_V2</span><span class="s2">[</span><span class="s1">import_path</span><span class="s2">])</span>
+        <span class="s0">if </span><span class="s1">import_path </span><span class="s0">in </span><span class="s1">REDIRECT_TO_V1</span><span class="s2">:</span>
+            <span class="s1">new_location </span><span class="s2">= </span><span class="s1">REDIRECT_TO_V1</span><span class="s2">[</span><span class="s1">import_path</span><span class="s2">]</span>
+            <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+                <span class="s3">f'`</span><span class="s0">{</span><span class="s1">import_path</span><span class="s0">}</span><span class="s3">` has been removed. We are importing from `</span><span class="s0">{</span><span class="s1">new_location</span><span class="s0">}</span><span class="s3">` instead.'</span>
+                <span class="s3">'See the migration guide for more details: https://docs.pydantic.dev/latest/migration/'</span>
+            <span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">import_string</span><span class="s2">(</span><span class="s1">REDIRECT_TO_V1</span><span class="s2">[</span><span class="s1">import_path</span><span class="s2">])</span>
+        <span class="s0">if </span><span class="s1">import_path </span><span class="s2">== </span><span class="s3">'pydantic:BaseSettings'</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">PydanticImportError</span><span class="s2">(</span>
+                <span class="s3">'`BaseSettings` has been moved to the `pydantic-settings` package. '</span>
+                <span class="s3">f'See https://docs.pydantic.dev/</span><span class="s0">{</span><span class="s1">version_short</span><span class="s2">()</span><span class="s0">}</span><span class="s3">/migration/#basesettings-has-moved-to-pydantic-settings '</span>
+                <span class="s3">'for more details.'</span>
+            <span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">import_path </span><span class="s0">in </span><span class="s1">REMOVED_IN_V2</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">PydanticImportError</span><span class="s2">(</span><span class="s3">f'`</span><span class="s0">{</span><span class="s1">import_path</span><span class="s0">}</span><span class="s3">` has been removed in V2.'</span><span class="s2">)</span>
+        <span class="s1">globals</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] = </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">modules</span><span class="s2">[</span><span class="s1">module</span><span class="s2">].</span><span class="s1">__dict__</span>
+        <span class="s0">if </span><span class="s1">name </span><span class="s0">in </span><span class="s1">globals</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">globals</span><span class="s2">[</span><span class="s1">name</span><span class="s2">]</span>
+        <span class="s0">raise </span><span class="s1">AttributeError</span><span class="s2">(</span><span class="s3">f'module </span><span class="s0">{</span><span class="s1">module</span><span class="s0">!r} </span><span class="s3">has no attribute </span><span class="s0">{</span><span class="s1">name</span><span class="s0">!r}</span><span class="s3">'</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">wrapper</span>
+</pre>
+</body>
+</html>

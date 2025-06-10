@@ -1,0 +1,555 @@
+<html>
+<head>
+<title>_validators.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #7a7e85;}
+.s5 { color: #6aab73;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_validators.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;Validator functions for standard library types. 
+ 
+Import of this module is deferred since it contains imports of many standard library modules. 
+&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations </span><span class="s2">as </span><span class="s1">_annotations</span>
+
+<span class="s2">import </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">abc</span>
+<span class="s2">import </span><span class="s1">math</span>
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">import </span><span class="s1">typing</span>
+<span class="s2">from </span><span class="s1">decimal </span><span class="s2">import </span><span class="s1">Decimal</span>
+<span class="s2">from </span><span class="s1">fractions </span><span class="s2">import </span><span class="s1">Fraction</span>
+<span class="s2">from </span><span class="s1">ipaddress </span><span class="s2">import </span><span class="s1">IPv4Address</span><span class="s3">, </span><span class="s1">IPv4Interface</span><span class="s3">, </span><span class="s1">IPv4Network</span><span class="s3">, </span><span class="s1">IPv6Address</span><span class="s3">, </span><span class="s1">IPv6Interface</span><span class="s3">, </span><span class="s1">IPv6Network</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Callable</span><span class="s3">, </span><span class="s1">Union</span><span class="s3">, </span><span class="s1">cast</span><span class="s3">, </span><span class="s1">get_origin</span>
+<span class="s2">from </span><span class="s1">zoneinfo </span><span class="s2">import </span><span class="s1">ZoneInfo</span><span class="s3">, </span><span class="s1">ZoneInfoNotFoundError</span>
+
+<span class="s2">import </span><span class="s1">typing_extensions</span>
+<span class="s2">from </span><span class="s1">pydantic_core </span><span class="s2">import </span><span class="s1">PydanticCustomError</span><span class="s3">, </span><span class="s1">core_schema</span>
+<span class="s2">from </span><span class="s1">pydantic_core</span><span class="s3">.</span><span class="s1">_pydantic_core </span><span class="s2">import </span><span class="s1">PydanticKnownError</span>
+<span class="s2">from </span><span class="s1">typing_inspection </span><span class="s2">import </span><span class="s1">typing_objects</span>
+
+<span class="s2">from </span><span class="s1">pydantic</span><span class="s3">.</span><span class="s1">_internal</span><span class="s3">.</span><span class="s1">_import_utils </span><span class="s2">import </span><span class="s1">import_cached_field_info</span>
+<span class="s2">from </span><span class="s1">pydantic</span><span class="s3">.</span><span class="s1">errors </span><span class="s2">import </span><span class="s1">PydanticSchemaGenerationError</span>
+
+
+<span class="s2">def </span><span class="s1">sequence_validator</span><span class="s3">(</span>
+    <span class="s1">input_value</span><span class="s3">: </span><span class="s1">typing</span><span class="s3">.</span><span class="s1">Sequence</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">],</span>
+    <span class="s3">/,</span>
+    <span class="s1">validator</span><span class="s3">: </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">ValidatorFunctionWrapHandler</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; typing</span><span class="s3">.</span><span class="s1">Sequence</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]:</span>
+    <span class="s0">&quot;&quot;&quot;Validator for `Sequence` types, isinstance(v, Sequence) has already been called.&quot;&quot;&quot;</span>
+    <span class="s1">value_type </span><span class="s3">= </span><span class="s1">type</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">)</span>
+
+    <span class="s4"># We don't accept any plain string as a sequence</span>
+    <span class="s4"># Relevant issue: https://github.com/pydantic/pydantic/issues/5595</span>
+    <span class="s2">if </span><span class="s1">issubclass</span><span class="s3">(</span><span class="s1">value_type</span><span class="s3">, (</span><span class="s1">str</span><span class="s3">, </span><span class="s1">bytes</span><span class="s3">)):</span>
+        <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span>
+            <span class="s5">'sequence_str'</span><span class="s3">,</span>
+            <span class="s5">&quot;'{type_name}' instances are not allowed as a Sequence value&quot;</span><span class="s3">,</span>
+            <span class="s3">{</span><span class="s5">'type_name'</span><span class="s3">: </span><span class="s1">value_type</span><span class="s3">.</span><span class="s1">__name__</span><span class="s3">},</span>
+        <span class="s3">)</span>
+
+    <span class="s4"># TODO: refactor sequence validation to validate with either a list or a tuple</span>
+    <span class="s4"># schema, depending on the type of the value.</span>
+    <span class="s4"># Additionally, we should be able to remove one of either this validator or the</span>
+    <span class="s4"># SequenceValidator in _std_types_schema.py (preferably this one, while porting over some logic).</span>
+    <span class="s4"># Effectively, a refactor for sequence validation is needed.</span>
+    <span class="s2">if </span><span class="s1">value_type </span><span class="s2">is </span><span class="s1">tuple</span><span class="s3">:</span>
+        <span class="s1">input_value </span><span class="s3">= </span><span class="s1">list</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">)</span>
+
+    <span class="s1">v_list </span><span class="s3">= </span><span class="s1">validator</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">)</span>
+
+    <span class="s4"># the rest of the logic is just re-creating the original type from `v_list`</span>
+    <span class="s2">if </span><span class="s1">value_type </span><span class="s2">is </span><span class="s1">list</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">v_list</span>
+    <span class="s2">elif </span><span class="s1">issubclass</span><span class="s3">(</span><span class="s1">value_type</span><span class="s3">, </span><span class="s1">range</span><span class="s3">):</span>
+        <span class="s4"># return the list as we probably can't re-create the range</span>
+        <span class="s2">return </span><span class="s1">v_list</span>
+    <span class="s2">elif </span><span class="s1">value_type </span><span class="s2">is </span><span class="s1">tuple</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">tuple</span><span class="s3">(</span><span class="s1">v_list</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s4"># best guess at how to re-create the original type, more custom construction logic might be required</span>
+        <span class="s2">return </span><span class="s1">value_type</span><span class="s3">(</span><span class="s1">v_list</span><span class="s3">)  </span><span class="s4"># type: ignore[call-arg]</span>
+
+
+<span class="s2">def </span><span class="s1">import_string</span><span class="s3">(</span><span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">value</span><span class="s3">, </span><span class="s1">str</span><span class="s3">):</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">_import_string_logic</span><span class="s3">(</span><span class="s1">value</span><span class="s3">)</span>
+        <span class="s2">except </span><span class="s1">ImportError </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span><span class="s5">'import_error'</span><span class="s3">, </span><span class="s5">'Invalid python path: {error}'</span><span class="s3">, {</span><span class="s5">'error'</span><span class="s3">: </span><span class="s1">str</span><span class="s3">(</span><span class="s1">e</span><span class="s3">)}) </span><span class="s2">from </span><span class="s1">e</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s4"># otherwise we just return the value and let the next validator do the rest of the work</span>
+        <span class="s2">return </span><span class="s1">value</span>
+
+
+<span class="s2">def </span><span class="s1">_import_string_logic</span><span class="s3">(</span><span class="s1">dotted_path</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Inspired by uvicorn — dotted paths should include a colon before the final item if that item is not a module. 
+    (This is necessary to distinguish between a submodule and an attribute when there is a conflict.). 
+ 
+    If the dotted path does not include a colon and the final item is not a valid module, importing as an attribute 
+    rather than a submodule will be attempted automatically. 
+ 
+    So, for example, the following values of `dotted_path` result in the following returned values: 
+    * 'collections': &lt;module 'collections'&gt; 
+    * 'collections.abc': &lt;module 'collections.abc'&gt; 
+    * 'collections.abc:Mapping': &lt;class 'collections.abc.Mapping'&gt; 
+    * `collections.abc.Mapping`: &lt;class 'collections.abc.Mapping'&gt; (though this is a bit slower than the previous line) 
+ 
+    An error will be raised under any of the following scenarios: 
+    * `dotted_path` contains more than one colon (e.g., 'collections:abc:Mapping') 
+    * the substring of `dotted_path` before the colon is not a valid module in the environment (e.g., '123:Mapping') 
+    * the substring of `dotted_path` after the colon is not an attribute of the module (e.g., 'collections:abc123') 
+    &quot;&quot;&quot;</span>
+    <span class="s2">from </span><span class="s1">importlib </span><span class="s2">import </span><span class="s1">import_module</span>
+
+    <span class="s1">components </span><span class="s3">= </span><span class="s1">dotted_path</span><span class="s3">.</span><span class="s1">strip</span><span class="s3">().</span><span class="s1">split</span><span class="s3">(</span><span class="s5">':'</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">components</span><span class="s3">) &gt; </span><span class="s6">2</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">ImportError</span><span class="s3">(</span><span class="s5">f&quot;Import strings should have at most one ':'; received </span><span class="s2">{</span><span class="s1">dotted_path</span><span class="s2">!r}</span><span class="s5">&quot;</span><span class="s3">)</span>
+
+    <span class="s1">module_path </span><span class="s3">= </span><span class="s1">components</span><span class="s3">[</span><span class="s6">0</span><span class="s3">]</span>
+    <span class="s2">if not </span><span class="s1">module_path</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">ImportError</span><span class="s3">(</span><span class="s5">f'Import strings should have a nonempty module name; received </span><span class="s2">{</span><span class="s1">dotted_path</span><span class="s2">!r}</span><span class="s5">'</span><span class="s3">)</span>
+
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">module </span><span class="s3">= </span><span class="s1">import_module</span><span class="s3">(</span><span class="s1">module_path</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s1">ModuleNotFoundError </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s5">'.' </span><span class="s2">in </span><span class="s1">module_path</span><span class="s3">:</span>
+            <span class="s4"># Check if it would be valid if the final item was separated from its module with a `:`</span>
+            <span class="s1">maybe_module_path</span><span class="s3">, </span><span class="s1">maybe_attribute </span><span class="s3">= </span><span class="s1">dotted_path</span><span class="s3">.</span><span class="s1">strip</span><span class="s3">().</span><span class="s1">rsplit</span><span class="s3">(</span><span class="s5">'.'</span><span class="s3">, </span><span class="s6">1</span><span class="s3">)</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s2">return </span><span class="s1">_import_string_logic</span><span class="s3">(</span><span class="s5">f'</span><span class="s2">{</span><span class="s1">maybe_module_path</span><span class="s2">}</span><span class="s5">:</span><span class="s2">{</span><span class="s1">maybe_attribute</span><span class="s2">}</span><span class="s5">'</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">ImportError</span><span class="s3">:</span>
+                <span class="s2">pass</span>
+            <span class="s2">raise </span><span class="s1">ImportError</span><span class="s3">(</span><span class="s5">f'No module named </span><span class="s2">{</span><span class="s1">module_path</span><span class="s2">!r}</span><span class="s5">'</span><span class="s3">) </span><span class="s2">from </span><span class="s1">e</span>
+        <span class="s2">raise </span><span class="s1">e</span>
+
+    <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">components</span><span class="s3">) &gt; </span><span class="s6">1</span><span class="s3">:</span>
+        <span class="s1">attribute </span><span class="s3">= </span><span class="s1">components</span><span class="s3">[</span><span class="s6">1</span><span class="s3">]</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">module</span><span class="s3">, </span><span class="s1">attribute</span><span class="s3">)</span>
+        <span class="s2">except </span><span class="s1">AttributeError </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">ImportError</span><span class="s3">(</span><span class="s5">f'cannot import name </span><span class="s2">{</span><span class="s1">attribute</span><span class="s2">!r} </span><span class="s5">from </span><span class="s2">{</span><span class="s1">module_path</span><span class="s2">!r}</span><span class="s5">'</span><span class="s3">) </span><span class="s2">from </span><span class="s1">e</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">module</span>
+
+
+<span class="s2">def </span><span class="s1">pattern_either_validator</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, /) </span><span class="s1">-&gt; typing</span><span class="s3">.</span><span class="s1">Pattern</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]:</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">, </span><span class="s1">typing</span><span class="s3">.</span><span class="s1">Pattern</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">input_value</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">, (</span><span class="s1">str</span><span class="s3">, </span><span class="s1">bytes</span><span class="s3">)):</span>
+        <span class="s4"># todo strict mode</span>
+        <span class="s2">return </span><span class="s1">compile_pattern</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">)  </span><span class="s4"># type: ignore</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span><span class="s5">'pattern_type'</span><span class="s3">, </span><span class="s5">'Input should be a valid pattern'</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">pattern_str_validator</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, /) </span><span class="s1">-&gt; typing</span><span class="s3">.</span><span class="s1">Pattern</span><span class="s3">[</span><span class="s1">str</span><span class="s3">]:</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">, </span><span class="s1">typing</span><span class="s3">.</span><span class="s1">Pattern</span><span class="s3">):</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">.</span><span class="s1">pattern</span><span class="s3">, </span><span class="s1">str</span><span class="s3">):</span>
+            <span class="s2">return </span><span class="s1">input_value</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span><span class="s5">'pattern_str_type'</span><span class="s3">, </span><span class="s5">'Input should be a string pattern'</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">, </span><span class="s1">str</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">compile_pattern</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">, </span><span class="s1">bytes</span><span class="s3">):</span>
+        <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span><span class="s5">'pattern_str_type'</span><span class="s3">, </span><span class="s5">'Input should be a string pattern'</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span><span class="s5">'pattern_type'</span><span class="s3">, </span><span class="s5">'Input should be a valid pattern'</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">pattern_bytes_validator</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, /) </span><span class="s1">-&gt; typing</span><span class="s3">.</span><span class="s1">Pattern</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">]:</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">, </span><span class="s1">typing</span><span class="s3">.</span><span class="s1">Pattern</span><span class="s3">):</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">.</span><span class="s1">pattern</span><span class="s3">, </span><span class="s1">bytes</span><span class="s3">):</span>
+            <span class="s2">return </span><span class="s1">input_value</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span><span class="s5">'pattern_bytes_type'</span><span class="s3">, </span><span class="s5">'Input should be a bytes pattern'</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">, </span><span class="s1">bytes</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">compile_pattern</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">, </span><span class="s1">str</span><span class="s3">):</span>
+        <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span><span class="s5">'pattern_bytes_type'</span><span class="s3">, </span><span class="s5">'Input should be a bytes pattern'</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span><span class="s5">'pattern_type'</span><span class="s3">, </span><span class="s5">'Input should be a valid pattern'</span><span class="s3">)</span>
+
+
+<span class="s1">PatternType </span><span class="s3">= </span><span class="s1">typing</span><span class="s3">.</span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'PatternType'</span><span class="s3">, </span><span class="s1">str</span><span class="s3">, </span><span class="s1">bytes</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">compile_pattern</span><span class="s3">(</span><span class="s1">pattern</span><span class="s3">: </span><span class="s1">PatternType</span><span class="s3">) </span><span class="s1">-&gt; typing</span><span class="s3">.</span><span class="s1">Pattern</span><span class="s3">[</span><span class="s1">PatternType</span><span class="s3">]:</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">re</span><span class="s3">.</span><span class="s1">compile</span><span class="s3">(</span><span class="s1">pattern</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s1">re</span><span class="s3">.</span><span class="s1">error</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span><span class="s5">'pattern_regex'</span><span class="s3">, </span><span class="s5">'Input should be a valid regular expression'</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">ip_v4_address_validator</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, /) </span><span class="s1">-&gt; IPv4Address</span><span class="s3">:</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">, </span><span class="s1">IPv4Address</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">input_value</span>
+
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">IPv4Address</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span><span class="s5">'ip_v4_address'</span><span class="s3">, </span><span class="s5">'Input is not a valid IPv4 address'</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">ip_v6_address_validator</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, /) </span><span class="s1">-&gt; IPv6Address</span><span class="s3">:</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">, </span><span class="s1">IPv6Address</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">input_value</span>
+
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">IPv6Address</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span><span class="s5">'ip_v6_address'</span><span class="s3">, </span><span class="s5">'Input is not a valid IPv6 address'</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">ip_v4_network_validator</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, /) </span><span class="s1">-&gt; IPv4Network</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Assume IPv4Network initialised with a default `strict` argument. 
+ 
+    See more: 
+    https://docs.python.org/library/ipaddress.html#ipaddress.IPv4Network 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">, </span><span class="s1">IPv4Network</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">input_value</span>
+
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">IPv4Network</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span><span class="s5">'ip_v4_network'</span><span class="s3">, </span><span class="s5">'Input is not a valid IPv4 network'</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">ip_v6_network_validator</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, /) </span><span class="s1">-&gt; IPv6Network</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Assume IPv6Network initialised with a default `strict` argument. 
+ 
+    See more: 
+    https://docs.python.org/library/ipaddress.html#ipaddress.IPv6Network 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">, </span><span class="s1">IPv6Network</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">input_value</span>
+
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">IPv6Network</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span><span class="s5">'ip_v6_network'</span><span class="s3">, </span><span class="s5">'Input is not a valid IPv6 network'</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">ip_v4_interface_validator</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, /) </span><span class="s1">-&gt; IPv4Interface</span><span class="s3">:</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">, </span><span class="s1">IPv4Interface</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">input_value</span>
+
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">IPv4Interface</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span><span class="s5">'ip_v4_interface'</span><span class="s3">, </span><span class="s5">'Input is not a valid IPv4 interface'</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">ip_v6_interface_validator</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, /) </span><span class="s1">-&gt; IPv6Interface</span><span class="s3">:</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">, </span><span class="s1">IPv6Interface</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">input_value</span>
+
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">IPv6Interface</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span><span class="s5">'ip_v6_interface'</span><span class="s3">, </span><span class="s5">'Input is not a valid IPv6 interface'</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">fraction_validator</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, /) </span><span class="s1">-&gt; Fraction</span><span class="s3">:</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">, </span><span class="s1">Fraction</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">input_value</span>
+
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">Fraction</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span><span class="s5">'fraction_parsing'</span><span class="s3">, </span><span class="s5">'Input is not a valid fraction'</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">forbid_inf_nan_check</span><span class="s3">(</span><span class="s1">x</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s2">if not </span><span class="s1">math</span><span class="s3">.</span><span class="s1">isfinite</span><span class="s3">(</span><span class="s1">x</span><span class="s3">):</span>
+        <span class="s2">raise </span><span class="s1">PydanticKnownError</span><span class="s3">(</span><span class="s5">'finite_number'</span><span class="s3">)</span>
+    <span class="s2">return </span><span class="s1">x</span>
+
+
+<span class="s2">def </span><span class="s1">_safe_repr</span><span class="s3">(</span><span class="s1">v</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; int </span><span class="s3">| </span><span class="s1">float </span><span class="s3">| </span><span class="s1">str</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;The context argument for `PydanticKnownError` requires a number or str type, so we do a simple repr() coercion for types like timedelta. 
+ 
+    See tests/test_types.py::test_annotated_metadata_any_order for some context. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">v</span><span class="s3">, (</span><span class="s1">int</span><span class="s3">, </span><span class="s1">float</span><span class="s3">, </span><span class="s1">str</span><span class="s3">)):</span>
+        <span class="s2">return </span><span class="s1">v</span>
+    <span class="s2">return </span><span class="s1">repr</span><span class="s3">(</span><span class="s1">v</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">greater_than_validator</span><span class="s3">(</span><span class="s1">x</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">gt</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">if not </span><span class="s3">(</span><span class="s1">x </span><span class="s3">&gt; </span><span class="s1">gt</span><span class="s3">):</span>
+            <span class="s2">raise </span><span class="s1">PydanticKnownError</span><span class="s3">(</span><span class="s5">'greater_than'</span><span class="s3">, {</span><span class="s5">'gt'</span><span class="s3">: </span><span class="s1">_safe_repr</span><span class="s3">(</span><span class="s1">gt</span><span class="s3">)})</span>
+        <span class="s2">return </span><span class="s1">x</span>
+    <span class="s2">except </span><span class="s1">TypeError</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">TypeError</span><span class="s3">(</span><span class="s5">f&quot;Unable to apply constraint 'gt' to supplied value </span><span class="s2">{</span><span class="s1">x</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">greater_than_or_equal_validator</span><span class="s3">(</span><span class="s1">x</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">ge</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">if not </span><span class="s3">(</span><span class="s1">x </span><span class="s3">&gt;= </span><span class="s1">ge</span><span class="s3">):</span>
+            <span class="s2">raise </span><span class="s1">PydanticKnownError</span><span class="s3">(</span><span class="s5">'greater_than_equal'</span><span class="s3">, {</span><span class="s5">'ge'</span><span class="s3">: </span><span class="s1">_safe_repr</span><span class="s3">(</span><span class="s1">ge</span><span class="s3">)})</span>
+        <span class="s2">return </span><span class="s1">x</span>
+    <span class="s2">except </span><span class="s1">TypeError</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">TypeError</span><span class="s3">(</span><span class="s5">f&quot;Unable to apply constraint 'ge' to supplied value </span><span class="s2">{</span><span class="s1">x</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">less_than_validator</span><span class="s3">(</span><span class="s1">x</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">lt</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">if not </span><span class="s3">(</span><span class="s1">x </span><span class="s3">&lt; </span><span class="s1">lt</span><span class="s3">):</span>
+            <span class="s2">raise </span><span class="s1">PydanticKnownError</span><span class="s3">(</span><span class="s5">'less_than'</span><span class="s3">, {</span><span class="s5">'lt'</span><span class="s3">: </span><span class="s1">_safe_repr</span><span class="s3">(</span><span class="s1">lt</span><span class="s3">)})</span>
+        <span class="s2">return </span><span class="s1">x</span>
+    <span class="s2">except </span><span class="s1">TypeError</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">TypeError</span><span class="s3">(</span><span class="s5">f&quot;Unable to apply constraint 'lt' to supplied value </span><span class="s2">{</span><span class="s1">x</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">less_than_or_equal_validator</span><span class="s3">(</span><span class="s1">x</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">le</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">if not </span><span class="s3">(</span><span class="s1">x </span><span class="s3">&lt;= </span><span class="s1">le</span><span class="s3">):</span>
+            <span class="s2">raise </span><span class="s1">PydanticKnownError</span><span class="s3">(</span><span class="s5">'less_than_equal'</span><span class="s3">, {</span><span class="s5">'le'</span><span class="s3">: </span><span class="s1">_safe_repr</span><span class="s3">(</span><span class="s1">le</span><span class="s3">)})</span>
+        <span class="s2">return </span><span class="s1">x</span>
+    <span class="s2">except </span><span class="s1">TypeError</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">TypeError</span><span class="s3">(</span><span class="s5">f&quot;Unable to apply constraint 'le' to supplied value </span><span class="s2">{</span><span class="s1">x</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">multiple_of_validator</span><span class="s3">(</span><span class="s1">x</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">multiple_of</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">x </span><span class="s3">% </span><span class="s1">multiple_of</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">PydanticKnownError</span><span class="s3">(</span><span class="s5">'multiple_of'</span><span class="s3">, {</span><span class="s5">'multiple_of'</span><span class="s3">: </span><span class="s1">_safe_repr</span><span class="s3">(</span><span class="s1">multiple_of</span><span class="s3">)})</span>
+        <span class="s2">return </span><span class="s1">x</span>
+    <span class="s2">except </span><span class="s1">TypeError</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">TypeError</span><span class="s3">(</span><span class="s5">f&quot;Unable to apply constraint 'multiple_of' to supplied value </span><span class="s2">{</span><span class="s1">x</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">min_length_validator</span><span class="s3">(</span><span class="s1">x</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">min_length</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">if not </span><span class="s3">(</span><span class="s1">len</span><span class="s3">(</span><span class="s1">x</span><span class="s3">) &gt;= </span><span class="s1">min_length</span><span class="s3">):</span>
+            <span class="s2">raise </span><span class="s1">PydanticKnownError</span><span class="s3">(</span>
+                <span class="s5">'too_short'</span><span class="s3">, {</span><span class="s5">'field_type'</span><span class="s3">: </span><span class="s5">'Value'</span><span class="s3">, </span><span class="s5">'min_length'</span><span class="s3">: </span><span class="s1">min_length</span><span class="s3">, </span><span class="s5">'actual_length'</span><span class="s3">: </span><span class="s1">len</span><span class="s3">(</span><span class="s1">x</span><span class="s3">)}</span>
+            <span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">x</span>
+    <span class="s2">except </span><span class="s1">TypeError</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">TypeError</span><span class="s3">(</span><span class="s5">f&quot;Unable to apply constraint 'min_length' to supplied value </span><span class="s2">{</span><span class="s1">x</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">max_length_validator</span><span class="s3">(</span><span class="s1">x</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">max_length</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">x</span><span class="s3">) &gt; </span><span class="s1">max_length</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">PydanticKnownError</span><span class="s3">(</span>
+                <span class="s5">'too_long'</span><span class="s3">,</span>
+                <span class="s3">{</span><span class="s5">'field_type'</span><span class="s3">: </span><span class="s5">'Value'</span><span class="s3">, </span><span class="s5">'max_length'</span><span class="s3">: </span><span class="s1">max_length</span><span class="s3">, </span><span class="s5">'actual_length'</span><span class="s3">: </span><span class="s1">len</span><span class="s3">(</span><span class="s1">x</span><span class="s3">)},</span>
+            <span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">x</span>
+    <span class="s2">except </span><span class="s1">TypeError</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">TypeError</span><span class="s3">(</span><span class="s5">f&quot;Unable to apply constraint 'max_length' to supplied value </span><span class="s2">{</span><span class="s1">x</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_extract_decimal_digits_info</span><span class="s3">(</span><span class="s1">decimal</span><span class="s3">: </span><span class="s1">Decimal</span><span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]:</span>
+    <span class="s0">&quot;&quot;&quot;Compute the total number of digits and decimal places for a given [`Decimal`][decimal.Decimal] instance. 
+ 
+    This function handles both normalized and non-normalized Decimal instances. 
+    Example: Decimal('1.230') -&gt; 4 digits, 3 decimal places 
+ 
+    Args: 
+        decimal (Decimal): The decimal number to analyze. 
+ 
+    Returns: 
+        tuple[int, int]: A tuple containing the number of decimal places and total digits. 
+ 
+    Though this could be divided into two separate functions, the logic is easier to follow if we couple the computation 
+    of the number of decimals and digits together. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">decimal_tuple </span><span class="s3">= </span><span class="s1">decimal</span><span class="s3">.</span><span class="s1">as_tuple</span><span class="s3">()</span>
+
+        <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">decimal_tuple</span><span class="s3">.</span><span class="s1">exponent</span><span class="s3">, </span><span class="s1">int</span><span class="s3">)</span>
+
+        <span class="s1">exponent </span><span class="s3">= </span><span class="s1">decimal_tuple</span><span class="s3">.</span><span class="s1">exponent</span>
+        <span class="s1">num_digits </span><span class="s3">= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">decimal_tuple</span><span class="s3">.</span><span class="s1">digits</span><span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s1">exponent </span><span class="s3">&gt;= </span><span class="s6">0</span><span class="s3">:</span>
+            <span class="s4"># A positive exponent adds that many trailing zeros</span>
+            <span class="s4"># Ex: digit_tuple=(1, 2, 3), exponent=2 -&gt; 12300 -&gt; 0 decimal places, 5 digits</span>
+            <span class="s1">num_digits </span><span class="s3">+= </span><span class="s1">exponent</span>
+            <span class="s1">decimal_places </span><span class="s3">= </span><span class="s6">0</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s4"># If the absolute value of the negative exponent is larger than the</span>
+            <span class="s4"># number of digits, then it's the same as the number of digits,</span>
+            <span class="s4"># because it'll consume all the digits in digit_tuple and then</span>
+            <span class="s4"># add abs(exponent) - len(digit_tuple) leading zeros after the decimal point.</span>
+            <span class="s4"># Ex: digit_tuple=(1, 2, 3), exponent=-2 -&gt; 1.23 -&gt; 2 decimal places, 3 digits</span>
+            <span class="s4"># Ex: digit_tuple=(1, 2, 3), exponent=-4 -&gt; 0.0123 -&gt; 4 decimal places, 4 digits</span>
+            <span class="s1">decimal_places </span><span class="s3">= </span><span class="s1">abs</span><span class="s3">(</span><span class="s1">exponent</span><span class="s3">)</span>
+            <span class="s1">num_digits </span><span class="s3">= </span><span class="s1">max</span><span class="s3">(</span><span class="s1">num_digits</span><span class="s3">, </span><span class="s1">decimal_places</span><span class="s3">)</span>
+
+        <span class="s2">return </span><span class="s1">decimal_places</span><span class="s3">, </span><span class="s1">num_digits</span>
+    <span class="s2">except </span><span class="s3">(</span><span class="s1">AssertionError</span><span class="s3">, </span><span class="s1">AttributeError</span><span class="s3">):</span>
+        <span class="s2">raise </span><span class="s1">TypeError</span><span class="s3">(</span><span class="s5">f'Unable to extract decimal digits info from supplied value </span><span class="s2">{</span><span class="s1">decimal</span><span class="s2">}</span><span class="s5">'</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">max_digits_validator</span><span class="s3">(</span><span class="s1">x</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">max_digits</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">_</span><span class="s3">, </span><span class="s1">num_digits </span><span class="s3">= </span><span class="s1">_extract_decimal_digits_info</span><span class="s3">(</span><span class="s1">x</span><span class="s3">)</span>
+        <span class="s1">_</span><span class="s3">, </span><span class="s1">normalized_num_digits </span><span class="s3">= </span><span class="s1">_extract_decimal_digits_info</span><span class="s3">(</span><span class="s1">x</span><span class="s3">.</span><span class="s1">normalize</span><span class="s3">())</span>
+        <span class="s2">if </span><span class="s3">(</span><span class="s1">num_digits </span><span class="s3">&gt; </span><span class="s1">max_digits</span><span class="s3">) </span><span class="s2">and </span><span class="s3">(</span><span class="s1">normalized_num_digits </span><span class="s3">&gt; </span><span class="s1">max_digits</span><span class="s3">):</span>
+            <span class="s2">raise </span><span class="s1">PydanticKnownError</span><span class="s3">(</span>
+                <span class="s5">'decimal_max_digits'</span><span class="s3">,</span>
+                <span class="s3">{</span><span class="s5">'max_digits'</span><span class="s3">: </span><span class="s1">max_digits</span><span class="s3">},</span>
+            <span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">x</span>
+    <span class="s2">except </span><span class="s1">TypeError</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">TypeError</span><span class="s3">(</span><span class="s5">f&quot;Unable to apply constraint 'max_digits' to supplied value </span><span class="s2">{</span><span class="s1">x</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">decimal_places_validator</span><span class="s3">(</span><span class="s1">x</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">decimal_places</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">decimal_places_</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">_extract_decimal_digits_info</span><span class="s3">(</span><span class="s1">x</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">decimal_places_ </span><span class="s3">&gt; </span><span class="s1">decimal_places</span><span class="s3">:</span>
+            <span class="s1">normalized_decimal_places</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">_extract_decimal_digits_info</span><span class="s3">(</span><span class="s1">x</span><span class="s3">.</span><span class="s1">normalize</span><span class="s3">())</span>
+            <span class="s2">if </span><span class="s1">normalized_decimal_places </span><span class="s3">&gt; </span><span class="s1">decimal_places</span><span class="s3">:</span>
+                <span class="s2">raise </span><span class="s1">PydanticKnownError</span><span class="s3">(</span>
+                    <span class="s5">'decimal_max_places'</span><span class="s3">,</span>
+                    <span class="s3">{</span><span class="s5">'decimal_places'</span><span class="s3">: </span><span class="s1">decimal_places</span><span class="s3">},</span>
+                <span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">x</span>
+    <span class="s2">except </span><span class="s1">TypeError</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">TypeError</span><span class="s3">(</span><span class="s5">f&quot;Unable to apply constraint 'decimal_places' to supplied value </span><span class="s2">{</span><span class="s1">x</span><span class="s2">}</span><span class="s5">&quot;</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">deque_validator</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">: </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">ValidatorFunctionWrapHandler</span><span class="s3">) </span><span class="s1">-&gt; collections</span><span class="s3">.</span><span class="s1">deque</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]:</span>
+    <span class="s2">return </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">deque</span><span class="s3">(</span><span class="s1">handler</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">), </span><span class="s1">maxlen</span><span class="s3">=</span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">, </span><span class="s5">'maxlen'</span><span class="s3">, </span><span class="s2">None</span><span class="s3">))</span>
+
+
+<span class="s2">def </span><span class="s1">defaultdict_validator</span><span class="s3">(</span>
+    <span class="s1">input_value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">: </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">ValidatorFunctionWrapHandler</span><span class="s3">, </span><span class="s1">default_default_factory</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[], </span><span class="s1">Any</span><span class="s3">]</span>
+<span class="s3">) </span><span class="s1">-&gt; collections</span><span class="s3">.</span><span class="s1">defaultdict</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]:</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">, </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">defaultdict</span><span class="s3">):</span>
+        <span class="s1">default_factory </span><span class="s3">= </span><span class="s1">input_value</span><span class="s3">.</span><span class="s1">default_factory</span>
+        <span class="s2">return </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">defaultdict</span><span class="s3">(</span><span class="s1">default_factory</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">))</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">defaultdict</span><span class="s3">(</span><span class="s1">default_default_factory</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">(</span><span class="s1">input_value</span><span class="s3">))</span>
+
+
+<span class="s2">def </span><span class="s1">get_defaultdict_default_default_factory</span><span class="s3">(</span><span class="s1">values_source_type</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Callable</span><span class="s3">[[], </span><span class="s1">Any</span><span class="s3">]:</span>
+    <span class="s1">FieldInfo </span><span class="s3">= </span><span class="s1">import_cached_field_info</span><span class="s3">()</span>
+
+    <span class="s1">values_type_origin </span><span class="s3">= </span><span class="s1">get_origin</span><span class="s3">(</span><span class="s1">values_source_type</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">infer_default</span><span class="s3">() </span><span class="s1">-&gt; Callable</span><span class="s3">[[], </span><span class="s1">Any</span><span class="s3">]:</span>
+        <span class="s1">allowed_default_types</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] = {</span>
+            <span class="s1">tuple</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">,</span>
+            <span class="s1">collections</span><span class="s3">.</span><span class="s1">abc</span><span class="s3">.</span><span class="s1">Sequence</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">,</span>
+            <span class="s1">collections</span><span class="s3">.</span><span class="s1">abc</span><span class="s3">.</span><span class="s1">MutableSequence</span><span class="s3">: </span><span class="s1">list</span><span class="s3">,</span>
+            <span class="s1">list</span><span class="s3">: </span><span class="s1">list</span><span class="s3">,</span>
+            <span class="s1">typing</span><span class="s3">.</span><span class="s1">Sequence</span><span class="s3">: </span><span class="s1">list</span><span class="s3">,</span>
+            <span class="s1">set</span><span class="s3">: </span><span class="s1">set</span><span class="s3">,</span>
+            <span class="s1">typing</span><span class="s3">.</span><span class="s1">MutableSet</span><span class="s3">: </span><span class="s1">set</span><span class="s3">,</span>
+            <span class="s1">collections</span><span class="s3">.</span><span class="s1">abc</span><span class="s3">.</span><span class="s1">MutableSet</span><span class="s3">: </span><span class="s1">set</span><span class="s3">,</span>
+            <span class="s1">collections</span><span class="s3">.</span><span class="s1">abc</span><span class="s3">.</span><span class="s1">Set</span><span class="s3">: </span><span class="s1">frozenset</span><span class="s3">,</span>
+            <span class="s1">typing</span><span class="s3">.</span><span class="s1">MutableMapping</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">,</span>
+            <span class="s1">typing</span><span class="s3">.</span><span class="s1">Mapping</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">,</span>
+            <span class="s1">collections</span><span class="s3">.</span><span class="s1">abc</span><span class="s3">.</span><span class="s1">Mapping</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">,</span>
+            <span class="s1">collections</span><span class="s3">.</span><span class="s1">abc</span><span class="s3">.</span><span class="s1">MutableMapping</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">,</span>
+            <span class="s1">float</span><span class="s3">: </span><span class="s1">float</span><span class="s3">,</span>
+            <span class="s1">int</span><span class="s3">: </span><span class="s1">int</span><span class="s3">,</span>
+            <span class="s1">str</span><span class="s3">: </span><span class="s1">str</span><span class="s3">,</span>
+            <span class="s1">bool</span><span class="s3">: </span><span class="s1">bool</span><span class="s3">,</span>
+        <span class="s3">}</span>
+        <span class="s1">values_type </span><span class="s3">= </span><span class="s1">values_type_origin </span><span class="s2">or </span><span class="s1">values_source_type</span>
+        <span class="s1">instructions </span><span class="s3">= </span><span class="s5">'set using `DefaultDict[..., Annotated[..., Field(default_factory=...)]]`'</span>
+        <span class="s2">if </span><span class="s1">typing_objects</span><span class="s3">.</span><span class="s1">is_typevar</span><span class="s3">(</span><span class="s1">values_type</span><span class="s3">):</span>
+
+            <span class="s2">def </span><span class="s1">type_var_default_factory</span><span class="s3">() </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+                <span class="s2">raise </span><span class="s1">RuntimeError</span><span class="s3">(</span>
+                    <span class="s5">'Generic defaultdict cannot be used without a concrete value type or an'</span>
+                    <span class="s5">' explicit default factory, ' </span><span class="s3">+ </span><span class="s1">instructions</span>
+                <span class="s3">)</span>
+
+            <span class="s2">return </span><span class="s1">type_var_default_factory</span>
+        <span class="s2">elif </span><span class="s1">values_type </span><span class="s2">not in </span><span class="s1">allowed_default_types</span><span class="s3">:</span>
+            <span class="s4"># a somewhat subjective set of types that have reasonable default values</span>
+            <span class="s1">allowed_msg </span><span class="s3">= </span><span class="s5">', '</span><span class="s3">.</span><span class="s1">join</span><span class="s3">([</span><span class="s1">t</span><span class="s3">.</span><span class="s1">__name__ </span><span class="s2">for </span><span class="s1">t </span><span class="s2">in </span><span class="s1">set</span><span class="s3">(</span><span class="s1">allowed_default_types</span><span class="s3">.</span><span class="s1">values</span><span class="s3">())])</span>
+            <span class="s2">raise </span><span class="s1">PydanticSchemaGenerationError</span><span class="s3">(</span>
+                <span class="s5">f'Unable to infer a default factory for keys of type </span><span class="s2">{</span><span class="s1">values_source_type</span><span class="s2">}</span><span class="s5">.'</span>
+                <span class="s5">f' Only </span><span class="s2">{</span><span class="s1">allowed_msg</span><span class="s2">} </span><span class="s5">are supported, other types require an explicit default factory'</span>
+                <span class="s5">' ' </span><span class="s3">+ </span><span class="s1">instructions</span>
+            <span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">allowed_default_types</span><span class="s3">[</span><span class="s1">values_type</span><span class="s3">]</span>
+
+    <span class="s4"># Assume Annotated[..., Field(...)]</span>
+    <span class="s2">if </span><span class="s1">typing_objects</span><span class="s3">.</span><span class="s1">is_annotated</span><span class="s3">(</span><span class="s1">values_type_origin</span><span class="s3">):</span>
+        <span class="s1">field_info </span><span class="s3">= </span><span class="s1">next</span><span class="s3">((</span><span class="s1">v </span><span class="s2">for </span><span class="s1">v </span><span class="s2">in </span><span class="s1">typing_extensions</span><span class="s3">.</span><span class="s1">get_args</span><span class="s3">(</span><span class="s1">values_source_type</span><span class="s3">) </span><span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">v</span><span class="s3">, </span><span class="s1">FieldInfo</span><span class="s3">)), </span><span class="s2">None</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">field_info </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s2">if </span><span class="s1">field_info </span><span class="s2">and </span><span class="s1">field_info</span><span class="s3">.</span><span class="s1">default_factory</span><span class="s3">:</span>
+        <span class="s4"># Assume the default factory does not take any argument:</span>
+        <span class="s1">default_default_factory </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">Callable</span><span class="s3">[[], </span><span class="s1">Any</span><span class="s3">], </span><span class="s1">field_info</span><span class="s3">.</span><span class="s1">default_factory</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">default_default_factory </span><span class="s3">= </span><span class="s1">infer_default</span><span class="s3">()</span>
+    <span class="s2">return </span><span class="s1">default_default_factory</span>
+
+
+<span class="s2">def </span><span class="s1">validate_str_is_valid_iana_tz</span><span class="s3">(</span><span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, /) </span><span class="s1">-&gt; ZoneInfo</span><span class="s3">:</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">value</span><span class="s3">, </span><span class="s1">ZoneInfo</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">value</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">ZoneInfo</span><span class="s3">(</span><span class="s1">value</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s3">(</span><span class="s1">ZoneInfoNotFoundError</span><span class="s3">, </span><span class="s1">ValueError</span><span class="s3">, </span><span class="s1">TypeError</span><span class="s3">):</span>
+        <span class="s2">raise </span><span class="s1">PydanticCustomError</span><span class="s3">(</span><span class="s5">'zoneinfo_str'</span><span class="s3">, </span><span class="s5">'invalid timezone: {value}'</span><span class="s3">, {</span><span class="s5">'value'</span><span class="s3">: </span><span class="s1">value</span><span class="s3">})</span>
+
+
+<span class="s1">NUMERIC_VALIDATOR_LOOKUP</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Callable</span><span class="s3">] = {</span>
+    <span class="s5">'gt'</span><span class="s3">: </span><span class="s1">greater_than_validator</span><span class="s3">,</span>
+    <span class="s5">'ge'</span><span class="s3">: </span><span class="s1">greater_than_or_equal_validator</span><span class="s3">,</span>
+    <span class="s5">'lt'</span><span class="s3">: </span><span class="s1">less_than_validator</span><span class="s3">,</span>
+    <span class="s5">'le'</span><span class="s3">: </span><span class="s1">less_than_or_equal_validator</span><span class="s3">,</span>
+    <span class="s5">'multiple_of'</span><span class="s3">: </span><span class="s1">multiple_of_validator</span><span class="s3">,</span>
+    <span class="s5">'min_length'</span><span class="s3">: </span><span class="s1">min_length_validator</span><span class="s3">,</span>
+    <span class="s5">'max_length'</span><span class="s3">: </span><span class="s1">max_length_validator</span><span class="s3">,</span>
+    <span class="s5">'max_digits'</span><span class="s3">: </span><span class="s1">max_digits_validator</span><span class="s3">,</span>
+    <span class="s5">'decimal_places'</span><span class="s3">: </span><span class="s1">decimal_places_validator</span><span class="s3">,</span>
+<span class="s3">}</span>
+
+<span class="s1">IpType </span><span class="s3">= </span><span class="s1">Union</span><span class="s3">[</span><span class="s1">IPv4Address</span><span class="s3">, </span><span class="s1">IPv6Address</span><span class="s3">, </span><span class="s1">IPv4Network</span><span class="s3">, </span><span class="s1">IPv6Network</span><span class="s3">, </span><span class="s1">IPv4Interface</span><span class="s3">, </span><span class="s1">IPv6Interface</span><span class="s3">]</span>
+
+<span class="s1">IP_VALIDATOR_LOOKUP</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">type</span><span class="s3">[</span><span class="s1">IpType</span><span class="s3">], </span><span class="s1">Callable</span><span class="s3">] = {</span>
+    <span class="s1">IPv4Address</span><span class="s3">: </span><span class="s1">ip_v4_address_validator</span><span class="s3">,</span>
+    <span class="s1">IPv6Address</span><span class="s3">: </span><span class="s1">ip_v6_address_validator</span><span class="s3">,</span>
+    <span class="s1">IPv4Network</span><span class="s3">: </span><span class="s1">ip_v4_network_validator</span><span class="s3">,</span>
+    <span class="s1">IPv6Network</span><span class="s3">: </span><span class="s1">ip_v6_network_validator</span><span class="s3">,</span>
+    <span class="s1">IPv4Interface</span><span class="s3">: </span><span class="s1">ip_v4_interface_validator</span><span class="s3">,</span>
+    <span class="s1">IPv6Interface</span><span class="s3">: </span><span class="s1">ip_v6_interface_validator</span><span class="s3">,</span>
+<span class="s3">}</span>
+
+<span class="s1">MAPPING_ORIGIN_MAP</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] = {</span>
+    <span class="s1">typing</span><span class="s3">.</span><span class="s1">DefaultDict</span><span class="s3">: </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">defaultdict</span><span class="s3">,  </span><span class="s4"># noqa: UP006</span>
+    <span class="s1">collections</span><span class="s3">.</span><span class="s1">defaultdict</span><span class="s3">: </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">defaultdict</span><span class="s3">,</span>
+    <span class="s1">typing</span><span class="s3">.</span><span class="s1">OrderedDict</span><span class="s3">: </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">OrderedDict</span><span class="s3">,  </span><span class="s4"># noqa: UP006</span>
+    <span class="s1">collections</span><span class="s3">.</span><span class="s1">OrderedDict</span><span class="s3">: </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">OrderedDict</span><span class="s3">,</span>
+    <span class="s1">typing_extensions</span><span class="s3">.</span><span class="s1">OrderedDict</span><span class="s3">: </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">OrderedDict</span><span class="s3">,</span>
+    <span class="s1">typing</span><span class="s3">.</span><span class="s1">Counter</span><span class="s3">: </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">Counter</span><span class="s3">,</span>
+    <span class="s1">collections</span><span class="s3">.</span><span class="s1">Counter</span><span class="s3">: </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">Counter</span><span class="s3">,</span>
+    <span class="s4"># this doesn't handle subclasses of these</span>
+    <span class="s1">typing</span><span class="s3">.</span><span class="s1">Mapping</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">,</span>
+    <span class="s1">typing</span><span class="s3">.</span><span class="s1">MutableMapping</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">,</span>
+    <span class="s4"># parametrized typing.{Mutable}Mapping creates one of these</span>
+    <span class="s1">collections</span><span class="s3">.</span><span class="s1">abc</span><span class="s3">.</span><span class="s1">Mapping</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">,</span>
+    <span class="s1">collections</span><span class="s3">.</span><span class="s1">abc</span><span class="s3">.</span><span class="s1">MutableMapping</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">,</span>
+<span class="s3">}</span>
+</pre>
+</body>
+</html>

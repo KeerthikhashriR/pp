@@ -1,0 +1,361 @@
+<html>
+<head>
+<title>server.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #7a7e85;}
+.s4 { color: #6aab73;}
+.s5 { color: #5f826b; font-style: italic;}
+.s6 { color: #2aacb8;}
+.s7 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+server.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">asyncio</span>
+<span class="s0">import </span><span class="s1">contextlib</span>
+<span class="s0">import </span><span class="s1">logging</span>
+<span class="s0">import </span><span class="s1">os</span>
+<span class="s0">import </span><span class="s1">platform</span>
+<span class="s0">import </span><span class="s1">signal</span>
+<span class="s0">import </span><span class="s1">socket</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">import </span><span class="s1">threading</span>
+<span class="s0">import </span><span class="s1">time</span>
+<span class="s0">from </span><span class="s1">collections</span><span class="s2">.</span><span class="s1">abc </span><span class="s0">import </span><span class="s1">Generator</span><span class="s2">, </span><span class="s1">Sequence</span>
+<span class="s0">from </span><span class="s1">email</span><span class="s2">.</span><span class="s1">utils </span><span class="s0">import </span><span class="s1">formatdate</span>
+<span class="s0">from </span><span class="s1">types </span><span class="s0">import </span><span class="s1">FrameType</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">TYPE_CHECKING</span><span class="s2">, </span><span class="s1">Union</span>
+
+<span class="s0">import </span><span class="s1">click</span>
+
+<span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">config </span><span class="s0">import </span><span class="s1">Config</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+    <span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">protocols</span><span class="s2">.</span><span class="s1">http</span><span class="s2">.</span><span class="s1">h11_impl </span><span class="s0">import </span><span class="s1">H11Protocol</span>
+    <span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">protocols</span><span class="s2">.</span><span class="s1">http</span><span class="s2">.</span><span class="s1">httptools_impl </span><span class="s0">import </span><span class="s1">HttpToolsProtocol</span>
+    <span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">protocols</span><span class="s2">.</span><span class="s1">websockets</span><span class="s2">.</span><span class="s1">websockets_impl </span><span class="s0">import </span><span class="s1">WebSocketProtocol</span>
+    <span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">protocols</span><span class="s2">.</span><span class="s1">websockets</span><span class="s2">.</span><span class="s1">wsproto_impl </span><span class="s0">import </span><span class="s1">WSProtocol</span>
+
+    <span class="s1">Protocols </span><span class="s2">= </span><span class="s1">Union</span><span class="s2">[</span><span class="s1">H11Protocol</span><span class="s2">, </span><span class="s1">HttpToolsProtocol</span><span class="s2">, </span><span class="s1">WSProtocol</span><span class="s2">, </span><span class="s1">WebSocketProtocol</span><span class="s2">]</span>
+
+<span class="s1">HANDLED_SIGNALS </span><span class="s2">= (</span>
+    <span class="s1">signal</span><span class="s2">.</span><span class="s1">SIGINT</span><span class="s2">,  </span><span class="s3"># Unix signal 2. Sent by Ctrl+C.</span>
+    <span class="s1">signal</span><span class="s2">.</span><span class="s1">SIGTERM</span><span class="s2">,  </span><span class="s3"># Unix signal 15. Sent by `kill &lt;pid&gt;`.</span>
+<span class="s2">)</span>
+<span class="s0">if </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">platform </span><span class="s2">== </span><span class="s4">&quot;win32&quot;</span><span class="s2">:  </span><span class="s3"># pragma: py-not-win32</span>
+    <span class="s1">HANDLED_SIGNALS </span><span class="s2">+= (</span><span class="s1">signal</span><span class="s2">.</span><span class="s1">SIGBREAK</span><span class="s2">,)  </span><span class="s3"># Windows signal 21. Sent by Ctrl+Break.</span>
+
+<span class="s1">logger </span><span class="s2">= </span><span class="s1">logging</span><span class="s2">.</span><span class="s1">getLogger</span><span class="s2">(</span><span class="s4">&quot;uvicorn.error&quot;</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">ServerState</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Shared servers state that is available between all protocol instances. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">total_requests </span><span class="s2">= </span><span class="s6">0</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">connections</span><span class="s2">: </span><span class="s1">set</span><span class="s2">[</span><span class="s1">Protocols</span><span class="s2">] = </span><span class="s1">set</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">tasks</span><span class="s2">: </span><span class="s1">set</span><span class="s2">[</span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">Task</span><span class="s2">[</span><span class="s0">None</span><span class="s2">]] = </span><span class="s1">set</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">default_headers</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">]] = []</span>
+
+
+<span class="s0">class </span><span class="s1">Server</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">config</span><span class="s2">: </span><span class="s1">Config</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">config </span><span class="s2">= </span><span class="s1">config</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">server_state </span><span class="s2">= </span><span class="s1">ServerState</span><span class="s2">()</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">started </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">should_exit </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">force_exit </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">last_notified </span><span class="s2">= </span><span class="s6">0.0</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_captured_signals</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">int</span><span class="s2">] = []</span>
+
+    <span class="s0">def </span><span class="s1">run</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">sockets</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">socket</span><span class="s2">.</span><span class="s1">socket</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">.</span><span class="s1">setup_event_loop</span><span class="s2">()</span>
+        <span class="s0">return </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">run</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">serve</span><span class="s2">(</span><span class="s1">sockets</span><span class="s2">=</span><span class="s1">sockets</span><span class="s2">))</span>
+
+    <span class="s0">async def </span><span class="s1">serve</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">sockets</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">socket</span><span class="s2">.</span><span class="s1">socket</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">with </span><span class="s1">self</span><span class="s2">.</span><span class="s1">capture_signals</span><span class="s2">():</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_serve</span><span class="s2">(</span><span class="s1">sockets</span><span class="s2">)</span>
+
+    <span class="s0">async def </span><span class="s1">_serve</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">sockets</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">socket</span><span class="s2">.</span><span class="s1">socket</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">process_id </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">getpid</span><span class="s2">()</span>
+
+        <span class="s1">config </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span>
+        <span class="s0">if not </span><span class="s1">config</span><span class="s2">.</span><span class="s1">loaded</span><span class="s2">:</span>
+            <span class="s1">config</span><span class="s2">.</span><span class="s1">load</span><span class="s2">()</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">lifespan </span><span class="s2">= </span><span class="s1">config</span><span class="s2">.</span><span class="s1">lifespan_class</span><span class="s2">(</span><span class="s1">config</span><span class="s2">)</span>
+
+        <span class="s1">message </span><span class="s2">= </span><span class="s4">&quot;Started server process [%d]&quot;</span>
+        <span class="s1">color_message </span><span class="s2">= </span><span class="s4">&quot;Started server process [&quot; </span><span class="s2">+ </span><span class="s1">click</span><span class="s2">.</span><span class="s1">style</span><span class="s2">(</span><span class="s4">&quot;%d&quot;</span><span class="s2">, </span><span class="s1">fg</span><span class="s2">=</span><span class="s4">&quot;cyan&quot;</span><span class="s2">) + </span><span class="s4">&quot;]&quot;</span>
+        <span class="s1">logger</span><span class="s2">.</span><span class="s1">info</span><span class="s2">(</span><span class="s1">message</span><span class="s2">, </span><span class="s1">process_id</span><span class="s2">, </span><span class="s1">extra</span><span class="s2">={</span><span class="s4">&quot;color_message&quot;</span><span class="s2">: </span><span class="s1">color_message</span><span class="s2">})</span>
+
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">startup</span><span class="s2">(</span><span class="s1">sockets</span><span class="s2">=</span><span class="s1">sockets</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">should_exit</span><span class="s2">:</span>
+            <span class="s0">return</span>
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">main_loop</span><span class="s2">()</span>
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">shutdown</span><span class="s2">(</span><span class="s1">sockets</span><span class="s2">=</span><span class="s1">sockets</span><span class="s2">)</span>
+
+        <span class="s1">message </span><span class="s2">= </span><span class="s4">&quot;Finished server process [%d]&quot;</span>
+        <span class="s1">color_message </span><span class="s2">= </span><span class="s4">&quot;Finished server process [&quot; </span><span class="s2">+ </span><span class="s1">click</span><span class="s2">.</span><span class="s1">style</span><span class="s2">(</span><span class="s4">&quot;%d&quot;</span><span class="s2">, </span><span class="s1">fg</span><span class="s2">=</span><span class="s4">&quot;cyan&quot;</span><span class="s2">) + </span><span class="s4">&quot;]&quot;</span>
+        <span class="s1">logger</span><span class="s2">.</span><span class="s1">info</span><span class="s2">(</span><span class="s1">message</span><span class="s2">, </span><span class="s1">process_id</span><span class="s2">, </span><span class="s1">extra</span><span class="s2">={</span><span class="s4">&quot;color_message&quot;</span><span class="s2">: </span><span class="s1">color_message</span><span class="s2">})</span>
+
+    <span class="s0">async def </span><span class="s1">startup</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">sockets</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">socket</span><span class="s2">.</span><span class="s1">socket</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">lifespan</span><span class="s2">.</span><span class="s1">startup</span><span class="s2">()</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">lifespan</span><span class="s2">.</span><span class="s1">should_exit</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">should_exit </span><span class="s2">= </span><span class="s0">True</span>
+            <span class="s0">return</span>
+
+        <span class="s1">config </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span>
+
+        <span class="s0">def </span><span class="s1">create_protocol</span><span class="s2">(</span>
+            <span class="s1">_loop</span><span class="s2">: </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">AbstractEventLoop </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s2">) </span><span class="s1">-&gt; asyncio</span><span class="s2">.</span><span class="s1">Protocol</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">config</span><span class="s2">.</span><span class="s1">http_protocol_class</span><span class="s2">(  </span><span class="s3"># type: ignore[call-arg]</span>
+                <span class="s1">config</span><span class="s2">=</span><span class="s1">config</span><span class="s2">,</span>
+                <span class="s1">server_state</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_state</span><span class="s2">,</span>
+                <span class="s1">app_state</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">lifespan</span><span class="s2">.</span><span class="s1">state</span><span class="s2">,</span>
+                <span class="s1">_loop</span><span class="s2">=</span><span class="s1">_loop</span><span class="s2">,</span>
+            <span class="s2">)</span>
+
+        <span class="s1">loop </span><span class="s2">= </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">get_running_loop</span><span class="s2">()</span>
+
+        <span class="s1">listeners</span><span class="s2">: </span><span class="s1">Sequence</span><span class="s2">[</span><span class="s1">socket</span><span class="s2">.</span><span class="s1">SocketType</span><span class="s2">]</span>
+        <span class="s0">if </span><span class="s1">sockets </span><span class="s0">is not None</span><span class="s2">:  </span><span class="s3"># pragma: full coverage</span>
+            <span class="s3"># Explicitly passed a list of open sockets.</span>
+            <span class="s3"># We use this when the server is run from a Gunicorn worker.</span>
+
+            <span class="s0">def </span><span class="s1">_share_socket</span><span class="s2">(</span>
+                <span class="s1">sock</span><span class="s2">: </span><span class="s1">socket</span><span class="s2">.</span><span class="s1">SocketType</span><span class="s2">,</span>
+            <span class="s2">) </span><span class="s1">-&gt; socket</span><span class="s2">.</span><span class="s1">SocketType</span><span class="s2">:  </span><span class="s3"># pragma py-linux pragma: py-darwin</span>
+                <span class="s3"># Windows requires the socket be explicitly shared across</span>
+                <span class="s3"># multiple workers (processes).</span>
+                <span class="s0">from </span><span class="s1">socket </span><span class="s0">import </span><span class="s1">fromshare  </span><span class="s3"># type: ignore[attr-defined]</span>
+
+                <span class="s1">sock_data </span><span class="s2">= </span><span class="s1">sock</span><span class="s2">.</span><span class="s1">share</span><span class="s2">(</span><span class="s1">os</span><span class="s2">.</span><span class="s1">getpid</span><span class="s2">())  </span><span class="s3"># type: ignore[attr-defined]</span>
+                <span class="s0">return </span><span class="s1">fromshare</span><span class="s2">(</span><span class="s1">sock_data</span><span class="s2">)</span>
+
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">servers</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">base_events</span><span class="s2">.</span><span class="s1">Server</span><span class="s2">] = []</span>
+            <span class="s0">for </span><span class="s1">sock </span><span class="s0">in </span><span class="s1">sockets</span><span class="s2">:</span>
+                <span class="s1">is_windows </span><span class="s2">= </span><span class="s1">platform</span><span class="s2">.</span><span class="s1">system</span><span class="s2">() == </span><span class="s4">&quot;Windows&quot;</span>
+                <span class="s0">if </span><span class="s1">config</span><span class="s2">.</span><span class="s1">workers </span><span class="s2">&gt; </span><span class="s6">1 </span><span class="s0">and </span><span class="s1">is_windows</span><span class="s2">:  </span><span class="s3"># pragma: py-not-win32</span>
+                    <span class="s1">sock </span><span class="s2">= </span><span class="s1">_share_socket</span><span class="s2">(</span><span class="s1">sock</span><span class="s2">)  </span><span class="s3"># type: ignore[assignment]</span>
+                <span class="s1">server </span><span class="s2">= </span><span class="s0">await </span><span class="s1">loop</span><span class="s2">.</span><span class="s1">create_server</span><span class="s2">(</span><span class="s1">create_protocol</span><span class="s2">, </span><span class="s1">sock</span><span class="s2">=</span><span class="s1">sock</span><span class="s2">, </span><span class="s1">ssl</span><span class="s2">=</span><span class="s1">config</span><span class="s2">.</span><span class="s1">ssl</span><span class="s2">, </span><span class="s1">backlog</span><span class="s2">=</span><span class="s1">config</span><span class="s2">.</span><span class="s1">backlog</span><span class="s2">)</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">servers</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">server</span><span class="s2">)</span>
+            <span class="s1">listeners </span><span class="s2">= </span><span class="s1">sockets</span>
+
+        <span class="s0">elif </span><span class="s1">config</span><span class="s2">.</span><span class="s1">fd </span><span class="s0">is not None</span><span class="s2">:  </span><span class="s3"># pragma: py-win32</span>
+            <span class="s3"># Use an existing socket, from a file descriptor.</span>
+            <span class="s1">sock </span><span class="s2">= </span><span class="s1">socket</span><span class="s2">.</span><span class="s1">fromfd</span><span class="s2">(</span><span class="s1">config</span><span class="s2">.</span><span class="s1">fd</span><span class="s2">, </span><span class="s1">socket</span><span class="s2">.</span><span class="s1">AF_UNIX</span><span class="s2">, </span><span class="s1">socket</span><span class="s2">.</span><span class="s1">SOCK_STREAM</span><span class="s2">)</span>
+            <span class="s1">server </span><span class="s2">= </span><span class="s0">await </span><span class="s1">loop</span><span class="s2">.</span><span class="s1">create_server</span><span class="s2">(</span><span class="s1">create_protocol</span><span class="s2">, </span><span class="s1">sock</span><span class="s2">=</span><span class="s1">sock</span><span class="s2">, </span><span class="s1">ssl</span><span class="s2">=</span><span class="s1">config</span><span class="s2">.</span><span class="s1">ssl</span><span class="s2">, </span><span class="s1">backlog</span><span class="s2">=</span><span class="s1">config</span><span class="s2">.</span><span class="s1">backlog</span><span class="s2">)</span>
+            <span class="s0">assert </span><span class="s1">server</span><span class="s2">.</span><span class="s1">sockets </span><span class="s0">is not None  </span><span class="s3"># mypy</span>
+            <span class="s1">listeners </span><span class="s2">= </span><span class="s1">server</span><span class="s2">.</span><span class="s1">sockets</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">servers </span><span class="s2">= [</span><span class="s1">server</span><span class="s2">]</span>
+
+        <span class="s0">elif </span><span class="s1">config</span><span class="s2">.</span><span class="s1">uds </span><span class="s0">is not None</span><span class="s2">:  </span><span class="s3"># pragma: py-win32</span>
+            <span class="s3"># Create a socket using UNIX domain socket.</span>
+            <span class="s1">uds_perms </span><span class="s2">= </span><span class="s6">0o666</span>
+            <span class="s0">if </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">exists</span><span class="s2">(</span><span class="s1">config</span><span class="s2">.</span><span class="s1">uds</span><span class="s2">):</span>
+                <span class="s1">uds_perms </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">stat</span><span class="s2">(</span><span class="s1">config</span><span class="s2">.</span><span class="s1">uds</span><span class="s2">).</span><span class="s1">st_mode  </span><span class="s3"># pragma: full coverage</span>
+            <span class="s1">server </span><span class="s2">= </span><span class="s0">await </span><span class="s1">loop</span><span class="s2">.</span><span class="s1">create_unix_server</span><span class="s2">(</span>
+                <span class="s1">create_protocol</span><span class="s2">, </span><span class="s1">path</span><span class="s2">=</span><span class="s1">config</span><span class="s2">.</span><span class="s1">uds</span><span class="s2">, </span><span class="s1">ssl</span><span class="s2">=</span><span class="s1">config</span><span class="s2">.</span><span class="s1">ssl</span><span class="s2">, </span><span class="s1">backlog</span><span class="s2">=</span><span class="s1">config</span><span class="s2">.</span><span class="s1">backlog</span>
+            <span class="s2">)</span>
+            <span class="s1">os</span><span class="s2">.</span><span class="s1">chmod</span><span class="s2">(</span><span class="s1">config</span><span class="s2">.</span><span class="s1">uds</span><span class="s2">, </span><span class="s1">uds_perms</span><span class="s2">)</span>
+            <span class="s0">assert </span><span class="s1">server</span><span class="s2">.</span><span class="s1">sockets </span><span class="s0">is not None  </span><span class="s3"># mypy</span>
+            <span class="s1">listeners </span><span class="s2">= </span><span class="s1">server</span><span class="s2">.</span><span class="s1">sockets</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">servers </span><span class="s2">= [</span><span class="s1">server</span><span class="s2">]</span>
+
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s3"># Standard case. Create a socket from a host/port pair.</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">server </span><span class="s2">= </span><span class="s0">await </span><span class="s1">loop</span><span class="s2">.</span><span class="s1">create_server</span><span class="s2">(</span>
+                    <span class="s1">create_protocol</span><span class="s2">,</span>
+                    <span class="s1">host</span><span class="s2">=</span><span class="s1">config</span><span class="s2">.</span><span class="s1">host</span><span class="s2">,</span>
+                    <span class="s1">port</span><span class="s2">=</span><span class="s1">config</span><span class="s2">.</span><span class="s1">port</span><span class="s2">,</span>
+                    <span class="s1">ssl</span><span class="s2">=</span><span class="s1">config</span><span class="s2">.</span><span class="s1">ssl</span><span class="s2">,</span>
+                    <span class="s1">backlog</span><span class="s2">=</span><span class="s1">config</span><span class="s2">.</span><span class="s1">backlog</span><span class="s2">,</span>
+                <span class="s2">)</span>
+            <span class="s0">except </span><span class="s1">OSError </span><span class="s0">as </span><span class="s1">exc</span><span class="s2">:</span>
+                <span class="s1">logger</span><span class="s2">.</span><span class="s1">error</span><span class="s2">(</span><span class="s1">exc</span><span class="s2">)</span>
+                <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">lifespan</span><span class="s2">.</span><span class="s1">shutdown</span><span class="s2">()</span>
+                <span class="s1">sys</span><span class="s2">.</span><span class="s1">exit</span><span class="s2">(</span><span class="s6">1</span><span class="s2">)</span>
+
+            <span class="s0">assert </span><span class="s1">server</span><span class="s2">.</span><span class="s1">sockets </span><span class="s0">is not None</span>
+            <span class="s1">listeners </span><span class="s2">= </span><span class="s1">server</span><span class="s2">.</span><span class="s1">sockets</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">servers </span><span class="s2">= [</span><span class="s1">server</span><span class="s2">]</span>
+
+        <span class="s0">if </span><span class="s1">sockets </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_log_started_message</span><span class="s2">(</span><span class="s1">listeners</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s3"># We're most likely running multiple workers, so a message has already been</span>
+            <span class="s3"># logged by `config.bind_socket()`.</span>
+            <span class="s0">pass  </span><span class="s3"># pragma: full coverage</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">started </span><span class="s2">= </span><span class="s0">True</span>
+
+    <span class="s0">def </span><span class="s1">_log_started_message</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">listeners</span><span class="s2">: </span><span class="s1">Sequence</span><span class="s2">[</span><span class="s1">socket</span><span class="s2">.</span><span class="s1">SocketType</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">config </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span>
+
+        <span class="s0">if </span><span class="s1">config</span><span class="s2">.</span><span class="s1">fd </span><span class="s0">is not None</span><span class="s2">:  </span><span class="s3"># pragma: py-win32</span>
+            <span class="s1">sock </span><span class="s2">= </span><span class="s1">listeners</span><span class="s2">[</span><span class="s6">0</span><span class="s2">]</span>
+            <span class="s1">logger</span><span class="s2">.</span><span class="s1">info</span><span class="s2">(</span>
+                <span class="s4">&quot;Uvicorn running on socket %s (Press CTRL+C to quit)&quot;</span><span class="s2">,</span>
+                <span class="s1">sock</span><span class="s2">.</span><span class="s1">getsockname</span><span class="s2">(),</span>
+            <span class="s2">)</span>
+
+        <span class="s0">elif </span><span class="s1">config</span><span class="s2">.</span><span class="s1">uds </span><span class="s0">is not None</span><span class="s2">:  </span><span class="s3"># pragma: py-win32</span>
+            <span class="s1">logger</span><span class="s2">.</span><span class="s1">info</span><span class="s2">(</span><span class="s4">&quot;Uvicorn running on unix socket %s (Press CTRL+C to quit)&quot;</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">uds</span><span class="s2">)</span>
+
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">addr_format </span><span class="s2">= </span><span class="s4">&quot;%s://%s:%d&quot;</span>
+            <span class="s1">host </span><span class="s2">= </span><span class="s4">&quot;0.0.0.0&quot; </span><span class="s0">if </span><span class="s1">config</span><span class="s2">.</span><span class="s1">host </span><span class="s0">is None else </span><span class="s1">config</span><span class="s2">.</span><span class="s1">host</span>
+            <span class="s0">if </span><span class="s4">&quot;:&quot; </span><span class="s0">in </span><span class="s1">host</span><span class="s2">:</span>
+                <span class="s3"># It's an IPv6 address.</span>
+                <span class="s1">addr_format </span><span class="s2">= </span><span class="s4">&quot;%s://[%s]:%d&quot;</span>
+
+            <span class="s1">port </span><span class="s2">= </span><span class="s1">config</span><span class="s2">.</span><span class="s1">port</span>
+            <span class="s0">if </span><span class="s1">port </span><span class="s2">== </span><span class="s6">0</span><span class="s2">:</span>
+                <span class="s1">port </span><span class="s2">= </span><span class="s1">listeners</span><span class="s2">[</span><span class="s6">0</span><span class="s2">].</span><span class="s1">getsockname</span><span class="s2">()[</span><span class="s6">1</span><span class="s2">]</span>
+
+            <span class="s1">protocol_name </span><span class="s2">= </span><span class="s4">&quot;https&quot; </span><span class="s0">if </span><span class="s1">config</span><span class="s2">.</span><span class="s1">ssl </span><span class="s0">else </span><span class="s4">&quot;http&quot;</span>
+            <span class="s1">message </span><span class="s2">= </span><span class="s4">f&quot;Uvicorn running on </span><span class="s0">{</span><span class="s1">addr_format</span><span class="s0">} </span><span class="s4">(Press CTRL+C to quit)&quot;</span>
+            <span class="s1">color_message </span><span class="s2">= </span><span class="s4">&quot;Uvicorn running on &quot; </span><span class="s2">+ </span><span class="s1">click</span><span class="s2">.</span><span class="s1">style</span><span class="s2">(</span><span class="s1">addr_format</span><span class="s2">, </span><span class="s1">bold</span><span class="s2">=</span><span class="s0">True</span><span class="s2">) + </span><span class="s4">&quot; (Press CTRL+C to quit)&quot;</span>
+            <span class="s1">logger</span><span class="s2">.</span><span class="s1">info</span><span class="s2">(</span>
+                <span class="s1">message</span><span class="s2">,</span>
+                <span class="s1">protocol_name</span><span class="s2">,</span>
+                <span class="s1">host</span><span class="s2">,</span>
+                <span class="s1">port</span><span class="s2">,</span>
+                <span class="s1">extra</span><span class="s2">={</span><span class="s4">&quot;color_message&quot;</span><span class="s2">: </span><span class="s1">color_message</span><span class="s2">},</span>
+            <span class="s2">)</span>
+
+    <span class="s0">async def </span><span class="s1">main_loop</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">counter </span><span class="s2">= </span><span class="s6">0</span>
+        <span class="s1">should_exit </span><span class="s2">= </span><span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">on_tick</span><span class="s2">(</span><span class="s1">counter</span><span class="s2">)</span>
+        <span class="s0">while not </span><span class="s1">should_exit</span><span class="s2">:</span>
+            <span class="s1">counter </span><span class="s2">+= </span><span class="s6">1</span>
+            <span class="s1">counter </span><span class="s2">= </span><span class="s1">counter </span><span class="s2">% </span><span class="s6">864000</span>
+            <span class="s0">await </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">sleep</span><span class="s2">(</span><span class="s6">0.1</span><span class="s2">)</span>
+            <span class="s1">should_exit </span><span class="s2">= </span><span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">on_tick</span><span class="s2">(</span><span class="s1">counter</span><span class="s2">)</span>
+
+    <span class="s0">async def </span><span class="s1">on_tick</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">counter</span><span class="s2">: </span><span class="s1">int</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s3"># Update the default headers, once per second.</span>
+        <span class="s0">if </span><span class="s1">counter </span><span class="s2">% </span><span class="s6">10 </span><span class="s2">== </span><span class="s6">0</span><span class="s2">:</span>
+            <span class="s1">current_time </span><span class="s2">= </span><span class="s1">time</span><span class="s2">.</span><span class="s1">time</span><span class="s2">()</span>
+            <span class="s1">current_date </span><span class="s2">= </span><span class="s1">formatdate</span><span class="s2">(</span><span class="s1">current_time</span><span class="s2">, </span><span class="s1">usegmt</span><span class="s2">=</span><span class="s0">True</span><span class="s2">).</span><span class="s1">encode</span><span class="s2">()</span>
+
+            <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">.</span><span class="s1">date_header</span><span class="s2">:</span>
+                <span class="s1">date_header </span><span class="s2">= [(</span><span class="s7">b&quot;date&quot;</span><span class="s2">, </span><span class="s1">current_date</span><span class="s2">)]</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">date_header </span><span class="s2">= []</span>
+
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">server_state</span><span class="s2">.</span><span class="s1">default_headers </span><span class="s2">= </span><span class="s1">date_header </span><span class="s2">+ </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">.</span><span class="s1">encoded_headers</span>
+
+            <span class="s3"># Callback to `callback_notify` once every `timeout_notify` seconds.</span>
+            <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">.</span><span class="s1">callback_notify </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s0">if </span><span class="s1">current_time </span><span class="s2">- </span><span class="s1">self</span><span class="s2">.</span><span class="s1">last_notified </span><span class="s2">&gt; </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">.</span><span class="s1">timeout_notify</span><span class="s2">:  </span><span class="s3"># pragma: full coverage</span>
+                    <span class="s1">self</span><span class="s2">.</span><span class="s1">last_notified </span><span class="s2">= </span><span class="s1">current_time</span>
+                    <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">.</span><span class="s1">callback_notify</span><span class="s2">()</span>
+
+        <span class="s3"># Determine if we should exit.</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">should_exit</span><span class="s2">:</span>
+            <span class="s0">return True</span>
+
+        <span class="s1">max_requests </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">.</span><span class="s1">limit_max_requests</span>
+        <span class="s0">if </span><span class="s1">max_requests </span><span class="s0">is not None and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_state</span><span class="s2">.</span><span class="s1">total_requests </span><span class="s2">&gt;= </span><span class="s1">max_requests</span><span class="s2">:</span>
+            <span class="s1">logger</span><span class="s2">.</span><span class="s1">warning</span><span class="s2">(</span><span class="s4">f&quot;Maximum request limit of </span><span class="s0">{</span><span class="s1">max_requests</span><span class="s0">} </span><span class="s4">exceeded. Terminating process.&quot;</span><span class="s2">)</span>
+            <span class="s0">return True</span>
+
+        <span class="s0">return False</span>
+
+    <span class="s0">async def </span><span class="s1">shutdown</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">sockets</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">socket</span><span class="s2">.</span><span class="s1">socket</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">logger</span><span class="s2">.</span><span class="s1">info</span><span class="s2">(</span><span class="s4">&quot;Shutting down&quot;</span><span class="s2">)</span>
+
+        <span class="s3"># Stop accepting new connections.</span>
+        <span class="s0">for </span><span class="s1">server </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">servers</span><span class="s2">:</span>
+            <span class="s1">server</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+        <span class="s0">for </span><span class="s1">sock </span><span class="s0">in </span><span class="s1">sockets </span><span class="s0">or </span><span class="s2">[]:</span>
+            <span class="s1">sock</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()  </span><span class="s3"># pragma: full coverage</span>
+
+        <span class="s3"># Request shutdown on all existing connections.</span>
+        <span class="s0">for </span><span class="s1">connection </span><span class="s0">in </span><span class="s1">list</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_state</span><span class="s2">.</span><span class="s1">connections</span><span class="s2">):</span>
+            <span class="s1">connection</span><span class="s2">.</span><span class="s1">shutdown</span><span class="s2">()</span>
+        <span class="s0">await </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">sleep</span><span class="s2">(</span><span class="s6">0.1</span><span class="s2">)</span>
+
+        <span class="s3"># When 3.10 is not supported anymore, use `async with asyncio.timeout(...):`.</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">wait_for</span><span class="s2">(</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_wait_tasks_to_complete</span><span class="s2">(),</span>
+                <span class="s1">timeout</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">.</span><span class="s1">timeout_graceful_shutdown</span><span class="s2">,</span>
+            <span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">TimeoutError</span><span class="s2">:</span>
+            <span class="s1">logger</span><span class="s2">.</span><span class="s1">error</span><span class="s2">(</span>
+                <span class="s4">&quot;Cancel %s running task(s), timeout graceful shutdown exceeded&quot;</span><span class="s2">,</span>
+                <span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_state</span><span class="s2">.</span><span class="s1">tasks</span><span class="s2">),</span>
+            <span class="s2">)</span>
+            <span class="s0">for </span><span class="s1">t </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_state</span><span class="s2">.</span><span class="s1">tasks</span><span class="s2">:</span>
+                <span class="s1">t</span><span class="s2">.</span><span class="s1">cancel</span><span class="s2">(</span><span class="s1">msg</span><span class="s2">=</span><span class="s4">&quot;Task cancelled, timeout graceful shutdown exceeded&quot;</span><span class="s2">)</span>
+
+        <span class="s3"># Send the lifespan shutdown event, and wait for application shutdown.</span>
+        <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">force_exit</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">lifespan</span><span class="s2">.</span><span class="s1">shutdown</span><span class="s2">()</span>
+
+    <span class="s0">async def </span><span class="s1">_wait_tasks_to_complete</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3"># Wait for existing connections to finish sending responses.</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_state</span><span class="s2">.</span><span class="s1">connections </span><span class="s0">and not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">force_exit</span><span class="s2">:</span>
+            <span class="s1">msg </span><span class="s2">= </span><span class="s4">&quot;Waiting for connections to close. (CTRL+C to force quit)&quot;</span>
+            <span class="s1">logger</span><span class="s2">.</span><span class="s1">info</span><span class="s2">(</span><span class="s1">msg</span><span class="s2">)</span>
+            <span class="s0">while </span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_state</span><span class="s2">.</span><span class="s1">connections </span><span class="s0">and not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">force_exit</span><span class="s2">:</span>
+                <span class="s0">await </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">sleep</span><span class="s2">(</span><span class="s6">0.1</span><span class="s2">)</span>
+
+        <span class="s3"># Wait for existing tasks to complete.</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_state</span><span class="s2">.</span><span class="s1">tasks </span><span class="s0">and not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">force_exit</span><span class="s2">:</span>
+            <span class="s1">msg </span><span class="s2">= </span><span class="s4">&quot;Waiting for background tasks to complete. (CTRL+C to force quit)&quot;</span>
+            <span class="s1">logger</span><span class="s2">.</span><span class="s1">info</span><span class="s2">(</span><span class="s1">msg</span><span class="s2">)</span>
+            <span class="s0">while </span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_state</span><span class="s2">.</span><span class="s1">tasks </span><span class="s0">and not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">force_exit</span><span class="s2">:</span>
+                <span class="s0">await </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">sleep</span><span class="s2">(</span><span class="s6">0.1</span><span class="s2">)</span>
+
+        <span class="s0">for </span><span class="s1">server </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">servers</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">server</span><span class="s2">.</span><span class="s1">wait_closed</span><span class="s2">()</span>
+
+    <span class="s2">@</span><span class="s1">contextlib</span><span class="s2">.</span><span class="s1">contextmanager</span>
+    <span class="s0">def </span><span class="s1">capture_signals</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; Generator</span><span class="s2">[</span><span class="s0">None</span><span class="s2">, </span><span class="s0">None</span><span class="s2">, </span><span class="s0">None</span><span class="s2">]:</span>
+        <span class="s3"># Signals can only be listened to from the main thread.</span>
+        <span class="s0">if </span><span class="s1">threading</span><span class="s2">.</span><span class="s1">current_thread</span><span class="s2">() </span><span class="s0">is not </span><span class="s1">threading</span><span class="s2">.</span><span class="s1">main_thread</span><span class="s2">():</span>
+            <span class="s0">yield</span>
+            <span class="s0">return</span>
+        <span class="s3"># always use signal.signal, even if loop.add_signal_handler is available</span>
+        <span class="s3"># this allows to restore previous signal handlers later on</span>
+        <span class="s1">original_handlers </span><span class="s2">= {</span><span class="s1">sig</span><span class="s2">: </span><span class="s1">signal</span><span class="s2">.</span><span class="s1">signal</span><span class="s2">(</span><span class="s1">sig</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">handle_exit</span><span class="s2">) </span><span class="s0">for </span><span class="s1">sig </span><span class="s0">in </span><span class="s1">HANDLED_SIGNALS</span><span class="s2">}</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">yield</span>
+        <span class="s0">finally</span><span class="s2">:</span>
+            <span class="s0">for </span><span class="s1">sig</span><span class="s2">, </span><span class="s1">handler </span><span class="s0">in </span><span class="s1">original_handlers</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+                <span class="s1">signal</span><span class="s2">.</span><span class="s1">signal</span><span class="s2">(</span><span class="s1">sig</span><span class="s2">, </span><span class="s1">handler</span><span class="s2">)</span>
+        <span class="s3"># If we did gracefully shut down due to a signal, try to</span>
+        <span class="s3"># trigger the expected behaviour now; multiple signals would be</span>
+        <span class="s3"># done LIFO, see https://stackoverflow.com/questions/48434964</span>
+        <span class="s0">for </span><span class="s1">captured_signal </span><span class="s0">in </span><span class="s1">reversed</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_captured_signals</span><span class="s2">):</span>
+            <span class="s1">signal</span><span class="s2">.</span><span class="s1">raise_signal</span><span class="s2">(</span><span class="s1">captured_signal</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">handle_exit</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">sig</span><span class="s2">: </span><span class="s1">int</span><span class="s2">, </span><span class="s1">frame</span><span class="s2">: </span><span class="s1">FrameType </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_captured_signals</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">sig</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">should_exit </span><span class="s0">and </span><span class="s1">sig </span><span class="s2">== </span><span class="s1">signal</span><span class="s2">.</span><span class="s1">SIGINT</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">force_exit </span><span class="s2">= </span><span class="s0">True  </span><span class="s3"># pragma: full coverage</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">should_exit </span><span class="s2">= </span><span class="s0">True</span>
+</pre>
+</body>
+</html>

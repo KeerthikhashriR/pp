@@ -1,0 +1,106 @@
+<html>
+<head>
+<title>_subprocess.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_subprocess.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot; 
+Some light wrappers around Python's multiprocessing, to deal with cleanly 
+starting child processes. 
+&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">multiprocessing</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">from </span><span class="s1">multiprocessing</span><span class="s3">.</span><span class="s1">context </span><span class="s2">import </span><span class="s1">SpawnProcess</span>
+<span class="s2">from </span><span class="s1">socket </span><span class="s2">import </span><span class="s1">socket</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Callable</span>
+
+<span class="s2">from </span><span class="s1">uvicorn</span><span class="s3">.</span><span class="s1">config </span><span class="s2">import </span><span class="s1">Config</span>
+
+<span class="s1">multiprocessing</span><span class="s3">.</span><span class="s1">allow_connection_pickling</span><span class="s3">()</span>
+<span class="s1">spawn </span><span class="s3">= </span><span class="s1">multiprocessing</span><span class="s3">.</span><span class="s1">get_context</span><span class="s3">(</span><span class="s4">&quot;spawn&quot;</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">get_subprocess</span><span class="s3">(</span>
+    <span class="s1">config</span><span class="s3">: </span><span class="s1">Config</span><span class="s3">,</span>
+    <span class="s1">target</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[..., </span><span class="s2">None</span><span class="s3">],</span>
+    <span class="s1">sockets</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">socket</span><span class="s3">],</span>
+<span class="s3">) </span><span class="s1">-&gt; SpawnProcess</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Called in the parent process, to instantiate a new child process instance. 
+    The child is not yet started at this point. 
+ 
+    * config - The Uvicorn configuration instance. 
+    * target - A callable that accepts a list of sockets. In practice this will 
+               be the `Server.run()` method. 
+    * sockets - A list of sockets to pass to the server. Sockets are bound once 
+                by the parent process, and then passed to the child processes. 
+    &quot;&quot;&quot;</span>
+    <span class="s5"># We pass across the stdin fileno, and reopen it in the child process.</span>
+    <span class="s5"># This is required for some debugging environments.</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">stdin_fileno </span><span class="s3">= </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">stdin</span><span class="s3">.</span><span class="s1">fileno</span><span class="s3">()</span>
+    <span class="s5"># The `sys.stdin` can be `None`, see https://docs.python.org/3/library/sys.html#sys.__stdin__.</span>
+    <span class="s2">except </span><span class="s3">(</span><span class="s1">AttributeError</span><span class="s3">, </span><span class="s1">OSError</span><span class="s3">):</span>
+        <span class="s1">stdin_fileno </span><span class="s3">= </span><span class="s2">None</span>
+
+    <span class="s1">kwargs </span><span class="s3">= {</span>
+        <span class="s4">&quot;config&quot;</span><span class="s3">: </span><span class="s1">config</span><span class="s3">,</span>
+        <span class="s4">&quot;target&quot;</span><span class="s3">: </span><span class="s1">target</span><span class="s3">,</span>
+        <span class="s4">&quot;sockets&quot;</span><span class="s3">: </span><span class="s1">sockets</span><span class="s3">,</span>
+        <span class="s4">&quot;stdin_fileno&quot;</span><span class="s3">: </span><span class="s1">stdin_fileno</span><span class="s3">,</span>
+    <span class="s3">}</span>
+
+    <span class="s2">return </span><span class="s1">spawn</span><span class="s3">.</span><span class="s1">Process</span><span class="s3">(</span><span class="s1">target</span><span class="s3">=</span><span class="s1">subprocess_started</span><span class="s3">, </span><span class="s1">kwargs</span><span class="s3">=</span><span class="s1">kwargs</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">subprocess_started</span><span class="s3">(</span>
+    <span class="s1">config</span><span class="s3">: </span><span class="s1">Config</span><span class="s3">,</span>
+    <span class="s1">target</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[..., </span><span class="s2">None</span><span class="s3">],</span>
+    <span class="s1">sockets</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">socket</span><span class="s3">],</span>
+    <span class="s1">stdin_fileno</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s2">None</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Called when the child process starts. 
+ 
+    * config - The Uvicorn configuration instance. 
+    * target - A callable that accepts a list of sockets. In practice this will 
+               be the `Server.run()` method. 
+    * sockets - A list of sockets to pass to the server. Sockets are bound once 
+                by the parent process, and then passed to the child processes. 
+    * stdin_fileno - The file number of sys.stdin, so that it can be reattached 
+                     to the child process. 
+    &quot;&quot;&quot;</span>
+    <span class="s5"># Re-open stdin.</span>
+    <span class="s2">if </span><span class="s1">stdin_fileno </span><span class="s2">is not None</span><span class="s3">:</span>
+        <span class="s1">sys</span><span class="s3">.</span><span class="s1">stdin </span><span class="s3">= </span><span class="s1">os</span><span class="s3">.</span><span class="s1">fdopen</span><span class="s3">(</span><span class="s1">stdin_fileno</span><span class="s3">)  </span><span class="s5"># pragma: full coverage</span>
+
+    <span class="s5"># Logging needs to be setup again for each child.</span>
+    <span class="s1">config</span><span class="s3">.</span><span class="s1">configure_logging</span><span class="s3">()</span>
+
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s5"># Now we can call into `Server.run(sockets=sockets)`</span>
+        <span class="s1">target</span><span class="s3">(</span><span class="s1">sockets</span><span class="s3">=</span><span class="s1">sockets</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s1">KeyboardInterrupt</span><span class="s3">:  </span><span class="s5"># pragma: no cover</span>
+        <span class="s5"># supress the exception to avoid a traceback from subprocess.Popen</span>
+        <span class="s5"># the parent already expects us to end, so no vital information is lost</span>
+        <span class="s2">pass</span>
+</pre>
+</body>
+</html>

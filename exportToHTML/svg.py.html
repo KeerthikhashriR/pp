@@ -1,0 +1,210 @@
+<html>
+<head>
+<title>svg.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+svg.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot; 
+    pygments.formatters.svg 
+    ~~~~~~~~~~~~~~~~~~~~~~~ 
+ 
+    Formatter for SVG output. 
+ 
+    :copyright: Copyright 2006-2023 by the Pygments team, see AUTHORS. 
+    :license: BSD, see LICENSE for details. 
+&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">formatter </span><span class="s2">import </span><span class="s1">Formatter</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">token </span><span class="s2">import </span><span class="s1">Comment</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">util </span><span class="s2">import </span><span class="s1">get_bool_opt</span><span class="s3">, </span><span class="s1">get_int_opt</span>
+
+<span class="s1">__all__ </span><span class="s3">= [</span><span class="s4">'SvgFormatter'</span><span class="s3">]</span>
+
+
+<span class="s2">def </span><span class="s1">escape_html</span><span class="s3">(</span><span class="s1">text</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;Escape &amp;, &lt;, &gt; as well as single and double quotes for HTML.&quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s1">text</span><span class="s3">.</span><span class="s1">replace</span><span class="s3">(</span><span class="s4">'&amp;'</span><span class="s3">, </span><span class="s4">'&amp;amp;'</span><span class="s3">).  </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'&lt;'</span><span class="s3">, </span><span class="s4">'&amp;lt;'</span><span class="s3">).   </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'&gt;'</span><span class="s3">, </span><span class="s4">'&amp;gt;'</span><span class="s3">).   </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">'&quot;'</span><span class="s3">, </span><span class="s4">'&amp;quot;'</span><span class="s3">). </span><span class="s1">\</span>
+                <span class="s1">replace</span><span class="s3">(</span><span class="s4">&quot;'&quot;</span><span class="s3">, </span><span class="s4">'&amp;#39;'</span><span class="s3">)</span>
+
+
+<span class="s1">class2style </span><span class="s3">= {}</span>
+
+<span class="s2">class </span><span class="s1">SvgFormatter</span><span class="s3">(</span><span class="s1">Formatter</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Format tokens as an SVG graphics file.  This formatter is still experimental. 
+    Each line of code is a ``&lt;text&gt;`` element with explicit ``x`` and ``y`` 
+    coordinates containing ``&lt;tspan&gt;`` elements with the individual token styles. 
+ 
+    By default, this formatter outputs a full SVG document including doctype 
+    declaration and the ``&lt;svg&gt;`` root element. 
+ 
+    .. versionadded:: 0.9 
+ 
+    Additional options accepted: 
+ 
+    `nowrap` 
+        Don't wrap the SVG ``&lt;text&gt;`` elements in ``&lt;svg&gt;&lt;g&gt;`` elements and 
+        don't add a XML declaration and a doctype.  If true, the `fontfamily` 
+        and `fontsize` options are ignored.  Defaults to ``False``. 
+ 
+    `fontfamily` 
+        The value to give the wrapping ``&lt;g&gt;`` element's ``font-family`` 
+        attribute, defaults to ``&quot;monospace&quot;``. 
+ 
+    `fontsize` 
+        The value to give the wrapping ``&lt;g&gt;`` element's ``font-size`` 
+        attribute, defaults to ``&quot;14px&quot;``. 
+ 
+    `linenos` 
+        If ``True``, add line numbers (default: ``False``). 
+ 
+    `linenostart` 
+        The line number for the first line (default: ``1``). 
+ 
+    `linenostep` 
+        If set to a number n &gt; 1, only every nth line number is printed. 
+         
+    `linenowidth` 
+        Maximum width devoted to line numbers (default: ``3*ystep``, sufficient 
+        for up to 4-digit line numbers. Increase width for longer code blocks).   
+         
+    `xoffset` 
+        Starting offset in X direction, defaults to ``0``. 
+ 
+    `yoffset` 
+        Starting offset in Y direction, defaults to the font size if it is given 
+        in pixels, or ``20`` else.  (This is necessary since text coordinates 
+        refer to the text baseline, not the top edge.) 
+ 
+    `ystep` 
+        Offset to add to the Y coordinate for each subsequent line.  This should 
+        roughly be the text size plus 5.  It defaults to that value if the text 
+        size is given in pixels, or ``25`` else. 
+ 
+    `spacehack` 
+        Convert spaces in the source to ``&amp;#160;``, which are non-breaking 
+        spaces.  SVG provides the ``xml:space`` attribute to control how 
+        whitespace inside tags is handled, in theory, the ``preserve`` value 
+        could be used to keep all whitespace as-is.  However, many current SVG 
+        viewers don't obey that rule, so this option is provided as a workaround 
+        and defaults to ``True``. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">name </span><span class="s3">= </span><span class="s4">'SVG'</span>
+    <span class="s1">aliases </span><span class="s3">= [</span><span class="s4">'svg'</span><span class="s3">]</span>
+    <span class="s1">filenames </span><span class="s3">= [</span><span class="s4">'*.svg'</span><span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">):</span>
+        <span class="s1">Formatter</span><span class="s3">.</span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">nowrap </span><span class="s3">= </span><span class="s1">get_bool_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'nowrap'</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">fontfamily </span><span class="s3">= </span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'fontfamily'</span><span class="s3">, </span><span class="s4">'monospace'</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">fontsize </span><span class="s3">= </span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'fontsize'</span><span class="s3">, </span><span class="s4">'14px'</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">xoffset </span><span class="s3">= </span><span class="s1">get_int_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'xoffset'</span><span class="s3">, </span><span class="s5">0</span><span class="s3">)</span>
+        <span class="s1">fs </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fontsize</span><span class="s3">.</span><span class="s1">strip</span><span class="s3">()</span>
+        <span class="s2">if </span><span class="s1">fs</span><span class="s3">.</span><span class="s1">endswith</span><span class="s3">(</span><span class="s4">'px'</span><span class="s3">): </span><span class="s1">fs </span><span class="s3">= </span><span class="s1">fs</span><span class="s3">[:-</span><span class="s5">2</span><span class="s3">].</span><span class="s1">strip</span><span class="s3">()</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">int_fs </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">fs</span><span class="s3">)</span>
+        <span class="s2">except</span><span class="s3">:</span>
+            <span class="s1">int_fs </span><span class="s3">= </span><span class="s5">20</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">yoffset </span><span class="s3">= </span><span class="s1">get_int_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'yoffset'</span><span class="s3">, </span><span class="s1">int_fs</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">ystep </span><span class="s3">= </span><span class="s1">get_int_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'ystep'</span><span class="s3">, </span><span class="s1">int_fs </span><span class="s3">+ </span><span class="s5">5</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">spacehack </span><span class="s3">= </span><span class="s1">get_bool_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'spacehack'</span><span class="s3">, </span><span class="s2">True</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">linenos </span><span class="s3">= </span><span class="s1">get_bool_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">,</span><span class="s4">'linenos'</span><span class="s3">,</span><span class="s2">False</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">linenostart </span><span class="s3">= </span><span class="s1">get_int_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">,</span><span class="s4">'linenostart'</span><span class="s3">,</span><span class="s5">1</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">linenostep </span><span class="s3">= </span><span class="s1">get_int_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">,</span><span class="s4">'linenostep'</span><span class="s3">,</span><span class="s5">1</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">linenowidth </span><span class="s3">= </span><span class="s1">get_int_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">,</span><span class="s4">'linenowidth'</span><span class="s3">, </span><span class="s5">3</span><span class="s3">*</span><span class="s1">self</span><span class="s3">.</span><span class="s1">ystep</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_stylecache </span><span class="s3">= {}</span>
+
+    <span class="s2">def </span><span class="s1">format_unencoded</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">tokensource</span><span class="s3">, </span><span class="s1">outfile</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Format ``tokensource``, an iterable of ``(tokentype, tokenstring)`` 
+        tuples and write it into ``outfile``. 
+ 
+        For our implementation we put all lines in their own 'line group'. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">x </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">xoffset</span>
+        <span class="s1">y </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">yoffset</span>
+        <span class="s2">if not </span><span class="s1">self</span><span class="s3">.</span><span class="s1">nowrap</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">encoding</span><span class="s3">:</span>
+                <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">'&lt;?xml version=&quot;1.0&quot; encoding=&quot;%s&quot;?&gt;</span><span class="s2">\n</span><span class="s4">' </span><span class="s3">%</span>
+                              <span class="s1">self</span><span class="s3">.</span><span class="s1">encoding</span><span class="s3">)</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">'&lt;?xml version=&quot;1.0&quot;?&gt;</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">)</span>
+            <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">'&lt;!DOCTYPE svg PUBLIC &quot;-//W3C//DTD SVG 1.0//EN&quot; '</span>
+                          <span class="s4">'&quot;http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/'</span>
+                          <span class="s4">'svg10.dtd&quot;&gt;</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">)</span>
+            <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">'&lt;svg xmlns=&quot;http://www.w3.org/2000/svg&quot;&gt;</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">)</span>
+            <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">'&lt;g font-family=&quot;%s&quot; font-size=&quot;%s&quot;&gt;</span><span class="s2">\n</span><span class="s4">' </span><span class="s3">%</span>
+                          <span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fontfamily</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fontsize</span><span class="s3">))</span>
+        
+        <span class="s1">counter </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">linenostart </span>
+        <span class="s1">counter_step </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">linenostep</span>
+        <span class="s1">counter_style </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_get_style</span><span class="s3">(</span><span class="s1">Comment</span><span class="s3">)</span>
+        <span class="s1">line_x </span><span class="s3">= </span><span class="s1">x</span>
+        
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">linenos</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">counter </span><span class="s3">% </span><span class="s1">counter_step </span><span class="s3">== </span><span class="s5">0</span><span class="s3">:</span>
+                <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">'&lt;text x=&quot;%s&quot; y=&quot;%s&quot; %s text-anchor=&quot;end&quot;&gt;%s&lt;/text&gt;' </span><span class="s3">%</span>
+                    <span class="s3">(</span><span class="s1">x</span><span class="s3">+</span><span class="s1">self</span><span class="s3">.</span><span class="s1">linenowidth</span><span class="s3">,</span><span class="s1">y</span><span class="s3">,</span><span class="s1">counter_style</span><span class="s3">,</span><span class="s1">counter</span><span class="s3">))</span>
+            <span class="s1">line_x </span><span class="s3">+= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">linenowidth </span><span class="s3">+ </span><span class="s1">self</span><span class="s3">.</span><span class="s1">ystep</span>
+            <span class="s1">counter </span><span class="s3">+= </span><span class="s5">1</span>
+
+        <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">'&lt;text x=&quot;%s&quot; y=&quot;%s&quot; xml:space=&quot;preserve&quot;&gt;' </span><span class="s3">% (</span><span class="s1">line_x</span><span class="s3">, </span><span class="s1">y</span><span class="s3">))</span>
+        <span class="s2">for </span><span class="s1">ttype</span><span class="s3">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">tokensource</span><span class="s3">:</span>
+            <span class="s1">style </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_get_style</span><span class="s3">(</span><span class="s1">ttype</span><span class="s3">)</span>
+            <span class="s1">tspan </span><span class="s3">= </span><span class="s1">style </span><span class="s2">and </span><span class="s4">'&lt;tspan' </span><span class="s3">+ </span><span class="s1">style </span><span class="s3">+ </span><span class="s4">'&gt;' </span><span class="s2">or </span><span class="s4">''</span>
+            <span class="s1">tspanend </span><span class="s3">= </span><span class="s1">tspan </span><span class="s2">and </span><span class="s4">'&lt;/tspan&gt;' </span><span class="s2">or </span><span class="s4">''</span>
+            <span class="s1">value </span><span class="s3">= </span><span class="s1">escape_html</span><span class="s3">(</span><span class="s1">value</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">spacehack</span><span class="s3">:</span>
+                <span class="s1">value </span><span class="s3">= </span><span class="s1">value</span><span class="s3">.</span><span class="s1">expandtabs</span><span class="s3">().</span><span class="s1">replace</span><span class="s3">(</span><span class="s4">' '</span><span class="s3">, </span><span class="s4">'&amp;#160;'</span><span class="s3">)</span>
+            <span class="s1">parts </span><span class="s3">= </span><span class="s1">value</span><span class="s3">.</span><span class="s1">split</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">)</span>
+            <span class="s2">for </span><span class="s1">part </span><span class="s2">in </span><span class="s1">parts</span><span class="s3">[:-</span><span class="s5">1</span><span class="s3">]:</span>
+                <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">tspan </span><span class="s3">+ </span><span class="s1">part </span><span class="s3">+ </span><span class="s1">tspanend</span><span class="s3">)</span>
+                <span class="s1">y </span><span class="s3">+= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">ystep</span>
+                <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">'&lt;/text&gt;</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">linenos </span><span class="s2">and </span><span class="s1">counter </span><span class="s3">% </span><span class="s1">counter_step </span><span class="s3">== </span><span class="s5">0</span><span class="s3">:</span>
+                    <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">'&lt;text x=&quot;%s&quot; y=&quot;%s&quot; text-anchor=&quot;end&quot; %s&gt;%s&lt;/text&gt;' </span><span class="s3">%</span>
+                        <span class="s3">(</span><span class="s1">x</span><span class="s3">+</span><span class="s1">self</span><span class="s3">.</span><span class="s1">linenowidth</span><span class="s3">,</span><span class="s1">y</span><span class="s3">,</span><span class="s1">counter_style</span><span class="s3">,</span><span class="s1">counter</span><span class="s3">))</span>
+                
+                <span class="s1">counter </span><span class="s3">+= </span><span class="s5">1</span>
+                <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">'&lt;text x=&quot;%s&quot; y=&quot;%s&quot; ' 'xml:space=&quot;preserve&quot;&gt;' </span><span class="s3">% (</span><span class="s1">line_x</span><span class="s3">,</span><span class="s1">y</span><span class="s3">))</span>
+            <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">tspan </span><span class="s3">+ </span><span class="s1">parts</span><span class="s3">[-</span><span class="s5">1</span><span class="s3">] + </span><span class="s1">tspanend</span><span class="s3">)</span>
+        <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">'&lt;/text&gt;'</span><span class="s3">)</span>
+
+        <span class="s2">if not </span><span class="s1">self</span><span class="s3">.</span><span class="s1">nowrap</span><span class="s3">:</span>
+            <span class="s1">outfile</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">'&lt;/g&gt;&lt;/svg&gt;</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">_get_style</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">tokentype</span><span class="s3">):</span>
+        <span class="s2">if </span><span class="s1">tokentype </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_stylecache</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_stylecache</span><span class="s3">[</span><span class="s1">tokentype</span><span class="s3">]</span>
+        <span class="s1">otokentype </span><span class="s3">= </span><span class="s1">tokentype</span>
+        <span class="s2">while not </span><span class="s1">self</span><span class="s3">.</span><span class="s1">style</span><span class="s3">.</span><span class="s1">styles_token</span><span class="s3">(</span><span class="s1">tokentype</span><span class="s3">):</span>
+            <span class="s1">tokentype </span><span class="s3">= </span><span class="s1">tokentype</span><span class="s3">.</span><span class="s1">parent</span>
+        <span class="s1">value </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">style</span><span class="s3">.</span><span class="s1">style_for_token</span><span class="s3">(</span><span class="s1">tokentype</span><span class="s3">)</span>
+        <span class="s1">result </span><span class="s3">= </span><span class="s4">''</span>
+        <span class="s2">if </span><span class="s1">value</span><span class="s3">[</span><span class="s4">'color'</span><span class="s3">]:</span>
+            <span class="s1">result </span><span class="s3">= </span><span class="s4">' fill=&quot;#' </span><span class="s3">+ </span><span class="s1">value</span><span class="s3">[</span><span class="s4">'color'</span><span class="s3">] + </span><span class="s4">'&quot;'</span>
+        <span class="s2">if </span><span class="s1">value</span><span class="s3">[</span><span class="s4">'bold'</span><span class="s3">]:</span>
+            <span class="s1">result </span><span class="s3">+= </span><span class="s4">' font-weight=&quot;bold&quot;'</span>
+        <span class="s2">if </span><span class="s1">value</span><span class="s3">[</span><span class="s4">'italic'</span><span class="s3">]:</span>
+            <span class="s1">result </span><span class="s3">+= </span><span class="s4">' font-style=&quot;italic&quot;'</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_stylecache</span><span class="s3">[</span><span class="s1">otokentype</span><span class="s3">] = </span><span class="s1">result</span>
+        <span class="s2">return </span><span class="s1">result</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,396 @@
+<html>
+<head>
+<title>_config.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #7a7e85;}
+.s4 { color: #6aab73;}
+.s5 { color: #5f826b; font-style: italic;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_config.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations </span><span class="s0">as </span><span class="s1">_annotations</span>
+
+<span class="s0">import </span><span class="s1">warnings</span>
+<span class="s0">from </span><span class="s1">contextlib </span><span class="s0">import </span><span class="s1">contextmanager</span>
+<span class="s0">from </span><span class="s1">re </span><span class="s0">import </span><span class="s1">Pattern</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s2">(</span>
+    <span class="s1">TYPE_CHECKING</span><span class="s2">,</span>
+    <span class="s1">Any</span><span class="s2">,</span>
+    <span class="s1">Callable</span><span class="s2">,</span>
+    <span class="s1">Literal</span><span class="s2">,</span>
+    <span class="s1">cast</span><span class="s2">,</span>
+<span class="s2">)</span>
+
+<span class="s0">from </span><span class="s1">pydantic_core </span><span class="s0">import </span><span class="s1">core_schema</span>
+<span class="s0">from </span><span class="s1">typing_extensions </span><span class="s0">import </span><span class="s1">Self</span>
+
+<span class="s0">from </span><span class="s2">..</span><span class="s1">aliases </span><span class="s0">import </span><span class="s1">AliasGenerator</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">config </span><span class="s0">import </span><span class="s1">ConfigDict</span><span class="s2">, </span><span class="s1">ExtraValues</span><span class="s2">, </span><span class="s1">JsonDict</span><span class="s2">, </span><span class="s1">JsonEncoder</span><span class="s2">, </span><span class="s1">JsonSchemaExtraCallable</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">errors </span><span class="s0">import </span><span class="s1">PydanticUserError</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">warnings </span><span class="s0">import </span><span class="s1">PydanticDeprecatedSince20</span><span class="s2">, </span><span class="s1">PydanticDeprecatedSince210</span>
+
+<span class="s0">if not </span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+    <span class="s3"># See PyCharm issues https://youtrack.jetbrains.com/issue/PY-21915</span>
+    <span class="s3"># and https://youtrack.jetbrains.com/issue/PY-51428</span>
+    <span class="s1">DeprecationWarning </span><span class="s2">= </span><span class="s1">PydanticDeprecatedSince20</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+    <span class="s0">from </span><span class="s2">..</span><span class="s1">_internal</span><span class="s2">.</span><span class="s1">_schema_generation_shared </span><span class="s0">import </span><span class="s1">GenerateSchema</span>
+    <span class="s0">from </span><span class="s2">..</span><span class="s1">fields </span><span class="s0">import </span><span class="s1">ComputedFieldInfo</span><span class="s2">, </span><span class="s1">FieldInfo</span>
+
+<span class="s1">DEPRECATION_MESSAGE </span><span class="s2">= </span><span class="s4">'Support for class-based `config` is deprecated, use ConfigDict instead.'</span>
+
+
+<span class="s0">class </span><span class="s1">ConfigWrapper</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot;Internal wrapper for Config which exposes ConfigDict items as attributes.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ </span><span class="s2">= (</span><span class="s4">'config_dict'</span><span class="s2">,)</span>
+
+    <span class="s1">config_dict</span><span class="s2">: </span><span class="s1">ConfigDict</span>
+
+    <span class="s3"># all annotations are copied directly from ConfigDict, and should be kept up to date, a test will fail if they</span>
+    <span class="s3"># stop matching</span>
+    <span class="s1">title</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span>
+    <span class="s1">str_to_lower</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">str_to_upper</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">str_strip_whitespace</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">str_min_length</span><span class="s2">: </span><span class="s1">int</span>
+    <span class="s1">str_max_length</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None</span>
+    <span class="s1">extra</span><span class="s2">: </span><span class="s1">ExtraValues </span><span class="s2">| </span><span class="s0">None</span>
+    <span class="s1">frozen</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">populate_by_name</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">use_enum_values</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">validate_assignment</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">arbitrary_types_allowed</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">from_attributes</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s3"># whether to use the actual key provided in the data (e.g. alias or first alias for &quot;field required&quot; errors) instead of field_names</span>
+    <span class="s3"># to construct error `loc`s, default `True`</span>
+    <span class="s1">loc_by_alias</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">alias_generator</span><span class="s2">: </span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">str</span><span class="s2">], </span><span class="s1">str</span><span class="s2">] | </span><span class="s1">AliasGenerator </span><span class="s2">| </span><span class="s0">None</span>
+    <span class="s1">model_title_generator</span><span class="s2">: </span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">type</span><span class="s2">], </span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None</span>
+    <span class="s1">field_title_generator</span><span class="s2">: </span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">FieldInfo </span><span class="s2">| </span><span class="s1">ComputedFieldInfo</span><span class="s2">], </span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None</span>
+    <span class="s1">ignored_types</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">type</span><span class="s2">, ...]</span>
+    <span class="s1">allow_inf_nan</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">json_schema_extra</span><span class="s2">: </span><span class="s1">JsonDict </span><span class="s2">| </span><span class="s1">JsonSchemaExtraCallable </span><span class="s2">| </span><span class="s0">None</span>
+    <span class="s1">json_encoders</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">type</span><span class="s2">[</span><span class="s1">object</span><span class="s2">], </span><span class="s1">JsonEncoder</span><span class="s2">] | </span><span class="s0">None</span>
+
+    <span class="s3"># new in V2</span>
+    <span class="s1">strict</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s3"># whether instances of models and dataclasses (including subclass instances) should re-validate, default 'never'</span>
+    <span class="s1">revalidate_instances</span><span class="s2">: </span><span class="s1">Literal</span><span class="s2">[</span><span class="s4">'always'</span><span class="s2">, </span><span class="s4">'never'</span><span class="s2">, </span><span class="s4">'subclass-instances'</span><span class="s2">]</span>
+    <span class="s1">ser_json_timedelta</span><span class="s2">: </span><span class="s1">Literal</span><span class="s2">[</span><span class="s4">'iso8601'</span><span class="s2">, </span><span class="s4">'float'</span><span class="s2">]</span>
+    <span class="s1">ser_json_bytes</span><span class="s2">: </span><span class="s1">Literal</span><span class="s2">[</span><span class="s4">'utf8'</span><span class="s2">, </span><span class="s4">'base64'</span><span class="s2">, </span><span class="s4">'hex'</span><span class="s2">]</span>
+    <span class="s1">val_json_bytes</span><span class="s2">: </span><span class="s1">Literal</span><span class="s2">[</span><span class="s4">'utf8'</span><span class="s2">, </span><span class="s4">'base64'</span><span class="s2">, </span><span class="s4">'hex'</span><span class="s2">]</span>
+    <span class="s1">ser_json_inf_nan</span><span class="s2">: </span><span class="s1">Literal</span><span class="s2">[</span><span class="s4">'null'</span><span class="s2">, </span><span class="s4">'constants'</span><span class="s2">, </span><span class="s4">'strings'</span><span class="s2">]</span>
+    <span class="s3"># whether to validate default values during validation, default False</span>
+    <span class="s1">validate_default</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">validate_return</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">protected_namespaces</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">str </span><span class="s2">| </span><span class="s1">Pattern</span><span class="s2">[</span><span class="s1">str</span><span class="s2">], ...]</span>
+    <span class="s1">hide_input_in_errors</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">defer_build</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">plugin_settings</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">object</span><span class="s2">] | </span><span class="s0">None</span>
+    <span class="s1">schema_generator</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">GenerateSchema</span><span class="s2">] | </span><span class="s0">None</span>
+    <span class="s1">json_schema_serialization_defaults_required</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">json_schema_mode_override</span><span class="s2">: </span><span class="s1">Literal</span><span class="s2">[</span><span class="s4">'validation'</span><span class="s2">, </span><span class="s4">'serialization'</span><span class="s2">, </span><span class="s0">None</span><span class="s2">]</span>
+    <span class="s1">coerce_numbers_to_str</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">regex_engine</span><span class="s2">: </span><span class="s1">Literal</span><span class="s2">[</span><span class="s4">'rust-regex'</span><span class="s2">, </span><span class="s4">'python-re'</span><span class="s2">]</span>
+    <span class="s1">validation_error_cause</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">use_attribute_docstrings</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">cache_strings</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s1">Literal</span><span class="s2">[</span><span class="s4">'all'</span><span class="s2">, </span><span class="s4">'keys'</span><span class="s2">, </span><span class="s4">'none'</span><span class="s2">]</span>
+    <span class="s1">validate_by_alias</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">validate_by_name</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">serialize_by_alias</span><span class="s2">: </span><span class="s1">bool</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">config</span><span class="s2">: </span><span class="s1">ConfigDict </span><span class="s2">| </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] | </span><span class="s1">type</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None</span><span class="s2">, *, </span><span class="s1">check</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">):</span>
+        <span class="s0">if </span><span class="s1">check</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">config_dict </span><span class="s2">= </span><span class="s1">prepare_config</span><span class="s2">(</span><span class="s1">config</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">config_dict </span><span class="s2">= </span><span class="s1">cast</span><span class="s2">(</span><span class="s1">ConfigDict</span><span class="s2">, </span><span class="s1">config</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">for_model</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, </span><span class="s1">bases</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">type</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">], ...], </span><span class="s1">namespace</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">], </span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]) </span><span class="s1">-&gt; Self</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Build a new `ConfigWrapper` instance for a `BaseModel`. 
+ 
+        The config wrapper built based on (in descending order of priority): 
+        - options from `kwargs` 
+        - options from the `namespace` 
+        - options from the base classes (`bases`) 
+ 
+        Args: 
+            bases: A tuple of base classes. 
+            namespace: The namespace of the class being created. 
+            kwargs: The kwargs passed to the class being created. 
+ 
+        Returns: 
+            A `ConfigWrapper` instance for `BaseModel`. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">config_new </span><span class="s2">= </span><span class="s1">ConfigDict</span><span class="s2">()</span>
+        <span class="s0">for </span><span class="s1">base </span><span class="s0">in </span><span class="s1">bases</span><span class="s2">:</span>
+            <span class="s1">config </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">base</span><span class="s2">, </span><span class="s4">'model_config'</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">config</span><span class="s2">:</span>
+                <span class="s1">config_new</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">config</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">())</span>
+
+        <span class="s1">config_class_from_namespace </span><span class="s2">= </span><span class="s1">namespace</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'Config'</span><span class="s2">)</span>
+        <span class="s1">config_dict_from_namespace </span><span class="s2">= </span><span class="s1">namespace</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'model_config'</span><span class="s2">)</span>
+
+        <span class="s1">raw_annotations </span><span class="s2">= </span><span class="s1">namespace</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'__annotations__'</span><span class="s2">, {})</span>
+        <span class="s0">if </span><span class="s1">raw_annotations</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'model_config'</span><span class="s2">) </span><span class="s0">and </span><span class="s1">config_dict_from_namespace </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">PydanticUserError</span><span class="s2">(</span>
+                <span class="s4">'`model_config` cannot be used as a model field name. Use `model_config` for model configuration.'</span><span class="s2">,</span>
+                <span class="s1">code</span><span class="s2">=</span><span class="s4">'model-config-invalid-field-name'</span><span class="s2">,</span>
+            <span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">config_class_from_namespace </span><span class="s0">and </span><span class="s1">config_dict_from_namespace</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">PydanticUserError</span><span class="s2">(</span><span class="s4">'&quot;Config&quot; and &quot;model_config&quot; cannot be used together'</span><span class="s2">, </span><span class="s1">code</span><span class="s2">=</span><span class="s4">'config-both'</span><span class="s2">)</span>
+
+        <span class="s1">config_from_namespace </span><span class="s2">= </span><span class="s1">config_dict_from_namespace </span><span class="s0">or </span><span class="s1">prepare_config</span><span class="s2">(</span><span class="s1">config_class_from_namespace</span><span class="s2">)</span>
+
+        <span class="s1">config_new</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">config_from_namespace</span><span class="s2">)</span>
+
+        <span class="s0">for </span><span class="s1">k </span><span class="s0">in </span><span class="s1">list</span><span class="s2">(</span><span class="s1">kwargs</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">()):</span>
+            <span class="s0">if </span><span class="s1">k </span><span class="s0">in </span><span class="s1">config_keys</span><span class="s2">:</span>
+                <span class="s1">config_new</span><span class="s2">[</span><span class="s1">k</span><span class="s2">] = </span><span class="s1">kwargs</span><span class="s2">.</span><span class="s1">pop</span><span class="s2">(</span><span class="s1">k</span><span class="s2">)</span>
+
+        <span class="s0">return </span><span class="s1">cls</span><span class="s2">(</span><span class="s1">config_new</span><span class="s2">)</span>
+
+    <span class="s3"># we don't show `__getattr__` to type checkers so missing attributes cause errors</span>
+    <span class="s0">if not </span><span class="s1">TYPE_CHECKING</span><span class="s2">:  </span><span class="s3"># pragma: no branch</span>
+
+        <span class="s0">def </span><span class="s1">__getattr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config_dict</span><span class="s2">[</span><span class="s1">name</span><span class="s2">]</span>
+            <span class="s0">except </span><span class="s1">KeyError</span><span class="s2">:</span>
+                <span class="s0">try</span><span class="s2">:</span>
+                    <span class="s0">return </span><span class="s1">config_defaults</span><span class="s2">[</span><span class="s1">name</span><span class="s2">]</span>
+                <span class="s0">except </span><span class="s1">KeyError</span><span class="s2">:</span>
+                    <span class="s0">raise </span><span class="s1">AttributeError</span><span class="s2">(</span><span class="s4">f'Config has no attribute </span><span class="s0">{</span><span class="s1">name</span><span class="s0">!r}</span><span class="s4">'</span><span class="s2">) </span><span class="s0">from None</span>
+
+    <span class="s0">def </span><span class="s1">core_config</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">title</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; core_schema</span><span class="s2">.</span><span class="s1">CoreConfig</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Create a pydantic-core config. 
+ 
+        We don't use getattr here since we don't want to populate with defaults. 
+ 
+        Args: 
+            title: The title to use if not set in config. 
+ 
+        Returns: 
+            A `CoreConfig` object created from config. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">config </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config_dict</span>
+
+        <span class="s0">if </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'schema_generator'</span><span class="s2">) </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+                <span class="s4">'The `schema_generator` setting has been deprecated since v2.10. This setting no longer has any effect.'</span><span class="s2">,</span>
+                <span class="s1">PydanticDeprecatedSince210</span><span class="s2">,</span>
+                <span class="s1">stacklevel</span><span class="s2">=</span><span class="s6">2</span><span class="s2">,</span>
+            <span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s2">(</span><span class="s1">populate_by_name </span><span class="s2">:= </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'populate_by_name'</span><span class="s2">)) </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s3"># We include this patch for backwards compatibility purposes, but this config setting will be deprecated in v3.0, and likely removed in v4.0.</span>
+            <span class="s3"># Thus, the above warning and this patch can be removed then as well.</span>
+            <span class="s0">if </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'validate_by_name'</span><span class="s2">) </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s1">config</span><span class="s2">[</span><span class="s4">'validate_by_alias'</span><span class="s2">] = </span><span class="s0">True</span>
+                <span class="s1">config</span><span class="s2">[</span><span class="s4">'validate_by_name'</span><span class="s2">] = </span><span class="s1">populate_by_name</span>
+
+        <span class="s3"># We dynamically patch validate_by_name to be True if validate_by_alias is set to False</span>
+        <span class="s3"># and validate_by_name is not explicitly set.</span>
+        <span class="s0">if </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'validate_by_alias'</span><span class="s2">) </span><span class="s0">is False and </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'validate_by_name'</span><span class="s2">) </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">config</span><span class="s2">[</span><span class="s4">'validate_by_name'</span><span class="s2">] = </span><span class="s0">True</span>
+
+        <span class="s0">if </span><span class="s2">(</span><span class="s0">not </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'validate_by_alias'</span><span class="s2">, </span><span class="s0">True</span><span class="s2">)) </span><span class="s0">and </span><span class="s2">(</span><span class="s0">not </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'validate_by_name'</span><span class="s2">, </span><span class="s0">False</span><span class="s2">)):</span>
+            <span class="s0">raise </span><span class="s1">PydanticUserError</span><span class="s2">(</span>
+                <span class="s4">'At least one of `validate_by_alias` or `validate_by_name` must be set to True.'</span><span class="s2">,</span>
+                <span class="s1">code</span><span class="s2">=</span><span class="s4">'validate-by-alias-and-name-false'</span><span class="s2">,</span>
+            <span class="s2">)</span>
+
+        <span class="s0">return </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">CoreConfig</span><span class="s2">(</span>
+            <span class="s2">**{  </span><span class="s3"># pyright: ignore[reportArgumentType]</span>
+                <span class="s1">k</span><span class="s2">: </span><span class="s1">v</span>
+                <span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s2">(</span>
+                    <span class="s2">(</span><span class="s4">'title'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'title'</span><span class="s2">) </span><span class="s0">or </span><span class="s1">title </span><span class="s0">or None</span><span class="s2">),</span>
+                    <span class="s2">(</span><span class="s4">'extra_fields_behavior'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'extra'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'allow_inf_nan'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'allow_inf_nan'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'str_strip_whitespace'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'str_strip_whitespace'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'str_to_lower'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'str_to_lower'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'str_to_upper'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'str_to_upper'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'strict'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'strict'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'ser_json_timedelta'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'ser_json_timedelta'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'ser_json_bytes'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'ser_json_bytes'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'val_json_bytes'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'val_json_bytes'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'ser_json_inf_nan'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'ser_json_inf_nan'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'from_attributes'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'from_attributes'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'loc_by_alias'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'loc_by_alias'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'revalidate_instances'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'revalidate_instances'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'validate_default'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'validate_default'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'str_max_length'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'str_max_length'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'str_min_length'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'str_min_length'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'hide_input_in_errors'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'hide_input_in_errors'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'coerce_numbers_to_str'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'coerce_numbers_to_str'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'regex_engine'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'regex_engine'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'validation_error_cause'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'validation_error_cause'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'cache_strings'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'cache_strings'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'validate_by_alias'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'validate_by_alias'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'validate_by_name'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'validate_by_name'</span><span class="s2">)),</span>
+                    <span class="s2">(</span><span class="s4">'serialize_by_alias'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'serialize_by_alias'</span><span class="s2">)),</span>
+                <span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">v </span><span class="s0">is not None</span>
+            <span class="s2">}</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">__repr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">):</span>
+        <span class="s1">c </span><span class="s2">= </span><span class="s4">', '</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s4">f'</span><span class="s0">{</span><span class="s1">k</span><span class="s0">}</span><span class="s4">=</span><span class="s0">{</span><span class="s1">v</span><span class="s0">!r}</span><span class="s4">' </span><span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config_dict</span><span class="s2">.</span><span class="s1">items</span><span class="s2">())</span>
+        <span class="s0">return </span><span class="s4">f'ConfigWrapper(</span><span class="s0">{</span><span class="s1">c</span><span class="s0">}</span><span class="s4">)'</span>
+
+
+<span class="s0">class </span><span class="s1">ConfigWrapperStack</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot;A stack of `ConfigWrapper` instances.&quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">config_wrapper</span><span class="s2">: </span><span class="s1">ConfigWrapper</span><span class="s2">):</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_config_wrapper_stack</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">ConfigWrapper</span><span class="s2">] = [</span><span class="s1">config_wrapper</span><span class="s2">]</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">tail</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; ConfigWrapper</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_config_wrapper_stack</span><span class="s2">[-</span><span class="s6">1</span><span class="s2">]</span>
+
+    <span class="s2">@</span><span class="s1">contextmanager</span>
+    <span class="s0">def </span><span class="s1">push</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">config_wrapper</span><span class="s2">: </span><span class="s1">ConfigWrapper </span><span class="s2">| </span><span class="s1">ConfigDict </span><span class="s2">| </span><span class="s0">None</span><span class="s2">):</span>
+        <span class="s0">if </span><span class="s1">config_wrapper </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">yield</span>
+            <span class="s0">return</span>
+
+        <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">config_wrapper</span><span class="s2">, </span><span class="s1">ConfigWrapper</span><span class="s2">):</span>
+            <span class="s1">config_wrapper </span><span class="s2">= </span><span class="s1">ConfigWrapper</span><span class="s2">(</span><span class="s1">config_wrapper</span><span class="s2">, </span><span class="s1">check</span><span class="s2">=</span><span class="s0">False</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_config_wrapper_stack</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">config_wrapper</span><span class="s2">)</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">yield</span>
+        <span class="s0">finally</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_config_wrapper_stack</span><span class="s2">.</span><span class="s1">pop</span><span class="s2">()</span>
+
+
+<span class="s1">config_defaults </span><span class="s2">= </span><span class="s1">ConfigDict</span><span class="s2">(</span>
+    <span class="s1">title</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">str_to_lower</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">str_to_upper</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">str_strip_whitespace</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">str_min_length</span><span class="s2">=</span><span class="s6">0</span><span class="s2">,</span>
+    <span class="s1">str_max_length</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s3"># let the model / dataclass decide how to handle it</span>
+    <span class="s1">extra</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">frozen</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">populate_by_name</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">use_enum_values</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">validate_assignment</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">arbitrary_types_allowed</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">from_attributes</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">loc_by_alias</span><span class="s2">=</span><span class="s0">True</span><span class="s2">,</span>
+    <span class="s1">alias_generator</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">model_title_generator</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">field_title_generator</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">ignored_types</span><span class="s2">=(),</span>
+    <span class="s1">allow_inf_nan</span><span class="s2">=</span><span class="s0">True</span><span class="s2">,</span>
+    <span class="s1">json_schema_extra</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">strict</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">revalidate_instances</span><span class="s2">=</span><span class="s4">'never'</span><span class="s2">,</span>
+    <span class="s1">ser_json_timedelta</span><span class="s2">=</span><span class="s4">'iso8601'</span><span class="s2">,</span>
+    <span class="s1">ser_json_bytes</span><span class="s2">=</span><span class="s4">'utf8'</span><span class="s2">,</span>
+    <span class="s1">val_json_bytes</span><span class="s2">=</span><span class="s4">'utf8'</span><span class="s2">,</span>
+    <span class="s1">ser_json_inf_nan</span><span class="s2">=</span><span class="s4">'null'</span><span class="s2">,</span>
+    <span class="s1">validate_default</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">validate_return</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">protected_namespaces</span><span class="s2">=(</span><span class="s4">'model_validate'</span><span class="s2">, </span><span class="s4">'model_dump'</span><span class="s2">),</span>
+    <span class="s1">hide_input_in_errors</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">json_encoders</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">defer_build</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">schema_generator</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">plugin_settings</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">json_schema_serialization_defaults_required</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">json_schema_mode_override</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">coerce_numbers_to_str</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">regex_engine</span><span class="s2">=</span><span class="s4">'rust-regex'</span><span class="s2">,</span>
+    <span class="s1">validation_error_cause</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">use_attribute_docstrings</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">cache_strings</span><span class="s2">=</span><span class="s0">True</span><span class="s2">,</span>
+    <span class="s1">validate_by_alias</span><span class="s2">=</span><span class="s0">True</span><span class="s2">,</span>
+    <span class="s1">validate_by_name</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">serialize_by_alias</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+<span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">prepare_config</span><span class="s2">(</span><span class="s1">config</span><span class="s2">: </span><span class="s1">ConfigDict </span><span class="s2">| </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] | </span><span class="s1">type</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; ConfigDict</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot;Create a `ConfigDict` instance from an existing dict, a class (e.g. old class-based config) or None. 
+ 
+    Args: 
+        config: The input config. 
+ 
+    Returns: 
+        A ConfigDict object created from config. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">config </span><span class="s0">is None</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">ConfigDict</span><span class="s2">()</span>
+
+    <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">config</span><span class="s2">, </span><span class="s1">dict</span><span class="s2">):</span>
+        <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span><span class="s1">DEPRECATION_MESSAGE</span><span class="s2">, </span><span class="s1">DeprecationWarning</span><span class="s2">)</span>
+        <span class="s1">config </span><span class="s2">= {</span><span class="s1">k</span><span class="s2">: </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">config</span><span class="s2">, </span><span class="s1">k</span><span class="s2">) </span><span class="s0">for </span><span class="s1">k </span><span class="s0">in </span><span class="s1">dir</span><span class="s2">(</span><span class="s1">config</span><span class="s2">) </span><span class="s0">if not </span><span class="s1">k</span><span class="s2">.</span><span class="s1">startswith</span><span class="s2">(</span><span class="s4">'__'</span><span class="s2">)}</span>
+
+    <span class="s1">config_dict </span><span class="s2">= </span><span class="s1">cast</span><span class="s2">(</span><span class="s1">ConfigDict</span><span class="s2">, </span><span class="s1">config</span><span class="s2">)</span>
+    <span class="s1">check_deprecated</span><span class="s2">(</span><span class="s1">config_dict</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">config_dict</span>
+
+
+<span class="s1">config_keys </span><span class="s2">= </span><span class="s1">set</span><span class="s2">(</span><span class="s1">ConfigDict</span><span class="s2">.</span><span class="s1">__annotations__</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">())</span>
+
+
+<span class="s1">V2_REMOVED_KEYS </span><span class="s2">= {</span>
+    <span class="s4">'allow_mutation'</span><span class="s2">,</span>
+    <span class="s4">'error_msg_templates'</span><span class="s2">,</span>
+    <span class="s4">'fields'</span><span class="s2">,</span>
+    <span class="s4">'getter_dict'</span><span class="s2">,</span>
+    <span class="s4">'smart_union'</span><span class="s2">,</span>
+    <span class="s4">'underscore_attrs_are_private'</span><span class="s2">,</span>
+    <span class="s4">'json_loads'</span><span class="s2">,</span>
+    <span class="s4">'json_dumps'</span><span class="s2">,</span>
+    <span class="s4">'copy_on_model_validation'</span><span class="s2">,</span>
+    <span class="s4">'post_init_call'</span><span class="s2">,</span>
+<span class="s2">}</span>
+<span class="s1">V2_RENAMED_KEYS </span><span class="s2">= {</span>
+    <span class="s4">'allow_population_by_field_name'</span><span class="s2">: </span><span class="s4">'validate_by_name'</span><span class="s2">,</span>
+    <span class="s4">'anystr_lower'</span><span class="s2">: </span><span class="s4">'str_to_lower'</span><span class="s2">,</span>
+    <span class="s4">'anystr_strip_whitespace'</span><span class="s2">: </span><span class="s4">'str_strip_whitespace'</span><span class="s2">,</span>
+    <span class="s4">'anystr_upper'</span><span class="s2">: </span><span class="s4">'str_to_upper'</span><span class="s2">,</span>
+    <span class="s4">'keep_untouched'</span><span class="s2">: </span><span class="s4">'ignored_types'</span><span class="s2">,</span>
+    <span class="s4">'max_anystr_length'</span><span class="s2">: </span><span class="s4">'str_max_length'</span><span class="s2">,</span>
+    <span class="s4">'min_anystr_length'</span><span class="s2">: </span><span class="s4">'str_min_length'</span><span class="s2">,</span>
+    <span class="s4">'orm_mode'</span><span class="s2">: </span><span class="s4">'from_attributes'</span><span class="s2">,</span>
+    <span class="s4">'schema_extra'</span><span class="s2">: </span><span class="s4">'json_schema_extra'</span><span class="s2">,</span>
+    <span class="s4">'validate_all'</span><span class="s2">: </span><span class="s4">'validate_default'</span><span class="s2">,</span>
+<span class="s2">}</span>
+
+
+<span class="s0">def </span><span class="s1">check_deprecated</span><span class="s2">(</span><span class="s1">config_dict</span><span class="s2">: </span><span class="s1">ConfigDict</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot;Check for deprecated config keys and warn the user. 
+ 
+    Args: 
+        config_dict: The input config. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">deprecated_removed_keys </span><span class="s2">= </span><span class="s1">V2_REMOVED_KEYS </span><span class="s2">&amp; </span><span class="s1">config_dict</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">()</span>
+    <span class="s1">deprecated_renamed_keys </span><span class="s2">= </span><span class="s1">V2_RENAMED_KEYS</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">() &amp; </span><span class="s1">config_dict</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">()</span>
+    <span class="s0">if </span><span class="s1">deprecated_removed_keys </span><span class="s0">or </span><span class="s1">deprecated_renamed_keys</span><span class="s2">:</span>
+        <span class="s1">renamings </span><span class="s2">= {</span><span class="s1">k</span><span class="s2">: </span><span class="s1">V2_RENAMED_KEYS</span><span class="s2">[</span><span class="s1">k</span><span class="s2">] </span><span class="s0">for </span><span class="s1">k </span><span class="s0">in </span><span class="s1">sorted</span><span class="s2">(</span><span class="s1">deprecated_renamed_keys</span><span class="s2">)}</span>
+        <span class="s1">renamed_bullets </span><span class="s2">= [</span><span class="s4">f'* </span><span class="s0">{</span><span class="s1">k</span><span class="s0">!r} </span><span class="s4">has been renamed to </span><span class="s0">{</span><span class="s1">v</span><span class="s0">!r}</span><span class="s4">' </span><span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">renamings</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()]</span>
+        <span class="s1">removed_bullets </span><span class="s2">= [</span><span class="s4">f'* </span><span class="s0">{</span><span class="s1">k</span><span class="s0">!r} </span><span class="s4">has been removed' </span><span class="s0">for </span><span class="s1">k </span><span class="s0">in </span><span class="s1">sorted</span><span class="s2">(</span><span class="s1">deprecated_removed_keys</span><span class="s2">)]</span>
+        <span class="s1">message </span><span class="s2">= </span><span class="s4">'</span><span class="s0">\n</span><span class="s4">'</span><span class="s2">.</span><span class="s1">join</span><span class="s2">([</span><span class="s4">'Valid config keys have changed in V2:'</span><span class="s2">] + </span><span class="s1">renamed_bullets </span><span class="s2">+ </span><span class="s1">removed_bullets</span><span class="s2">)</span>
+        <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span><span class="s1">message</span><span class="s2">, </span><span class="s1">UserWarning</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

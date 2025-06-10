@@ -1,0 +1,380 @@
+<html>
+<head>
+<title>features.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #2aacb8;}
+.s6 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+features.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">collections</span>
+<span class="s0">import </span><span class="s1">os</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">import </span><span class="s1">warnings</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">IO</span>
+
+<span class="s0">import </span><span class="s1">PIL</span>
+
+<span class="s0">from </span><span class="s2">. </span><span class="s0">import </span><span class="s1">Image</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">_deprecate </span><span class="s0">import </span><span class="s1">deprecate</span>
+
+<span class="s1">modules </span><span class="s2">= {</span>
+    <span class="s3">&quot;pil&quot;</span><span class="s2">: (</span><span class="s3">&quot;PIL._imaging&quot;</span><span class="s2">, </span><span class="s3">&quot;PILLOW_VERSION&quot;</span><span class="s2">),</span>
+    <span class="s3">&quot;tkinter&quot;</span><span class="s2">: (</span><span class="s3">&quot;PIL._tkinter_finder&quot;</span><span class="s2">, </span><span class="s3">&quot;tk_version&quot;</span><span class="s2">),</span>
+    <span class="s3">&quot;freetype2&quot;</span><span class="s2">: (</span><span class="s3">&quot;PIL._imagingft&quot;</span><span class="s2">, </span><span class="s3">&quot;freetype2_version&quot;</span><span class="s2">),</span>
+    <span class="s3">&quot;littlecms2&quot;</span><span class="s2">: (</span><span class="s3">&quot;PIL._imagingcms&quot;</span><span class="s2">, </span><span class="s3">&quot;littlecms_version&quot;</span><span class="s2">),</span>
+    <span class="s3">&quot;webp&quot;</span><span class="s2">: (</span><span class="s3">&quot;PIL._webp&quot;</span><span class="s2">, </span><span class="s3">&quot;webpdecoder_version&quot;</span><span class="s2">),</span>
+<span class="s2">}</span>
+
+
+<span class="s0">def </span><span class="s1">check_module</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Checks if a module is available. 
+ 
+    :param feature: The module to check for. 
+    :returns: ``True`` if available, ``False`` otherwise. 
+    :raises ValueError: If the module is not defined in this version of Pillow. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">feature </span><span class="s0">not in </span><span class="s1">modules</span><span class="s2">:</span>
+        <span class="s1">msg </span><span class="s2">= </span><span class="s3">f&quot;Unknown module </span><span class="s0">{</span><span class="s1">feature</span><span class="s0">}</span><span class="s3">&quot;</span>
+        <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s1">msg</span><span class="s2">)</span>
+
+    <span class="s1">module</span><span class="s2">, </span><span class="s1">ver </span><span class="s2">= </span><span class="s1">modules</span><span class="s2">[</span><span class="s1">feature</span><span class="s2">]</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s1">__import__</span><span class="s2">(</span><span class="s1">module</span><span class="s2">)</span>
+        <span class="s0">return True</span>
+    <span class="s0">except </span><span class="s1">ModuleNotFoundError</span><span class="s2">:</span>
+        <span class="s0">return False</span>
+    <span class="s0">except </span><span class="s1">ImportError </span><span class="s0">as </span><span class="s1">ex</span><span class="s2">:</span>
+        <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span><span class="s1">str</span><span class="s2">(</span><span class="s1">ex</span><span class="s2">))</span>
+        <span class="s0">return False</span>
+
+
+<span class="s0">def </span><span class="s1">version_module</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    :param feature: The module to check for. 
+    :returns: 
+        The loaded version number as a string, or ``None`` if unknown or not available. 
+    :raises ValueError: If the module is not defined in this version of Pillow. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if not </span><span class="s1">check_module</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">):</span>
+        <span class="s0">return None</span>
+
+    <span class="s1">module</span><span class="s2">, </span><span class="s1">ver </span><span class="s2">= </span><span class="s1">modules</span><span class="s2">[</span><span class="s1">feature</span><span class="s2">]</span>
+
+    <span class="s0">return </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">__import__</span><span class="s2">(</span><span class="s1">module</span><span class="s2">, </span><span class="s1">fromlist</span><span class="s2">=[</span><span class="s1">ver</span><span class="s2">]), </span><span class="s1">ver</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">get_supported_modules</span><span class="s2">() </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    :returns: A list of all supported modules. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s2">[</span><span class="s1">f </span><span class="s0">for </span><span class="s1">f </span><span class="s0">in </span><span class="s1">modules </span><span class="s0">if </span><span class="s1">check_module</span><span class="s2">(</span><span class="s1">f</span><span class="s2">)]</span>
+
+
+<span class="s1">codecs </span><span class="s2">= {</span>
+    <span class="s3">&quot;jpg&quot;</span><span class="s2">: (</span><span class="s3">&quot;jpeg&quot;</span><span class="s2">, </span><span class="s3">&quot;jpeglib&quot;</span><span class="s2">),</span>
+    <span class="s3">&quot;jpg_2000&quot;</span><span class="s2">: (</span><span class="s3">&quot;jpeg2k&quot;</span><span class="s2">, </span><span class="s3">&quot;jp2klib&quot;</span><span class="s2">),</span>
+    <span class="s3">&quot;zlib&quot;</span><span class="s2">: (</span><span class="s3">&quot;zip&quot;</span><span class="s2">, </span><span class="s3">&quot;zlib&quot;</span><span class="s2">),</span>
+    <span class="s3">&quot;libtiff&quot;</span><span class="s2">: (</span><span class="s3">&quot;libtiff&quot;</span><span class="s2">, </span><span class="s3">&quot;libtiff&quot;</span><span class="s2">),</span>
+<span class="s2">}</span>
+
+
+<span class="s0">def </span><span class="s1">check_codec</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Checks if a codec is available. 
+ 
+    :param feature: The codec to check for. 
+    :returns: ``True`` if available, ``False`` otherwise. 
+    :raises ValueError: If the codec is not defined in this version of Pillow. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">feature </span><span class="s0">not in </span><span class="s1">codecs</span><span class="s2">:</span>
+        <span class="s1">msg </span><span class="s2">= </span><span class="s3">f&quot;Unknown codec </span><span class="s0">{</span><span class="s1">feature</span><span class="s0">}</span><span class="s3">&quot;</span>
+        <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s1">msg</span><span class="s2">)</span>
+
+    <span class="s1">codec</span><span class="s2">, </span><span class="s1">lib </span><span class="s2">= </span><span class="s1">codecs</span><span class="s2">[</span><span class="s1">feature</span><span class="s2">]</span>
+
+    <span class="s0">return </span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">codec</span><span class="s0">}</span><span class="s3">_encoder&quot; </span><span class="s0">in </span><span class="s1">dir</span><span class="s2">(</span><span class="s1">Image</span><span class="s2">.</span><span class="s1">core</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">version_codec</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    :param feature: The codec to check for. 
+    :returns: 
+        The version number as a string, or ``None`` if not available. 
+        Checked at compile time for ``jpg``, run-time otherwise. 
+    :raises ValueError: If the codec is not defined in this version of Pillow. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if not </span><span class="s1">check_codec</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">):</span>
+        <span class="s0">return None</span>
+
+    <span class="s1">codec</span><span class="s2">, </span><span class="s1">lib </span><span class="s2">= </span><span class="s1">codecs</span><span class="s2">[</span><span class="s1">feature</span><span class="s2">]</span>
+
+    <span class="s1">version </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">Image</span><span class="s2">.</span><span class="s1">core</span><span class="s2">, </span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">lib</span><span class="s0">}</span><span class="s3">_version&quot;</span><span class="s2">)</span>
+
+    <span class="s0">if </span><span class="s1">feature </span><span class="s2">== </span><span class="s3">&quot;libtiff&quot;</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">version</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s3">&quot;</span><span class="s0">\n</span><span class="s3">&quot;</span><span class="s2">)[</span><span class="s5">0</span><span class="s2">].</span><span class="s1">split</span><span class="s2">(</span><span class="s3">&quot;Version &quot;</span><span class="s2">)[</span><span class="s5">1</span><span class="s2">]</span>
+
+    <span class="s0">return </span><span class="s1">version</span>
+
+
+<span class="s0">def </span><span class="s1">get_supported_codecs</span><span class="s2">() </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    :returns: A list of all supported codecs. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s2">[</span><span class="s1">f </span><span class="s0">for </span><span class="s1">f </span><span class="s0">in </span><span class="s1">codecs </span><span class="s0">if </span><span class="s1">check_codec</span><span class="s2">(</span><span class="s1">f</span><span class="s2">)]</span>
+
+
+<span class="s1">features</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str </span><span class="s2">| </span><span class="s1">bool</span><span class="s2">, </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">]] = {</span>
+    <span class="s3">&quot;webp_anim&quot;</span><span class="s2">: (</span><span class="s3">&quot;PIL._webp&quot;</span><span class="s2">, </span><span class="s0">True</span><span class="s2">, </span><span class="s0">None</span><span class="s2">),</span>
+    <span class="s3">&quot;webp_mux&quot;</span><span class="s2">: (</span><span class="s3">&quot;PIL._webp&quot;</span><span class="s2">, </span><span class="s0">True</span><span class="s2">, </span><span class="s0">None</span><span class="s2">),</span>
+    <span class="s3">&quot;transp_webp&quot;</span><span class="s2">: (</span><span class="s3">&quot;PIL._webp&quot;</span><span class="s2">, </span><span class="s0">True</span><span class="s2">, </span><span class="s0">None</span><span class="s2">),</span>
+    <span class="s3">&quot;raqm&quot;</span><span class="s2">: (</span><span class="s3">&quot;PIL._imagingft&quot;</span><span class="s2">, </span><span class="s3">&quot;HAVE_RAQM&quot;</span><span class="s2">, </span><span class="s3">&quot;raqm_version&quot;</span><span class="s2">),</span>
+    <span class="s3">&quot;fribidi&quot;</span><span class="s2">: (</span><span class="s3">&quot;PIL._imagingft&quot;</span><span class="s2">, </span><span class="s3">&quot;HAVE_FRIBIDI&quot;</span><span class="s2">, </span><span class="s3">&quot;fribidi_version&quot;</span><span class="s2">),</span>
+    <span class="s3">&quot;harfbuzz&quot;</span><span class="s2">: (</span><span class="s3">&quot;PIL._imagingft&quot;</span><span class="s2">, </span><span class="s3">&quot;HAVE_HARFBUZZ&quot;</span><span class="s2">, </span><span class="s3">&quot;harfbuzz_version&quot;</span><span class="s2">),</span>
+    <span class="s3">&quot;libjpeg_turbo&quot;</span><span class="s2">: (</span><span class="s3">&quot;PIL._imaging&quot;</span><span class="s2">, </span><span class="s3">&quot;HAVE_LIBJPEGTURBO&quot;</span><span class="s2">, </span><span class="s3">&quot;libjpeg_turbo_version&quot;</span><span class="s2">),</span>
+    <span class="s3">&quot;zlib_ng&quot;</span><span class="s2">: (</span><span class="s3">&quot;PIL._imaging&quot;</span><span class="s2">, </span><span class="s3">&quot;HAVE_ZLIBNG&quot;</span><span class="s2">, </span><span class="s3">&quot;zlib_ng_version&quot;</span><span class="s2">),</span>
+    <span class="s3">&quot;libimagequant&quot;</span><span class="s2">: (</span><span class="s3">&quot;PIL._imaging&quot;</span><span class="s2">, </span><span class="s3">&quot;HAVE_LIBIMAGEQUANT&quot;</span><span class="s2">, </span><span class="s3">&quot;imagequant_version&quot;</span><span class="s2">),</span>
+    <span class="s3">&quot;xcb&quot;</span><span class="s2">: (</span><span class="s3">&quot;PIL._imaging&quot;</span><span class="s2">, </span><span class="s3">&quot;HAVE_XCB&quot;</span><span class="s2">, </span><span class="s0">None</span><span class="s2">),</span>
+<span class="s2">}</span>
+
+
+<span class="s0">def </span><span class="s1">check_feature</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; bool </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Checks if a feature is available. 
+ 
+    :param feature: The feature to check for. 
+    :returns: ``True`` if available, ``False`` if unavailable, ``None`` if unknown. 
+    :raises ValueError: If the feature is not defined in this version of Pillow. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">feature </span><span class="s0">not in </span><span class="s1">features</span><span class="s2">:</span>
+        <span class="s1">msg </span><span class="s2">= </span><span class="s3">f&quot;Unknown feature </span><span class="s0">{</span><span class="s1">feature</span><span class="s0">}</span><span class="s3">&quot;</span>
+        <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s1">msg</span><span class="s2">)</span>
+
+    <span class="s1">module</span><span class="s2">, </span><span class="s1">flag</span><span class="s2">, </span><span class="s1">ver </span><span class="s2">= </span><span class="s1">features</span><span class="s2">[</span><span class="s1">feature</span><span class="s2">]</span>
+
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">flag</span><span class="s2">, </span><span class="s1">bool</span><span class="s2">):</span>
+        <span class="s1">deprecate</span><span class="s2">(</span><span class="s3">f'check_feature(&quot;</span><span class="s0">{</span><span class="s1">feature</span><span class="s0">}</span><span class="s3">&quot;)'</span><span class="s2">, </span><span class="s5">12</span><span class="s2">)</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s1">imported_module </span><span class="s2">= </span><span class="s1">__import__</span><span class="s2">(</span><span class="s1">module</span><span class="s2">, </span><span class="s1">fromlist</span><span class="s2">=[</span><span class="s3">&quot;PIL&quot;</span><span class="s2">])</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">flag</span><span class="s2">, </span><span class="s1">bool</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">flag</span>
+        <span class="s0">return </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">imported_module</span><span class="s2">, </span><span class="s1">flag</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">ModuleNotFoundError</span><span class="s2">:</span>
+        <span class="s0">return None</span>
+    <span class="s0">except </span><span class="s1">ImportError </span><span class="s0">as </span><span class="s1">ex</span><span class="s2">:</span>
+        <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span><span class="s1">str</span><span class="s2">(</span><span class="s1">ex</span><span class="s2">))</span>
+        <span class="s0">return None</span>
+
+
+<span class="s0">def </span><span class="s1">version_feature</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    :param feature: The feature to check for. 
+    :returns: The version number as a string, or ``None`` if not available. 
+    :raises ValueError: If the feature is not defined in this version of Pillow. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if not </span><span class="s1">check_feature</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">):</span>
+        <span class="s0">return None</span>
+
+    <span class="s1">module</span><span class="s2">, </span><span class="s1">flag</span><span class="s2">, </span><span class="s1">ver </span><span class="s2">= </span><span class="s1">features</span><span class="s2">[</span><span class="s1">feature</span><span class="s2">]</span>
+
+    <span class="s0">if </span><span class="s1">ver </span><span class="s0">is None</span><span class="s2">:</span>
+        <span class="s0">return None</span>
+
+    <span class="s0">return </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">__import__</span><span class="s2">(</span><span class="s1">module</span><span class="s2">, </span><span class="s1">fromlist</span><span class="s2">=[</span><span class="s1">ver</span><span class="s2">]), </span><span class="s1">ver</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">get_supported_features</span><span class="s2">() </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    :returns: A list of all supported features. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">supported_features </span><span class="s2">= []</span>
+    <span class="s0">for </span><span class="s1">f</span><span class="s2">, (</span><span class="s1">module</span><span class="s2">, </span><span class="s1">flag</span><span class="s2">, </span><span class="s1">_</span><span class="s2">) </span><span class="s0">in </span><span class="s1">features</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+        <span class="s0">if </span><span class="s1">flag </span><span class="s0">is True</span><span class="s2">:</span>
+            <span class="s0">for </span><span class="s1">feature</span><span class="s2">, (</span><span class="s1">feature_module</span><span class="s2">, </span><span class="s1">_</span><span class="s2">) </span><span class="s0">in </span><span class="s1">modules</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+                <span class="s0">if </span><span class="s1">feature_module </span><span class="s2">== </span><span class="s1">module</span><span class="s2">:</span>
+                    <span class="s0">if </span><span class="s1">check_module</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">):</span>
+                        <span class="s1">supported_features</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">f</span><span class="s2">)</span>
+                    <span class="s0">break</span>
+        <span class="s0">elif </span><span class="s1">check_feature</span><span class="s2">(</span><span class="s1">f</span><span class="s2">):</span>
+            <span class="s1">supported_features</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">f</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">supported_features</span>
+
+
+<span class="s0">def </span><span class="s1">check</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; bool </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    :param feature: A module, codec, or feature name. 
+    :returns: 
+        ``True`` if the module, codec, or feature is available, 
+        ``False`` or ``None`` otherwise. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">if </span><span class="s1">feature </span><span class="s0">in </span><span class="s1">modules</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">check_module</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">feature </span><span class="s0">in </span><span class="s1">codecs</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">check_codec</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">feature </span><span class="s0">in </span><span class="s1">features</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">check_feature</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">)</span>
+    <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span><span class="s3">f&quot;Unknown feature '</span><span class="s0">{</span><span class="s1">feature</span><span class="s0">}</span><span class="s3">'.&quot;</span><span class="s2">, </span><span class="s1">stacklevel</span><span class="s2">=</span><span class="s5">2</span><span class="s2">)</span>
+    <span class="s0">return False</span>
+
+
+<span class="s0">def </span><span class="s1">version</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    :param feature: 
+        The module, codec, or feature to check for. 
+    :returns: 
+        The version number as a string, or ``None`` if unknown or not available. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">feature </span><span class="s0">in </span><span class="s1">modules</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">version_module</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">feature </span><span class="s0">in </span><span class="s1">codecs</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">version_codec</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">feature </span><span class="s0">in </span><span class="s1">features</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">version_feature</span><span class="s2">(</span><span class="s1">feature</span><span class="s2">)</span>
+    <span class="s0">return None</span>
+
+
+<span class="s0">def </span><span class="s1">get_supported</span><span class="s2">() </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    :returns: A list of all supported modules, features, and codecs. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">ret </span><span class="s2">= </span><span class="s1">get_supported_modules</span><span class="s2">()</span>
+    <span class="s1">ret</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">(</span><span class="s1">get_supported_features</span><span class="s2">())</span>
+    <span class="s1">ret</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">(</span><span class="s1">get_supported_codecs</span><span class="s2">())</span>
+    <span class="s0">return </span><span class="s1">ret</span>
+
+
+<span class="s0">def </span><span class="s1">pilinfo</span><span class="s2">(</span><span class="s1">out</span><span class="s2">: </span><span class="s1">IO</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">, </span><span class="s1">supported_formats</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Prints information about this installation of Pillow. 
+    This function can be called with ``python3 -m PIL``. 
+    It can also be called with ``python3 -m PIL.report`` or ``python3 -m PIL --report`` 
+    to have &quot;supported_formats&quot; set to ``False``, omitting the list of all supported 
+    image file formats. 
+ 
+    :param out: 
+        The output stream to print to. Defaults to ``sys.stdout`` if ``None``. 
+    :param supported_formats: 
+        If ``True``, a list of all supported image file formats will be printed. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">if </span><span class="s1">out </span><span class="s0">is None</span><span class="s2">:</span>
+        <span class="s1">out </span><span class="s2">= </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">stdout</span>
+
+    <span class="s1">Image</span><span class="s2">.</span><span class="s1">init</span><span class="s2">()</span>
+
+    <span class="s1">print</span><span class="s2">(</span><span class="s3">&quot;-&quot; </span><span class="s2">* </span><span class="s5">68</span><span class="s2">, </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">)</span>
+    <span class="s1">print</span><span class="s2">(</span><span class="s3">f&quot;Pillow </span><span class="s0">{</span><span class="s1">PIL</span><span class="s2">.</span><span class="s1">__version__</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s2">, </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">)</span>
+    <span class="s1">py_version_lines </span><span class="s2">= </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">version</span><span class="s2">.</span><span class="s1">splitlines</span><span class="s2">()</span>
+    <span class="s1">print</span><span class="s2">(</span><span class="s3">f&quot;Python </span><span class="s0">{</span><span class="s1">py_version_lines</span><span class="s2">[</span><span class="s5">0</span><span class="s2">].</span><span class="s1">strip</span><span class="s2">()</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s2">, </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">)</span>
+    <span class="s0">for </span><span class="s1">py_version </span><span class="s0">in </span><span class="s1">py_version_lines</span><span class="s2">[</span><span class="s5">1</span><span class="s2">:]:</span>
+        <span class="s1">print</span><span class="s2">(</span><span class="s3">f&quot;       </span><span class="s0">{</span><span class="s1">py_version</span><span class="s2">.</span><span class="s1">strip</span><span class="s2">()</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s2">, </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">)</span>
+    <span class="s1">print</span><span class="s2">(</span><span class="s3">&quot;-&quot; </span><span class="s2">* </span><span class="s5">68</span><span class="s2">, </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">)</span>
+    <span class="s1">print</span><span class="s2">(</span><span class="s3">f&quot;Python executable is </span><span class="s0">{</span><span class="s1">sys</span><span class="s2">.</span><span class="s1">executable </span><span class="s0">or </span><span class="s3">'unknown'</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s2">, </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">prefix </span><span class="s2">!= </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">base_prefix</span><span class="s2">:</span>
+        <span class="s1">print</span><span class="s2">(</span><span class="s3">f&quot;Environment Python files loaded from </span><span class="s0">{</span><span class="s1">sys</span><span class="s2">.</span><span class="s1">prefix</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s2">, </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">)</span>
+    <span class="s1">print</span><span class="s2">(</span><span class="s3">f&quot;System Python files loaded from </span><span class="s0">{</span><span class="s1">sys</span><span class="s2">.</span><span class="s1">base_prefix</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s2">, </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">)</span>
+    <span class="s1">print</span><span class="s2">(</span><span class="s3">&quot;-&quot; </span><span class="s2">* </span><span class="s5">68</span><span class="s2">, </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">)</span>
+    <span class="s1">print</span><span class="s2">(</span>
+        <span class="s3">f&quot;Python Pillow modules loaded from </span><span class="s0">{</span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">dirname</span><span class="s2">(</span><span class="s1">Image</span><span class="s2">.</span><span class="s1">__file__</span><span class="s2">)</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s2">,</span>
+        <span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">,</span>
+    <span class="s2">)</span>
+    <span class="s1">print</span><span class="s2">(</span>
+        <span class="s3">f&quot;Binary Pillow modules loaded from </span><span class="s0">{</span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">dirname</span><span class="s2">(</span><span class="s1">Image</span><span class="s2">.</span><span class="s1">core</span><span class="s2">.</span><span class="s1">__file__</span><span class="s2">)</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s2">,</span>
+        <span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">,</span>
+    <span class="s2">)</span>
+    <span class="s1">print</span><span class="s2">(</span><span class="s3">&quot;-&quot; </span><span class="s2">* </span><span class="s5">68</span><span class="s2">, </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">)</span>
+
+    <span class="s0">for </span><span class="s1">name</span><span class="s2">, </span><span class="s1">feature </span><span class="s0">in </span><span class="s2">[</span>
+        <span class="s2">(</span><span class="s3">&quot;pil&quot;</span><span class="s2">, </span><span class="s3">&quot;PIL CORE&quot;</span><span class="s2">),</span>
+        <span class="s2">(</span><span class="s3">&quot;tkinter&quot;</span><span class="s2">, </span><span class="s3">&quot;TKINTER&quot;</span><span class="s2">),</span>
+        <span class="s2">(</span><span class="s3">&quot;freetype2&quot;</span><span class="s2">, </span><span class="s3">&quot;FREETYPE2&quot;</span><span class="s2">),</span>
+        <span class="s2">(</span><span class="s3">&quot;littlecms2&quot;</span><span class="s2">, </span><span class="s3">&quot;LITTLECMS2&quot;</span><span class="s2">),</span>
+        <span class="s2">(</span><span class="s3">&quot;webp&quot;</span><span class="s2">, </span><span class="s3">&quot;WEBP&quot;</span><span class="s2">),</span>
+        <span class="s2">(</span><span class="s3">&quot;jpg&quot;</span><span class="s2">, </span><span class="s3">&quot;JPEG&quot;</span><span class="s2">),</span>
+        <span class="s2">(</span><span class="s3">&quot;jpg_2000&quot;</span><span class="s2">, </span><span class="s3">&quot;OPENJPEG (JPEG2000)&quot;</span><span class="s2">),</span>
+        <span class="s2">(</span><span class="s3">&quot;zlib&quot;</span><span class="s2">, </span><span class="s3">&quot;ZLIB (PNG/ZIP)&quot;</span><span class="s2">),</span>
+        <span class="s2">(</span><span class="s3">&quot;libtiff&quot;</span><span class="s2">, </span><span class="s3">&quot;LIBTIFF&quot;</span><span class="s2">),</span>
+        <span class="s2">(</span><span class="s3">&quot;raqm&quot;</span><span class="s2">, </span><span class="s3">&quot;RAQM (Bidirectional Text)&quot;</span><span class="s2">),</span>
+        <span class="s2">(</span><span class="s3">&quot;libimagequant&quot;</span><span class="s2">, </span><span class="s3">&quot;LIBIMAGEQUANT (Quantization method)&quot;</span><span class="s2">),</span>
+        <span class="s2">(</span><span class="s3">&quot;xcb&quot;</span><span class="s2">, </span><span class="s3">&quot;XCB (X protocol)&quot;</span><span class="s2">),</span>
+    <span class="s2">]:</span>
+        <span class="s0">if </span><span class="s1">check</span><span class="s2">(</span><span class="s1">name</span><span class="s2">):</span>
+            <span class="s1">v</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+            <span class="s0">if </span><span class="s1">name </span><span class="s2">== </span><span class="s3">&quot;jpg&quot;</span><span class="s2">:</span>
+                <span class="s1">libjpeg_turbo_version </span><span class="s2">= </span><span class="s1">version_feature</span><span class="s2">(</span><span class="s3">&quot;libjpeg_turbo&quot;</span><span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">libjpeg_turbo_version </span><span class="s0">is not None</span><span class="s2">:</span>
+                    <span class="s1">v </span><span class="s2">= </span><span class="s3">&quot;libjpeg-turbo &quot; </span><span class="s2">+ </span><span class="s1">libjpeg_turbo_version</span>
+            <span class="s0">if </span><span class="s1">v </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s1">v </span><span class="s2">= </span><span class="s1">version</span><span class="s2">(</span><span class="s1">name</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">v </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s1">version_static </span><span class="s2">= </span><span class="s1">name </span><span class="s0">in </span><span class="s2">(</span><span class="s3">&quot;pil&quot;</span><span class="s2">, </span><span class="s3">&quot;jpg&quot;</span><span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">name </span><span class="s2">== </span><span class="s3">&quot;littlecms2&quot;</span><span class="s2">:</span>
+                    <span class="s6"># this check is also in src/_imagingcms.c:setup_module()</span>
+                    <span class="s1">version_static </span><span class="s2">= </span><span class="s1">tuple</span><span class="s2">(</span><span class="s1">int</span><span class="s2">(</span><span class="s1">x</span><span class="s2">) </span><span class="s0">for </span><span class="s1">x </span><span class="s0">in </span><span class="s1">v</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s3">&quot;.&quot;</span><span class="s2">)) &lt; (</span><span class="s5">2</span><span class="s2">, </span><span class="s5">7</span><span class="s2">)</span>
+                <span class="s1">t </span><span class="s2">= </span><span class="s3">&quot;compiled for&quot; </span><span class="s0">if </span><span class="s1">version_static </span><span class="s0">else </span><span class="s3">&quot;loaded&quot;</span>
+                <span class="s0">if </span><span class="s1">name </span><span class="s2">== </span><span class="s3">&quot;zlib&quot;</span><span class="s2">:</span>
+                    <span class="s1">zlib_ng_version </span><span class="s2">= </span><span class="s1">version_feature</span><span class="s2">(</span><span class="s3">&quot;zlib_ng&quot;</span><span class="s2">)</span>
+                    <span class="s0">if </span><span class="s1">zlib_ng_version </span><span class="s0">is not None</span><span class="s2">:</span>
+                        <span class="s1">v </span><span class="s2">+= </span><span class="s3">&quot;, compiled for zlib-ng &quot; </span><span class="s2">+ </span><span class="s1">zlib_ng_version</span>
+                <span class="s0">elif </span><span class="s1">name </span><span class="s2">== </span><span class="s3">&quot;raqm&quot;</span><span class="s2">:</span>
+                    <span class="s0">for </span><span class="s1">f </span><span class="s0">in </span><span class="s2">(</span><span class="s3">&quot;fribidi&quot;</span><span class="s2">, </span><span class="s3">&quot;harfbuzz&quot;</span><span class="s2">):</span>
+                        <span class="s1">v2 </span><span class="s2">= </span><span class="s1">version_feature</span><span class="s2">(</span><span class="s1">f</span><span class="s2">)</span>
+                        <span class="s0">if </span><span class="s1">v2 </span><span class="s0">is not None</span><span class="s2">:</span>
+                            <span class="s1">v </span><span class="s2">+= </span><span class="s3">f&quot;, </span><span class="s0">{</span><span class="s1">f</span><span class="s0">} {</span><span class="s1">v2</span><span class="s0">}</span><span class="s3">&quot;</span>
+                <span class="s1">print</span><span class="s2">(</span><span class="s3">&quot;---&quot;</span><span class="s2">, </span><span class="s1">feature</span><span class="s2">, </span><span class="s3">&quot;support ok,&quot;</span><span class="s2">, </span><span class="s1">t</span><span class="s2">, </span><span class="s1">v</span><span class="s2">, </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">print</span><span class="s2">(</span><span class="s3">&quot;---&quot;</span><span class="s2">, </span><span class="s1">feature</span><span class="s2">, </span><span class="s3">&quot;support ok&quot;</span><span class="s2">, </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">print</span><span class="s2">(</span><span class="s3">&quot;***&quot;</span><span class="s2">, </span><span class="s1">feature</span><span class="s2">, </span><span class="s3">&quot;support not installed&quot;</span><span class="s2">, </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">)</span>
+    <span class="s1">print</span><span class="s2">(</span><span class="s3">&quot;-&quot; </span><span class="s2">* </span><span class="s5">68</span><span class="s2">, </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">)</span>
+
+    <span class="s0">if </span><span class="s1">supported_formats</span><span class="s2">:</span>
+        <span class="s1">extensions </span><span class="s2">= </span><span class="s1">collections</span><span class="s2">.</span><span class="s1">defaultdict</span><span class="s2">(</span><span class="s1">list</span><span class="s2">)</span>
+        <span class="s0">for </span><span class="s1">ext</span><span class="s2">, </span><span class="s1">i </span><span class="s0">in </span><span class="s1">Image</span><span class="s2">.</span><span class="s1">EXTENSION</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+            <span class="s1">extensions</span><span class="s2">[</span><span class="s1">i</span><span class="s2">].</span><span class="s1">append</span><span class="s2">(</span><span class="s1">ext</span><span class="s2">)</span>
+
+        <span class="s0">for </span><span class="s1">i </span><span class="s0">in </span><span class="s1">sorted</span><span class="s2">(</span><span class="s1">Image</span><span class="s2">.</span><span class="s1">ID</span><span class="s2">):</span>
+            <span class="s1">line </span><span class="s2">= </span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">i</span><span class="s0">}</span><span class="s3">&quot;</span>
+            <span class="s0">if </span><span class="s1">i </span><span class="s0">in </span><span class="s1">Image</span><span class="s2">.</span><span class="s1">MIME</span><span class="s2">:</span>
+                <span class="s1">line </span><span class="s2">= </span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">line</span><span class="s0">} {</span><span class="s1">Image</span><span class="s2">.</span><span class="s1">MIME</span><span class="s2">[</span><span class="s1">i</span><span class="s2">]</span><span class="s0">}</span><span class="s3">&quot;</span>
+            <span class="s1">print</span><span class="s2">(</span><span class="s1">line</span><span class="s2">, </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">)</span>
+
+            <span class="s0">if </span><span class="s1">i </span><span class="s0">in </span><span class="s1">extensions</span><span class="s2">:</span>
+                <span class="s1">print</span><span class="s2">(</span>
+                    <span class="s3">&quot;Extensions: {}&quot;</span><span class="s2">.</span><span class="s1">format</span><span class="s2">(</span><span class="s3">&quot;, &quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">sorted</span><span class="s2">(</span><span class="s1">extensions</span><span class="s2">[</span><span class="s1">i</span><span class="s2">]))), </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span>
+                <span class="s2">)</span>
+
+            <span class="s1">features </span><span class="s2">= []</span>
+            <span class="s0">if </span><span class="s1">i </span><span class="s0">in </span><span class="s1">Image</span><span class="s2">.</span><span class="s1">OPEN</span><span class="s2">:</span>
+                <span class="s1">features</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s3">&quot;open&quot;</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">i </span><span class="s0">in </span><span class="s1">Image</span><span class="s2">.</span><span class="s1">SAVE</span><span class="s2">:</span>
+                <span class="s1">features</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s3">&quot;save&quot;</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">i </span><span class="s0">in </span><span class="s1">Image</span><span class="s2">.</span><span class="s1">SAVE_ALL</span><span class="s2">:</span>
+                <span class="s1">features</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s3">&quot;save_all&quot;</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">i </span><span class="s0">in </span><span class="s1">Image</span><span class="s2">.</span><span class="s1">DECODERS</span><span class="s2">:</span>
+                <span class="s1">features</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s3">&quot;decode&quot;</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">i </span><span class="s0">in </span><span class="s1">Image</span><span class="s2">.</span><span class="s1">ENCODERS</span><span class="s2">:</span>
+                <span class="s1">features</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s3">&quot;encode&quot;</span><span class="s2">)</span>
+
+            <span class="s1">print</span><span class="s2">(</span><span class="s3">&quot;Features: {}&quot;</span><span class="s2">.</span><span class="s1">format</span><span class="s2">(</span><span class="s3">&quot;, &quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">features</span><span class="s2">)), </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">)</span>
+            <span class="s1">print</span><span class="s2">(</span><span class="s3">&quot;-&quot; </span><span class="s2">* </span><span class="s5">68</span><span class="s2">, </span><span class="s1">file</span><span class="s2">=</span><span class="s1">out</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

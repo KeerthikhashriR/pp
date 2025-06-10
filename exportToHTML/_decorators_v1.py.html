@@ -1,0 +1,197 @@
+<html>
+<head>
+<title>_decorators_v1.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #2aacb8;}
+.s6 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_decorators_v1.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;Logic for V1 validators, e.g. `@validator` and `@root_validator`.&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations </span><span class="s2">as </span><span class="s1">_annotations</span>
+
+<span class="s2">from </span><span class="s1">inspect </span><span class="s2">import </span><span class="s1">Parameter</span><span class="s3">, </span><span class="s1">signature</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Union</span><span class="s3">, </span><span class="s1">cast</span>
+
+<span class="s2">from </span><span class="s1">pydantic_core </span><span class="s2">import </span><span class="s1">core_schema</span>
+<span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">Protocol</span>
+
+<span class="s2">from </span><span class="s3">..</span><span class="s1">errors </span><span class="s2">import </span><span class="s1">PydanticUserError</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_utils </span><span class="s2">import </span><span class="s1">can_be_positional</span>
+
+
+<span class="s2">class </span><span class="s1">V1OnlyValueValidator</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;A simple validator, supported for V1 validators and V2 validators.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">__value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">: ...</span>
+
+
+<span class="s2">class </span><span class="s1">V1ValidatorWithValues</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;A validator with `values` argument, supported for V1 validators and V2 validators.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">__value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">values</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]) </span><span class="s1">-&gt; Any</span><span class="s3">: ...</span>
+
+
+<span class="s2">class </span><span class="s1">V1ValidatorWithValuesKwOnly</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;A validator with keyword only `values` argument, supported for V1 validators and V2 validators.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">__value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, *, </span><span class="s1">values</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]) </span><span class="s1">-&gt; Any</span><span class="s3">: ...</span>
+
+
+<span class="s2">class </span><span class="s1">V1ValidatorWithKwargs</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;A validator with `kwargs` argument, supported for V1 validators and V2 validators.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">__value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, **</span><span class="s1">kwargs</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">: ...</span>
+
+
+<span class="s2">class </span><span class="s1">V1ValidatorWithValuesAndKwargs</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;A validator with `values` and `kwargs` arguments, supported for V1 validators and V2 validators.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">__value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">values</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">], **</span><span class="s1">kwargs</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">: ...</span>
+
+
+<span class="s1">V1Validator </span><span class="s3">= </span><span class="s1">Union</span><span class="s3">[</span>
+    <span class="s1">V1ValidatorWithValues</span><span class="s3">, </span><span class="s1">V1ValidatorWithValuesKwOnly</span><span class="s3">, </span><span class="s1">V1ValidatorWithKwargs</span><span class="s3">, </span><span class="s1">V1ValidatorWithValuesAndKwargs</span>
+<span class="s3">]</span>
+
+
+<span class="s2">def </span><span class="s1">can_be_keyword</span><span class="s3">(</span><span class="s1">param</span><span class="s3">: </span><span class="s1">Parameter</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s2">return </span><span class="s1">param</span><span class="s3">.</span><span class="s1">kind </span><span class="s2">in </span><span class="s3">(</span><span class="s1">Parameter</span><span class="s3">.</span><span class="s1">POSITIONAL_OR_KEYWORD</span><span class="s3">, </span><span class="s1">Parameter</span><span class="s3">.</span><span class="s1">KEYWORD_ONLY</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">make_generic_v1_field_validator</span><span class="s3">(</span><span class="s1">validator</span><span class="s3">: </span><span class="s1">V1Validator</span><span class="s3">) </span><span class="s1">-&gt; core_schema</span><span class="s3">.</span><span class="s1">WithInfoValidatorFunction</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Wrap a V1 style field validator for V2 compatibility. 
+ 
+    Args: 
+        validator: The V1 style field validator. 
+ 
+    Returns: 
+        A wrapped V2 style field validator. 
+ 
+    Raises: 
+        PydanticUserError: If the signature is not supported or the parameters are 
+            not available in Pydantic V2. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">sig </span><span class="s3">= </span><span class="s1">signature</span><span class="s3">(</span><span class="s1">validator</span><span class="s3">)</span>
+
+    <span class="s1">needs_values_kw </span><span class="s3">= </span><span class="s2">False</span>
+
+    <span class="s2">for </span><span class="s1">param_num</span><span class="s3">, (</span><span class="s1">param_name</span><span class="s3">, </span><span class="s1">parameter</span><span class="s3">) </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">sig</span><span class="s3">.</span><span class="s1">parameters</span><span class="s3">.</span><span class="s1">items</span><span class="s3">()):</span>
+        <span class="s2">if </span><span class="s1">can_be_keyword</span><span class="s3">(</span><span class="s1">parameter</span><span class="s3">) </span><span class="s2">and </span><span class="s1">param_name </span><span class="s2">in </span><span class="s3">(</span><span class="s4">'field'</span><span class="s3">, </span><span class="s4">'config'</span><span class="s3">):</span>
+            <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+                <span class="s4">'The `field` and `config` parameters are not available in Pydantic V2, '</span>
+                <span class="s4">'please use the `info` parameter instead.'</span><span class="s3">,</span>
+                <span class="s1">code</span><span class="s3">=</span><span class="s4">'validator-field-config-info'</span><span class="s3">,</span>
+            <span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">parameter</span><span class="s3">.</span><span class="s1">kind </span><span class="s2">is </span><span class="s1">Parameter</span><span class="s3">.</span><span class="s1">VAR_KEYWORD</span><span class="s3">:</span>
+            <span class="s1">needs_values_kw </span><span class="s3">= </span><span class="s2">True</span>
+        <span class="s2">elif </span><span class="s1">can_be_keyword</span><span class="s3">(</span><span class="s1">parameter</span><span class="s3">) </span><span class="s2">and </span><span class="s1">param_name </span><span class="s3">== </span><span class="s4">'values'</span><span class="s3">:</span>
+            <span class="s1">needs_values_kw </span><span class="s3">= </span><span class="s2">True</span>
+        <span class="s2">elif </span><span class="s1">can_be_positional</span><span class="s3">(</span><span class="s1">parameter</span><span class="s3">) </span><span class="s2">and </span><span class="s1">param_num </span><span class="s3">== </span><span class="s5">0</span><span class="s3">:</span>
+            <span class="s6"># value</span>
+            <span class="s2">continue</span>
+        <span class="s2">elif </span><span class="s1">parameter</span><span class="s3">.</span><span class="s1">default </span><span class="s2">is </span><span class="s1">Parameter</span><span class="s3">.</span><span class="s1">empty</span><span class="s3">:  </span><span class="s6"># ignore params with defaults e.g. bound by functools.partial</span>
+            <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+                <span class="s4">f'Unsupported signature for V1 style validator </span><span class="s2">{</span><span class="s1">validator</span><span class="s2">}</span><span class="s4">: </span><span class="s2">{</span><span class="s1">sig</span><span class="s2">} </span><span class="s4">is not supported.'</span><span class="s3">,</span>
+                <span class="s1">code</span><span class="s3">=</span><span class="s4">'validator-v1-signature'</span><span class="s3">,</span>
+            <span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">needs_values_kw</span><span class="s3">:</span>
+        <span class="s6"># (v, **kwargs), (v, values, **kwargs), (v, *, values, **kwargs) or (v, *, values)</span>
+        <span class="s1">val1 </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">V1ValidatorWithValues</span><span class="s3">, </span><span class="s1">validator</span><span class="s3">)</span>
+
+        <span class="s2">def </span><span class="s1">wrapper1</span><span class="s3">(</span><span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">info</span><span class="s3">: </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">ValidationInfo</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">val1</span><span class="s3">(</span><span class="s1">value</span><span class="s3">, </span><span class="s1">values</span><span class="s3">=</span><span class="s1">info</span><span class="s3">.</span><span class="s1">data</span><span class="s3">)</span>
+
+        <span class="s2">return </span><span class="s1">wrapper1</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">val2 </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">V1OnlyValueValidator</span><span class="s3">, </span><span class="s1">validator</span><span class="s3">)</span>
+
+        <span class="s2">def </span><span class="s1">wrapper2</span><span class="s3">(</span><span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">_</span><span class="s3">: </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">ValidationInfo</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">val2</span><span class="s3">(</span><span class="s1">value</span><span class="s3">)</span>
+
+        <span class="s2">return </span><span class="s1">wrapper2</span>
+
+
+<span class="s1">RootValidatorValues </span><span class="s3">= </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]</span>
+<span class="s6"># technically tuple[model_dict, model_extra, fields_set] | tuple[dataclass_dict, init_vars]</span>
+<span class="s1">RootValidatorFieldsTuple </span><span class="s3">= </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, ...]</span>
+
+
+<span class="s2">class </span><span class="s1">V1RootValidatorFunction</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;A simple root validator, supported for V1 validators and V2 validators.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">__values</span><span class="s3">: </span><span class="s1">RootValidatorValues</span><span class="s3">) </span><span class="s1">-&gt; RootValidatorValues</span><span class="s3">: ...</span>
+
+
+<span class="s2">class </span><span class="s1">V2CoreBeforeRootValidator</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;V2 validator with mode='before'.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">__values</span><span class="s3">: </span><span class="s1">RootValidatorValues</span><span class="s3">, </span><span class="s1">__info</span><span class="s3">: </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">ValidationInfo</span><span class="s3">) </span><span class="s1">-&gt; RootValidatorValues</span><span class="s3">: ...</span>
+
+
+<span class="s2">class </span><span class="s1">V2CoreAfterRootValidator</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;V2 validator with mode='after'.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">, </span><span class="s1">__fields_tuple</span><span class="s3">: </span><span class="s1">RootValidatorFieldsTuple</span><span class="s3">, </span><span class="s1">__info</span><span class="s3">: </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">ValidationInfo</span>
+    <span class="s3">) </span><span class="s1">-&gt; RootValidatorFieldsTuple</span><span class="s3">: ...</span>
+
+
+<span class="s2">def </span><span class="s1">make_v1_generic_root_validator</span><span class="s3">(</span>
+    <span class="s1">validator</span><span class="s3">: </span><span class="s1">V1RootValidatorFunction</span><span class="s3">, </span><span class="s1">pre</span><span class="s3">: </span><span class="s1">bool</span>
+<span class="s3">) </span><span class="s1">-&gt; V2CoreBeforeRootValidator </span><span class="s3">| </span><span class="s1">V2CoreAfterRootValidator</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Wrap a V1 style root validator for V2 compatibility. 
+ 
+    Args: 
+        validator: The V1 style field validator. 
+        pre: Whether the validator is a pre validator. 
+ 
+    Returns: 
+        A wrapped V2 style validator. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">pre </span><span class="s2">is True</span><span class="s3">:</span>
+        <span class="s6"># mode='before' for pydantic-core</span>
+        <span class="s2">def </span><span class="s1">_wrapper1</span><span class="s3">(</span><span class="s1">values</span><span class="s3">: </span><span class="s1">RootValidatorValues</span><span class="s3">, </span><span class="s1">_</span><span class="s3">: </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">ValidationInfo</span><span class="s3">) </span><span class="s1">-&gt; RootValidatorValues</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">validator</span><span class="s3">(</span><span class="s1">values</span><span class="s3">)</span>
+
+        <span class="s2">return </span><span class="s1">_wrapper1</span>
+
+    <span class="s6"># mode='after' for pydantic-core</span>
+    <span class="s2">def </span><span class="s1">_wrapper2</span><span class="s3">(</span><span class="s1">fields_tuple</span><span class="s3">: </span><span class="s1">RootValidatorFieldsTuple</span><span class="s3">, </span><span class="s1">_</span><span class="s3">: </span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">ValidationInfo</span><span class="s3">) </span><span class="s1">-&gt; RootValidatorFieldsTuple</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">fields_tuple</span><span class="s3">) == </span><span class="s5">2</span><span class="s3">:</span>
+            <span class="s6"># dataclass, this is easy</span>
+            <span class="s1">values</span><span class="s3">, </span><span class="s1">init_vars </span><span class="s3">= </span><span class="s1">fields_tuple</span>
+            <span class="s1">values </span><span class="s3">= </span><span class="s1">validator</span><span class="s3">(</span><span class="s1">values</span><span class="s3">)</span>
+            <span class="s2">return </span><span class="s1">values</span><span class="s3">, </span><span class="s1">init_vars</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s6"># ugly hack: to match v1 behaviour, we merge values and model_extra, then split them up based on fields</span>
+            <span class="s6"># afterwards</span>
+            <span class="s1">model_dict</span><span class="s3">, </span><span class="s1">model_extra</span><span class="s3">, </span><span class="s1">fields_set </span><span class="s3">= </span><span class="s1">fields_tuple</span>
+            <span class="s2">if </span><span class="s1">model_extra</span><span class="s3">:</span>
+                <span class="s1">fields </span><span class="s3">= </span><span class="s1">set</span><span class="s3">(</span><span class="s1">model_dict</span><span class="s3">.</span><span class="s1">keys</span><span class="s3">())</span>
+                <span class="s1">model_dict</span><span class="s3">.</span><span class="s1">update</span><span class="s3">(</span><span class="s1">model_extra</span><span class="s3">)</span>
+                <span class="s1">model_dict_new </span><span class="s3">= </span><span class="s1">validator</span><span class="s3">(</span><span class="s1">model_dict</span><span class="s3">)</span>
+                <span class="s2">for </span><span class="s1">k </span><span class="s2">in </span><span class="s1">list</span><span class="s3">(</span><span class="s1">model_dict_new</span><span class="s3">.</span><span class="s1">keys</span><span class="s3">()):</span>
+                    <span class="s2">if </span><span class="s1">k </span><span class="s2">not in </span><span class="s1">fields</span><span class="s3">:</span>
+                        <span class="s1">model_extra</span><span class="s3">[</span><span class="s1">k</span><span class="s3">] = </span><span class="s1">model_dict_new</span><span class="s3">.</span><span class="s1">pop</span><span class="s3">(</span><span class="s1">k</span><span class="s3">)</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">model_dict_new </span><span class="s3">= </span><span class="s1">validator</span><span class="s3">(</span><span class="s1">model_dict</span><span class="s3">)</span>
+            <span class="s2">return </span><span class="s1">model_dict_new</span><span class="s3">, </span><span class="s1">model_extra</span><span class="s3">, </span><span class="s1">fields_set</span>
+
+    <span class="s2">return </span><span class="s1">_wrapper2</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,353 @@
+<html>
+<head>
+<title>_impl.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #7a7e85;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_impl.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">json</span>
+<span class="s0">import </span><span class="s1">os</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">import </span><span class="s1">tempfile</span>
+<span class="s0">from </span><span class="s1">contextlib </span><span class="s0">import </span><span class="s1">contextmanager</span>
+<span class="s0">from </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path </span><span class="s0">import </span><span class="s1">abspath</span>
+<span class="s0">from </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path </span><span class="s0">import </span><span class="s1">join </span><span class="s0">as </span><span class="s1">pjoin</span>
+<span class="s0">from </span><span class="s1">subprocess </span><span class="s0">import </span><span class="s1">STDOUT</span><span class="s2">, </span><span class="s1">check_call</span><span class="s2">, </span><span class="s1">check_output</span>
+
+<span class="s0">from </span><span class="s2">.</span><span class="s1">_in_process </span><span class="s0">import </span><span class="s1">_in_proc_script_path</span>
+
+
+<span class="s0">def </span><span class="s1">write_json</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s1">path</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">):</span>
+    <span class="s0">with </span><span class="s1">open</span><span class="s2">(</span><span class="s1">path</span><span class="s2">, </span><span class="s3">'w'</span><span class="s2">, </span><span class="s1">encoding</span><span class="s2">=</span><span class="s3">'utf-8'</span><span class="s2">) </span><span class="s0">as </span><span class="s1">f</span><span class="s2">:</span>
+        <span class="s1">json</span><span class="s2">.</span><span class="s1">dump</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s1">f</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">read_json</span><span class="s2">(</span><span class="s1">path</span><span class="s2">):</span>
+    <span class="s0">with </span><span class="s1">open</span><span class="s2">(</span><span class="s1">path</span><span class="s2">, </span><span class="s1">encoding</span><span class="s2">=</span><span class="s3">'utf-8'</span><span class="s2">) </span><span class="s0">as </span><span class="s1">f</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">json</span><span class="s2">.</span><span class="s1">load</span><span class="s2">(</span><span class="s1">f</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">BackendUnavailable</span><span class="s2">(</span><span class="s1">Exception</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;Will be raised if the backend cannot be imported in the hook process.&quot;&quot;&quot;</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">traceback</span><span class="s2">):</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">traceback </span><span class="s2">= </span><span class="s1">traceback</span>
+
+
+<span class="s0">class </span><span class="s1">BackendInvalid</span><span class="s2">(</span><span class="s1">Exception</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;Will be raised if the backend is invalid.&quot;&quot;&quot;</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">backend_name</span><span class="s2">, </span><span class="s1">backend_path</span><span class="s2">, </span><span class="s1">message</span><span class="s2">):</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">backend_name </span><span class="s2">= </span><span class="s1">backend_name</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">backend_path </span><span class="s2">= </span><span class="s1">backend_path</span>
+
+
+<span class="s0">class </span><span class="s1">HookMissing</span><span class="s2">(</span><span class="s1">Exception</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;Will be raised on missing hooks (if a fallback can't be used).&quot;&quot;&quot;</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">hook_name</span><span class="s2">):</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">hook_name</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">hook_name </span><span class="s2">= </span><span class="s1">hook_name</span>
+
+
+<span class="s0">class </span><span class="s1">UnsupportedOperation</span><span class="s2">(</span><span class="s1">Exception</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;May be raised by build_sdist if the backend indicates that it can't.&quot;&quot;&quot;</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">traceback</span><span class="s2">):</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">traceback </span><span class="s2">= </span><span class="s1">traceback</span>
+
+
+<span class="s0">def </span><span class="s1">default_subprocess_runner</span><span class="s2">(</span><span class="s1">cmd</span><span class="s2">, </span><span class="s1">cwd</span><span class="s2">=</span><span class="s0">None</span><span class="s2">, </span><span class="s1">extra_environ</span><span class="s2">=</span><span class="s0">None</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;The default method of calling the wrapper subprocess. 
+ 
+    This uses :func:`subprocess.check_call` under the hood. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">env </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">environ</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">()</span>
+    <span class="s0">if </span><span class="s1">extra_environ</span><span class="s2">:</span>
+        <span class="s1">env</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">extra_environ</span><span class="s2">)</span>
+
+    <span class="s1">check_call</span><span class="s2">(</span><span class="s1">cmd</span><span class="s2">, </span><span class="s1">cwd</span><span class="s2">=</span><span class="s1">cwd</span><span class="s2">, </span><span class="s1">env</span><span class="s2">=</span><span class="s1">env</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">quiet_subprocess_runner</span><span class="s2">(</span><span class="s1">cmd</span><span class="s2">, </span><span class="s1">cwd</span><span class="s2">=</span><span class="s0">None</span><span class="s2">, </span><span class="s1">extra_environ</span><span class="s2">=</span><span class="s0">None</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;Call the subprocess while suppressing output. 
+ 
+    This uses :func:`subprocess.check_output` under the hood. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">env </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">environ</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">()</span>
+    <span class="s0">if </span><span class="s1">extra_environ</span><span class="s2">:</span>
+        <span class="s1">env</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">extra_environ</span><span class="s2">)</span>
+
+    <span class="s1">check_output</span><span class="s2">(</span><span class="s1">cmd</span><span class="s2">, </span><span class="s1">cwd</span><span class="s2">=</span><span class="s1">cwd</span><span class="s2">, </span><span class="s1">env</span><span class="s2">=</span><span class="s1">env</span><span class="s2">, </span><span class="s1">stderr</span><span class="s2">=</span><span class="s1">STDOUT</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">norm_and_check</span><span class="s2">(</span><span class="s1">source_tree</span><span class="s2">, </span><span class="s1">requested</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;Normalise and check a backend path. 
+ 
+    Ensure that the requested backend path is specified as a relative path, 
+    and resolves to a location under the given source tree. 
+ 
+    Return an absolute version of the requested path. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">isabs</span><span class="s2">(</span><span class="s1">requested</span><span class="s2">):</span>
+        <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s3">&quot;paths must be relative&quot;</span><span class="s2">)</span>
+
+    <span class="s1">abs_source </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">source_tree</span><span class="s2">)</span>
+    <span class="s1">abs_requested </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">normpath</span><span class="s2">(</span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">abs_source</span><span class="s2">, </span><span class="s1">requested</span><span class="s2">))</span>
+    <span class="s5"># We have to use commonprefix for Python 2.7 compatibility. So we</span>
+    <span class="s5"># normalise case to avoid problems because commonprefix is a character</span>
+    <span class="s5"># based comparison :-(</span>
+    <span class="s1">norm_source </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">normcase</span><span class="s2">(</span><span class="s1">abs_source</span><span class="s2">)</span>
+    <span class="s1">norm_requested </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">normcase</span><span class="s2">(</span><span class="s1">abs_requested</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">commonprefix</span><span class="s2">([</span><span class="s1">norm_source</span><span class="s2">, </span><span class="s1">norm_requested</span><span class="s2">]) != </span><span class="s1">norm_source</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s3">&quot;paths must be inside source tree&quot;</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">abs_requested</span>
+
+
+<span class="s0">class </span><span class="s1">BuildBackendHookCaller</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;A wrapper to call the build backend hooks for a source directory. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+            <span class="s1">self</span><span class="s2">,</span>
+            <span class="s1">source_dir</span><span class="s2">,</span>
+            <span class="s1">build_backend</span><span class="s2">,</span>
+            <span class="s1">backend_path</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+            <span class="s1">runner</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+            <span class="s1">python_executable</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">):</span>
+        <span class="s4">&quot;&quot;&quot; 
+        :param source_dir: The source directory to invoke the build backend for 
+        :param build_backend: The build backend spec 
+        :param backend_path: Additional path entries for the build backend spec 
+        :param runner: The :ref:`subprocess runner &lt;Subprocess Runners&gt;` to use 
+        :param python_executable: 
+            The Python executable used to invoke the build backend 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">runner </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">runner </span><span class="s2">= </span><span class="s1">default_subprocess_runner</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">source_dir </span><span class="s2">= </span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">source_dir</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">build_backend </span><span class="s2">= </span><span class="s1">build_backend</span>
+        <span class="s0">if </span><span class="s1">backend_path</span><span class="s2">:</span>
+            <span class="s1">backend_path </span><span class="s2">= [</span>
+                <span class="s1">norm_and_check</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">source_dir</span><span class="s2">, </span><span class="s1">p</span><span class="s2">) </span><span class="s0">for </span><span class="s1">p </span><span class="s0">in </span><span class="s1">backend_path</span>
+            <span class="s2">]</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">backend_path </span><span class="s2">= </span><span class="s1">backend_path</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_subprocess_runner </span><span class="s2">= </span><span class="s1">runner</span>
+        <span class="s0">if not </span><span class="s1">python_executable</span><span class="s2">:</span>
+            <span class="s1">python_executable </span><span class="s2">= </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">executable</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">python_executable </span><span class="s2">= </span><span class="s1">python_executable</span>
+
+    <span class="s2">@</span><span class="s1">contextmanager</span>
+    <span class="s0">def </span><span class="s1">subprocess_runner</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">runner</span><span class="s2">):</span>
+        <span class="s4">&quot;&quot;&quot;A context manager for temporarily overriding the default 
+        :ref:`subprocess runner &lt;Subprocess Runners&gt;`. 
+ 
+        .. code-block:: python 
+ 
+            hook_caller = BuildBackendHookCaller(...) 
+            with hook_caller.subprocess_runner(quiet_subprocess_runner): 
+                ... 
+        &quot;&quot;&quot;</span>
+        <span class="s1">prev </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_subprocess_runner</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_subprocess_runner </span><span class="s2">= </span><span class="s1">runner</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">yield</span>
+        <span class="s0">finally</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_subprocess_runner </span><span class="s2">= </span><span class="s1">prev</span>
+
+    <span class="s0">def </span><span class="s1">_supported_features</span><span class="s2">(</span><span class="s1">self</span><span class="s2">):</span>
+        <span class="s4">&quot;&quot;&quot;Return the list of optional features supported by the backend.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_call_hook</span><span class="s2">(</span><span class="s3">'_supported_features'</span><span class="s2">, {})</span>
+
+    <span class="s0">def </span><span class="s1">get_requires_for_build_wheel</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">config_settings</span><span class="s2">=</span><span class="s0">None</span><span class="s2">):</span>
+        <span class="s4">&quot;&quot;&quot;Get additional dependencies required for building a wheel. 
+ 
+        :returns: A list of :pep:`dependency specifiers &lt;508&gt;`. 
+        :rtype: list[str] 
+ 
+        .. admonition:: Fallback 
+ 
+            If the build backend does not defined a hook with this name, an 
+            empty list will be returned. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_call_hook</span><span class="s2">(</span><span class="s3">'get_requires_for_build_wheel'</span><span class="s2">, {</span>
+            <span class="s3">'config_settings'</span><span class="s2">: </span><span class="s1">config_settings</span>
+        <span class="s2">})</span>
+
+    <span class="s0">def </span><span class="s1">prepare_metadata_for_build_wheel</span><span class="s2">(</span>
+            <span class="s1">self</span><span class="s2">, </span><span class="s1">metadata_directory</span><span class="s2">, </span><span class="s1">config_settings</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+            <span class="s1">_allow_fallback</span><span class="s2">=</span><span class="s0">True</span><span class="s2">):</span>
+        <span class="s4">&quot;&quot;&quot;Prepare a ``*.dist-info`` folder with metadata for this project. 
+ 
+        :returns: Name of the newly created subfolder within 
+                  ``metadata_directory``, containing the metadata. 
+        :rtype: str 
+ 
+        .. admonition:: Fallback 
+ 
+            If the build backend does not define a hook with this name and 
+            ``_allow_fallback`` is truthy, the backend will be asked to build a 
+            wheel via the ``build_wheel`` hook and the dist-info extracted from 
+            that will be returned. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_call_hook</span><span class="s2">(</span><span class="s3">'prepare_metadata_for_build_wheel'</span><span class="s2">, {</span>
+            <span class="s3">'metadata_directory'</span><span class="s2">: </span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">metadata_directory</span><span class="s2">),</span>
+            <span class="s3">'config_settings'</span><span class="s2">: </span><span class="s1">config_settings</span><span class="s2">,</span>
+            <span class="s3">'_allow_fallback'</span><span class="s2">: </span><span class="s1">_allow_fallback</span><span class="s2">,</span>
+        <span class="s2">})</span>
+
+    <span class="s0">def </span><span class="s1">build_wheel</span><span class="s2">(</span>
+            <span class="s1">self</span><span class="s2">, </span><span class="s1">wheel_directory</span><span class="s2">, </span><span class="s1">config_settings</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+            <span class="s1">metadata_directory</span><span class="s2">=</span><span class="s0">None</span><span class="s2">):</span>
+        <span class="s4">&quot;&quot;&quot;Build a wheel from this project. 
+ 
+        :returns: 
+            The name of the newly created wheel within ``wheel_directory``. 
+ 
+        .. admonition:: Interaction with fallback 
+ 
+            If the ``build_wheel`` hook was called in the fallback for 
+            :meth:`prepare_metadata_for_build_wheel`, the build backend would 
+            not be invoked. Instead, the previously built wheel will be copied 
+            to ``wheel_directory`` and the name of that file will be returned. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">metadata_directory </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">metadata_directory </span><span class="s2">= </span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">metadata_directory</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_call_hook</span><span class="s2">(</span><span class="s3">'build_wheel'</span><span class="s2">, {</span>
+            <span class="s3">'wheel_directory'</span><span class="s2">: </span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">wheel_directory</span><span class="s2">),</span>
+            <span class="s3">'config_settings'</span><span class="s2">: </span><span class="s1">config_settings</span><span class="s2">,</span>
+            <span class="s3">'metadata_directory'</span><span class="s2">: </span><span class="s1">metadata_directory</span><span class="s2">,</span>
+        <span class="s2">})</span>
+
+    <span class="s0">def </span><span class="s1">get_requires_for_build_editable</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">config_settings</span><span class="s2">=</span><span class="s0">None</span><span class="s2">):</span>
+        <span class="s4">&quot;&quot;&quot;Get additional dependencies required for building an editable wheel. 
+ 
+        :returns: A list of :pep:`dependency specifiers &lt;508&gt;`. 
+        :rtype: list[str] 
+ 
+        .. admonition:: Fallback 
+ 
+            If the build backend does not defined a hook with this name, an 
+            empty list will be returned. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_call_hook</span><span class="s2">(</span><span class="s3">'get_requires_for_build_editable'</span><span class="s2">, {</span>
+            <span class="s3">'config_settings'</span><span class="s2">: </span><span class="s1">config_settings</span>
+        <span class="s2">})</span>
+
+    <span class="s0">def </span><span class="s1">prepare_metadata_for_build_editable</span><span class="s2">(</span>
+            <span class="s1">self</span><span class="s2">, </span><span class="s1">metadata_directory</span><span class="s2">, </span><span class="s1">config_settings</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+            <span class="s1">_allow_fallback</span><span class="s2">=</span><span class="s0">True</span><span class="s2">):</span>
+        <span class="s4">&quot;&quot;&quot;Prepare a ``*.dist-info`` folder with metadata for this project. 
+ 
+        :returns: Name of the newly created subfolder within 
+                  ``metadata_directory``, containing the metadata. 
+        :rtype: str 
+ 
+        .. admonition:: Fallback 
+ 
+            If the build backend does not define a hook with this name and 
+            ``_allow_fallback`` is truthy, the backend will be asked to build a 
+            wheel via the ``build_editable`` hook and the dist-info 
+            extracted from that will be returned. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_call_hook</span><span class="s2">(</span><span class="s3">'prepare_metadata_for_build_editable'</span><span class="s2">, {</span>
+            <span class="s3">'metadata_directory'</span><span class="s2">: </span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">metadata_directory</span><span class="s2">),</span>
+            <span class="s3">'config_settings'</span><span class="s2">: </span><span class="s1">config_settings</span><span class="s2">,</span>
+            <span class="s3">'_allow_fallback'</span><span class="s2">: </span><span class="s1">_allow_fallback</span><span class="s2">,</span>
+        <span class="s2">})</span>
+
+    <span class="s0">def </span><span class="s1">build_editable</span><span class="s2">(</span>
+            <span class="s1">self</span><span class="s2">, </span><span class="s1">wheel_directory</span><span class="s2">, </span><span class="s1">config_settings</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+            <span class="s1">metadata_directory</span><span class="s2">=</span><span class="s0">None</span><span class="s2">):</span>
+        <span class="s4">&quot;&quot;&quot;Build an editable wheel from this project. 
+ 
+        :returns: 
+            The name of the newly created wheel within ``wheel_directory``. 
+ 
+        .. admonition:: Interaction with fallback 
+ 
+            If the ``build_editable`` hook was called in the fallback for 
+            :meth:`prepare_metadata_for_build_editable`, the build backend 
+            would not be invoked. Instead, the previously built wheel will be 
+            copied to ``wheel_directory`` and the name of that file will be 
+            returned. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">metadata_directory </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">metadata_directory </span><span class="s2">= </span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">metadata_directory</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_call_hook</span><span class="s2">(</span><span class="s3">'build_editable'</span><span class="s2">, {</span>
+            <span class="s3">'wheel_directory'</span><span class="s2">: </span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">wheel_directory</span><span class="s2">),</span>
+            <span class="s3">'config_settings'</span><span class="s2">: </span><span class="s1">config_settings</span><span class="s2">,</span>
+            <span class="s3">'metadata_directory'</span><span class="s2">: </span><span class="s1">metadata_directory</span><span class="s2">,</span>
+        <span class="s2">})</span>
+
+    <span class="s0">def </span><span class="s1">get_requires_for_build_sdist</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">config_settings</span><span class="s2">=</span><span class="s0">None</span><span class="s2">):</span>
+        <span class="s4">&quot;&quot;&quot;Get additional dependencies required for building an sdist. 
+ 
+        :returns: A list of :pep:`dependency specifiers &lt;508&gt;`. 
+        :rtype: list[str] 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_call_hook</span><span class="s2">(</span><span class="s3">'get_requires_for_build_sdist'</span><span class="s2">, {</span>
+            <span class="s3">'config_settings'</span><span class="s2">: </span><span class="s1">config_settings</span>
+        <span class="s2">})</span>
+
+    <span class="s0">def </span><span class="s1">build_sdist</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">sdist_directory</span><span class="s2">, </span><span class="s1">config_settings</span><span class="s2">=</span><span class="s0">None</span><span class="s2">):</span>
+        <span class="s4">&quot;&quot;&quot;Build an sdist from this project. 
+ 
+        :returns: 
+            The name of the newly created sdist within ``wheel_directory``. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_call_hook</span><span class="s2">(</span><span class="s3">'build_sdist'</span><span class="s2">, {</span>
+            <span class="s3">'sdist_directory'</span><span class="s2">: </span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">sdist_directory</span><span class="s2">),</span>
+            <span class="s3">'config_settings'</span><span class="s2">: </span><span class="s1">config_settings</span><span class="s2">,</span>
+        <span class="s2">})</span>
+
+    <span class="s0">def </span><span class="s1">_call_hook</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">hook_name</span><span class="s2">, </span><span class="s1">kwargs</span><span class="s2">):</span>
+        <span class="s1">extra_environ </span><span class="s2">= {</span><span class="s3">'PEP517_BUILD_BACKEND'</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">build_backend</span><span class="s2">}</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">backend_path</span><span class="s2">:</span>
+            <span class="s1">backend_path </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">pathsep</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">backend_path</span><span class="s2">)</span>
+            <span class="s1">extra_environ</span><span class="s2">[</span><span class="s3">'PEP517_BACKEND_PATH'</span><span class="s2">] = </span><span class="s1">backend_path</span>
+
+        <span class="s0">with </span><span class="s1">tempfile</span><span class="s2">.</span><span class="s1">TemporaryDirectory</span><span class="s2">() </span><span class="s0">as </span><span class="s1">td</span><span class="s2">:</span>
+            <span class="s1">hook_input </span><span class="s2">= {</span><span class="s3">'kwargs'</span><span class="s2">: </span><span class="s1">kwargs</span><span class="s2">}</span>
+            <span class="s1">write_json</span><span class="s2">(</span><span class="s1">hook_input</span><span class="s2">, </span><span class="s1">pjoin</span><span class="s2">(</span><span class="s1">td</span><span class="s2">, </span><span class="s3">'input.json'</span><span class="s2">), </span><span class="s1">indent</span><span class="s2">=</span><span class="s6">2</span><span class="s2">)</span>
+
+            <span class="s5"># Run the hook in a subprocess</span>
+            <span class="s0">with </span><span class="s1">_in_proc_script_path</span><span class="s2">() </span><span class="s0">as </span><span class="s1">script</span><span class="s2">:</span>
+                <span class="s1">python </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">python_executable</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_subprocess_runner</span><span class="s2">(</span>
+                    <span class="s2">[</span><span class="s1">python</span><span class="s2">, </span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">str</span><span class="s2">(</span><span class="s1">script</span><span class="s2">)), </span><span class="s1">hook_name</span><span class="s2">, </span><span class="s1">td</span><span class="s2">],</span>
+                    <span class="s1">cwd</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">source_dir</span><span class="s2">,</span>
+                    <span class="s1">extra_environ</span><span class="s2">=</span><span class="s1">extra_environ</span>
+                <span class="s2">)</span>
+
+            <span class="s1">data </span><span class="s2">= </span><span class="s1">read_json</span><span class="s2">(</span><span class="s1">pjoin</span><span class="s2">(</span><span class="s1">td</span><span class="s2">, </span><span class="s3">'output.json'</span><span class="s2">))</span>
+            <span class="s0">if </span><span class="s1">data</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'unsupported'</span><span class="s2">):</span>
+                <span class="s0">raise </span><span class="s1">UnsupportedOperation</span><span class="s2">(</span><span class="s1">data</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'traceback'</span><span class="s2">, </span><span class="s3">''</span><span class="s2">))</span>
+            <span class="s0">if </span><span class="s1">data</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'no_backend'</span><span class="s2">):</span>
+                <span class="s0">raise </span><span class="s1">BackendUnavailable</span><span class="s2">(</span><span class="s1">data</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'traceback'</span><span class="s2">, </span><span class="s3">''</span><span class="s2">))</span>
+            <span class="s0">if </span><span class="s1">data</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'backend_invalid'</span><span class="s2">):</span>
+                <span class="s0">raise </span><span class="s1">BackendInvalid</span><span class="s2">(</span>
+                    <span class="s1">backend_name</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">build_backend</span><span class="s2">,</span>
+                    <span class="s1">backend_path</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">backend_path</span><span class="s2">,</span>
+                    <span class="s1">message</span><span class="s2">=</span><span class="s1">data</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'backend_error'</span><span class="s2">, </span><span class="s3">''</span><span class="s2">)</span>
+                <span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">data</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'hook_missing'</span><span class="s2">):</span>
+                <span class="s0">raise </span><span class="s1">HookMissing</span><span class="s2">(</span><span class="s1">data</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'missing_hook_name'</span><span class="s2">) </span><span class="s0">or </span><span class="s1">hook_name</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">data</span><span class="s2">[</span><span class="s3">'return_val'</span><span class="s2">]</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,243 @@
+<html>
+<head>
+<title>staticfiles.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8;}
+.s5 { color: #5f826b; font-style: italic;}
+.s6 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+staticfiles.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">errno</span>
+<span class="s0">import </span><span class="s1">importlib</span><span class="s2">.</span><span class="s1">util</span>
+<span class="s0">import </span><span class="s1">os</span>
+<span class="s0">import </span><span class="s1">stat</span>
+<span class="s0">import </span><span class="s1">typing</span>
+<span class="s0">from </span><span class="s1">email</span><span class="s2">.</span><span class="s1">utils </span><span class="s0">import </span><span class="s1">parsedate</span>
+
+<span class="s0">import </span><span class="s1">anyio</span>
+<span class="s0">import </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">to_thread</span>
+
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">_utils </span><span class="s0">import </span><span class="s1">get_route_path</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">datastructures </span><span class="s0">import </span><span class="s1">URL</span><span class="s2">, </span><span class="s1">Headers</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">HTTPException</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">responses </span><span class="s0">import </span><span class="s1">FileResponse</span><span class="s2">, </span><span class="s1">RedirectResponse</span><span class="s2">, </span><span class="s1">Response</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">Send</span>
+
+<span class="s1">PathLike </span><span class="s2">= </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Union</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s3">&quot;os.PathLike[str]&quot;</span><span class="s2">]</span>
+
+
+<span class="s0">class </span><span class="s1">NotModifiedResponse</span><span class="s2">(</span><span class="s1">Response</span><span class="s2">):</span>
+    <span class="s1">NOT_MODIFIED_HEADERS </span><span class="s2">= (</span>
+        <span class="s3">&quot;cache-control&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;content-location&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;date&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;etag&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;expires&quot;</span><span class="s2">,</span>
+        <span class="s3">&quot;vary&quot;</span><span class="s2">,</span>
+    <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">headers</span><span class="s2">: </span><span class="s1">Headers</span><span class="s2">):</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(</span>
+            <span class="s1">status_code</span><span class="s2">=</span><span class="s4">304</span><span class="s2">,</span>
+            <span class="s1">headers</span><span class="s2">={</span><span class="s1">name</span><span class="s2">: </span><span class="s1">value </span><span class="s0">for </span><span class="s1">name</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">headers</span><span class="s2">.</span><span class="s1">items</span><span class="s2">() </span><span class="s0">if </span><span class="s1">name </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">NOT_MODIFIED_HEADERS</span><span class="s2">},</span>
+        <span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">StaticFiles</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s2">*,</span>
+        <span class="s1">directory</span><span class="s2">: </span><span class="s1">PathLike </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">packages</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">str </span><span class="s2">| </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">html</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">check_dir</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">,</span>
+        <span class="s1">follow_symlink</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">directory </span><span class="s2">= </span><span class="s1">directory</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">packages </span><span class="s2">= </span><span class="s1">packages</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">all_directories </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">get_directories</span><span class="s2">(</span><span class="s1">directory</span><span class="s2">, </span><span class="s1">packages</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">html </span><span class="s2">= </span><span class="s1">html</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">config_checked </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">follow_symlink </span><span class="s2">= </span><span class="s1">follow_symlink</span>
+        <span class="s0">if </span><span class="s1">check_dir </span><span class="s0">and </span><span class="s1">directory </span><span class="s0">is not None and not </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">isdir</span><span class="s2">(</span><span class="s1">directory</span><span class="s2">):</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s3">f&quot;Directory '</span><span class="s0">{</span><span class="s1">directory</span><span class="s0">}</span><span class="s3">' does not exist&quot;</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">get_directories</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">directory</span><span class="s2">: </span><span class="s1">PathLike </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">packages</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">str </span><span class="s2">| </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">PathLike</span><span class="s2">]:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Given `directory` and `packages` arguments, return a list of all the 
+        directories that should be used for serving static files from. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">directories </span><span class="s2">= []</span>
+        <span class="s0">if </span><span class="s1">directory </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">directories</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">directory</span><span class="s2">)</span>
+
+        <span class="s0">for </span><span class="s1">package </span><span class="s0">in </span><span class="s1">packages </span><span class="s0">or </span><span class="s2">[]:</span>
+            <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">package</span><span class="s2">, </span><span class="s1">tuple</span><span class="s2">):</span>
+                <span class="s1">package</span><span class="s2">, </span><span class="s1">statics_dir </span><span class="s2">= </span><span class="s1">package</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">statics_dir </span><span class="s2">= </span><span class="s3">&quot;statics&quot;</span>
+            <span class="s1">spec </span><span class="s2">= </span><span class="s1">importlib</span><span class="s2">.</span><span class="s1">util</span><span class="s2">.</span><span class="s1">find_spec</span><span class="s2">(</span><span class="s1">package</span><span class="s2">)</span>
+            <span class="s0">assert </span><span class="s1">spec </span><span class="s0">is not None</span><span class="s2">, </span><span class="s3">f&quot;Package </span><span class="s0">{</span><span class="s1">package</span><span class="s0">!r} </span><span class="s3">could not be found.&quot;</span>
+            <span class="s0">assert </span><span class="s1">spec</span><span class="s2">.</span><span class="s1">origin </span><span class="s0">is not None</span><span class="s2">, </span><span class="s3">f&quot;Package </span><span class="s0">{</span><span class="s1">package</span><span class="s0">!r} </span><span class="s3">could not be found.&quot;</span>
+            <span class="s1">package_directory </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">normpath</span><span class="s2">(</span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">spec</span><span class="s2">.</span><span class="s1">origin</span><span class="s2">, </span><span class="s3">&quot;..&quot;</span><span class="s2">, </span><span class="s1">statics_dir</span><span class="s2">))</span>
+            <span class="s0">assert </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">isdir</span><span class="s2">(</span><span class="s1">package_directory</span><span class="s2">), (</span>
+                <span class="s3">f&quot;Directory '</span><span class="s0">{</span><span class="s1">statics_dir</span><span class="s0">!r}</span><span class="s3">' in package </span><span class="s0">{</span><span class="s1">package</span><span class="s0">!r} </span><span class="s3">could not be found.&quot;</span>
+            <span class="s2">)</span>
+            <span class="s1">directories</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">package_directory</span><span class="s2">)</span>
+
+        <span class="s0">return </span><span class="s1">directories</span>
+
+    <span class="s0">async def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">: </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">: </span><span class="s1">Send</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        The ASGI entry point. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">assert </span><span class="s1">scope</span><span class="s2">[</span><span class="s3">&quot;type&quot;</span><span class="s2">] == </span><span class="s3">&quot;http&quot;</span>
+
+        <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config_checked</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">check_config</span><span class="s2">()</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">config_checked </span><span class="s2">= </span><span class="s0">True</span>
+
+        <span class="s1">path </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">get_path</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">)</span>
+        <span class="s1">response </span><span class="s2">= </span><span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">get_response</span><span class="s2">(</span><span class="s1">path</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">)</span>
+        <span class="s0">await </span><span class="s1">response</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">get_path</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Given the ASGI scope, return the `path` string to serve up, 
+        with OS specific path separators, and any '..', '.' components removed. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">route_path </span><span class="s2">= </span><span class="s1">get_route_path</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">normpath</span><span class="s2">(</span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(*</span><span class="s1">route_path</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s3">&quot;/&quot;</span><span class="s2">)))</span>
+
+    <span class="s0">async def </span><span class="s1">get_response</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">path</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">) </span><span class="s1">-&gt; Response</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Returns an HTTP response, given the incoming path, method and request headers. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">scope</span><span class="s2">[</span><span class="s3">&quot;method&quot;</span><span class="s2">] </span><span class="s0">not in </span><span class="s2">(</span><span class="s3">&quot;GET&quot;</span><span class="s2">, </span><span class="s3">&quot;HEAD&quot;</span><span class="s2">):</span>
+            <span class="s0">raise </span><span class="s1">HTTPException</span><span class="s2">(</span><span class="s1">status_code</span><span class="s2">=</span><span class="s4">405</span><span class="s2">)</span>
+
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">full_path</span><span class="s2">, </span><span class="s1">stat_result </span><span class="s2">= </span><span class="s0">await </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">to_thread</span><span class="s2">.</span><span class="s1">run_sync</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">lookup_path</span><span class="s2">, </span><span class="s1">path</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">PermissionError</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">HTTPException</span><span class="s2">(</span><span class="s1">status_code</span><span class="s2">=</span><span class="s4">401</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">OSError </span><span class="s0">as </span><span class="s1">exc</span><span class="s2">:</span>
+            <span class="s6"># Filename is too long, so it can't be a valid static file.</span>
+            <span class="s0">if </span><span class="s1">exc</span><span class="s2">.</span><span class="s1">errno </span><span class="s2">== </span><span class="s1">errno</span><span class="s2">.</span><span class="s1">ENAMETOOLONG</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">HTTPException</span><span class="s2">(</span><span class="s1">status_code</span><span class="s2">=</span><span class="s4">404</span><span class="s2">)</span>
+
+            <span class="s0">raise </span><span class="s1">exc</span>
+
+        <span class="s0">if </span><span class="s1">stat_result </span><span class="s0">and </span><span class="s1">stat</span><span class="s2">.</span><span class="s1">S_ISREG</span><span class="s2">(</span><span class="s1">stat_result</span><span class="s2">.</span><span class="s1">st_mode</span><span class="s2">):</span>
+            <span class="s6"># We have a static file to serve.</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">file_response</span><span class="s2">(</span><span class="s1">full_path</span><span class="s2">, </span><span class="s1">stat_result</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">)</span>
+
+        <span class="s0">elif </span><span class="s1">stat_result </span><span class="s0">and </span><span class="s1">stat</span><span class="s2">.</span><span class="s1">S_ISDIR</span><span class="s2">(</span><span class="s1">stat_result</span><span class="s2">.</span><span class="s1">st_mode</span><span class="s2">) </span><span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">html</span><span class="s2">:</span>
+            <span class="s6"># We're in HTML mode, and have got a directory URL.</span>
+            <span class="s6"># Check if we have 'index.html' file to serve.</span>
+            <span class="s1">index_path </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">path</span><span class="s2">, </span><span class="s3">&quot;index.html&quot;</span><span class="s2">)</span>
+            <span class="s1">full_path</span><span class="s2">, </span><span class="s1">stat_result </span><span class="s2">= </span><span class="s0">await </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">to_thread</span><span class="s2">.</span><span class="s1">run_sync</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">lookup_path</span><span class="s2">, </span><span class="s1">index_path</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">stat_result </span><span class="s0">is not None and </span><span class="s1">stat</span><span class="s2">.</span><span class="s1">S_ISREG</span><span class="s2">(</span><span class="s1">stat_result</span><span class="s2">.</span><span class="s1">st_mode</span><span class="s2">):</span>
+                <span class="s0">if not </span><span class="s1">scope</span><span class="s2">[</span><span class="s3">&quot;path&quot;</span><span class="s2">].</span><span class="s1">endswith</span><span class="s2">(</span><span class="s3">&quot;/&quot;</span><span class="s2">):</span>
+                    <span class="s6"># Directory URLs should redirect to always end in &quot;/&quot;.</span>
+                    <span class="s1">url </span><span class="s2">= </span><span class="s1">URL</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">=</span><span class="s1">scope</span><span class="s2">)</span>
+                    <span class="s1">url </span><span class="s2">= </span><span class="s1">url</span><span class="s2">.</span><span class="s1">replace</span><span class="s2">(</span><span class="s1">path</span><span class="s2">=</span><span class="s1">url</span><span class="s2">.</span><span class="s1">path </span><span class="s2">+ </span><span class="s3">&quot;/&quot;</span><span class="s2">)</span>
+                    <span class="s0">return </span><span class="s1">RedirectResponse</span><span class="s2">(</span><span class="s1">url</span><span class="s2">=</span><span class="s1">url</span><span class="s2">)</span>
+                <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">file_response</span><span class="s2">(</span><span class="s1">full_path</span><span class="s2">, </span><span class="s1">stat_result</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">html</span><span class="s2">:</span>
+            <span class="s6"># Check for '404.html' if we're in HTML mode.</span>
+            <span class="s1">full_path</span><span class="s2">, </span><span class="s1">stat_result </span><span class="s2">= </span><span class="s0">await </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">to_thread</span><span class="s2">.</span><span class="s1">run_sync</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">lookup_path</span><span class="s2">, </span><span class="s3">&quot;404.html&quot;</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">stat_result </span><span class="s0">and </span><span class="s1">stat</span><span class="s2">.</span><span class="s1">S_ISREG</span><span class="s2">(</span><span class="s1">stat_result</span><span class="s2">.</span><span class="s1">st_mode</span><span class="s2">):</span>
+                <span class="s0">return </span><span class="s1">FileResponse</span><span class="s2">(</span><span class="s1">full_path</span><span class="s2">, </span><span class="s1">stat_result</span><span class="s2">=</span><span class="s1">stat_result</span><span class="s2">, </span><span class="s1">status_code</span><span class="s2">=</span><span class="s4">404</span><span class="s2">)</span>
+        <span class="s0">raise </span><span class="s1">HTTPException</span><span class="s2">(</span><span class="s1">status_code</span><span class="s2">=</span><span class="s4">404</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">lookup_path</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">path</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">os</span><span class="s2">.</span><span class="s1">stat_result </span><span class="s2">| </span><span class="s0">None</span><span class="s2">]:</span>
+        <span class="s0">for </span><span class="s1">directory </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">all_directories</span><span class="s2">:</span>
+            <span class="s1">joined_path </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">directory</span><span class="s2">, </span><span class="s1">path</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">follow_symlink</span><span class="s2">:</span>
+                <span class="s1">full_path </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">joined_path</span><span class="s2">)</span>
+                <span class="s1">directory </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">directory</span><span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">full_path </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">realpath</span><span class="s2">(</span><span class="s1">joined_path</span><span class="s2">)</span>
+                <span class="s1">directory </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">realpath</span><span class="s2">(</span><span class="s1">directory</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">commonpath</span><span class="s2">([</span><span class="s1">full_path</span><span class="s2">, </span><span class="s1">directory</span><span class="s2">]) != </span><span class="s1">str</span><span class="s2">(</span><span class="s1">directory</span><span class="s2">):</span>
+                <span class="s6"># Don't allow misbehaving clients to break out of the static files directory.</span>
+                <span class="s0">continue</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">full_path</span><span class="s2">, </span><span class="s1">os</span><span class="s2">.</span><span class="s1">stat</span><span class="s2">(</span><span class="s1">full_path</span><span class="s2">)</span>
+            <span class="s0">except </span><span class="s2">(</span><span class="s1">FileNotFoundError</span><span class="s2">, </span><span class="s1">NotADirectoryError</span><span class="s2">):</span>
+                <span class="s0">continue</span>
+        <span class="s0">return </span><span class="s3">&quot;&quot;</span><span class="s2">, </span><span class="s0">None</span>
+
+    <span class="s0">def </span><span class="s1">file_response</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">full_path</span><span class="s2">: </span><span class="s1">PathLike</span><span class="s2">,</span>
+        <span class="s1">stat_result</span><span class="s2">: </span><span class="s1">os</span><span class="s2">.</span><span class="s1">stat_result</span><span class="s2">,</span>
+        <span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">,</span>
+        <span class="s1">status_code</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s4">200</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; Response</span><span class="s2">:</span>
+        <span class="s1">request_headers </span><span class="s2">= </span><span class="s1">Headers</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">=</span><span class="s1">scope</span><span class="s2">)</span>
+
+        <span class="s1">response </span><span class="s2">= </span><span class="s1">FileResponse</span><span class="s2">(</span><span class="s1">full_path</span><span class="s2">, </span><span class="s1">status_code</span><span class="s2">=</span><span class="s1">status_code</span><span class="s2">, </span><span class="s1">stat_result</span><span class="s2">=</span><span class="s1">stat_result</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">is_not_modified</span><span class="s2">(</span><span class="s1">response</span><span class="s2">.</span><span class="s1">headers</span><span class="s2">, </span><span class="s1">request_headers</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">NotModifiedResponse</span><span class="s2">(</span><span class="s1">response</span><span class="s2">.</span><span class="s1">headers</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">response</span>
+
+    <span class="s0">async def </span><span class="s1">check_config</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Perform a one-off configuration check that StaticFiles is actually 
+        pointed at a directory, so that we can raise loud errors rather than 
+        just returning 404 responses. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">directory </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">return</span>
+
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">stat_result </span><span class="s2">= </span><span class="s0">await </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">to_thread</span><span class="s2">.</span><span class="s1">run_sync</span><span class="s2">(</span><span class="s1">os</span><span class="s2">.</span><span class="s1">stat</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">directory</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">FileNotFoundError</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s3">f&quot;StaticFiles directory '</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">directory</span><span class="s0">}</span><span class="s3">' does not exist.&quot;</span><span class="s2">)</span>
+        <span class="s0">if not </span><span class="s2">(</span><span class="s1">stat</span><span class="s2">.</span><span class="s1">S_ISDIR</span><span class="s2">(</span><span class="s1">stat_result</span><span class="s2">.</span><span class="s1">st_mode</span><span class="s2">) </span><span class="s0">or </span><span class="s1">stat</span><span class="s2">.</span><span class="s1">S_ISLNK</span><span class="s2">(</span><span class="s1">stat_result</span><span class="s2">.</span><span class="s1">st_mode</span><span class="s2">)):</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s3">f&quot;StaticFiles path '</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">directory</span><span class="s0">}</span><span class="s3">' is not a directory.&quot;</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">is_not_modified</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">response_headers</span><span class="s2">: </span><span class="s1">Headers</span><span class="s2">, </span><span class="s1">request_headers</span><span class="s2">: </span><span class="s1">Headers</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Given the request and response headers, return `True` if an HTTP 
+        &quot;Not Modified&quot; response could be returned instead. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">if_none_match </span><span class="s2">= </span><span class="s1">request_headers</span><span class="s2">[</span><span class="s3">&quot;if-none-match&quot;</span><span class="s2">]</span>
+            <span class="s1">etag </span><span class="s2">= </span><span class="s1">response_headers</span><span class="s2">[</span><span class="s3">&quot;etag&quot;</span><span class="s2">]</span>
+            <span class="s0">if </span><span class="s1">etag </span><span class="s0">in </span><span class="s2">[</span><span class="s1">tag</span><span class="s2">.</span><span class="s1">strip</span><span class="s2">(</span><span class="s3">&quot; W/&quot;</span><span class="s2">) </span><span class="s0">for </span><span class="s1">tag </span><span class="s0">in </span><span class="s1">if_none_match</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s3">&quot;,&quot;</span><span class="s2">)]:</span>
+                <span class="s0">return True</span>
+        <span class="s0">except </span><span class="s1">KeyError</span><span class="s2">:</span>
+            <span class="s0">pass</span>
+
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">if_modified_since </span><span class="s2">= </span><span class="s1">parsedate</span><span class="s2">(</span><span class="s1">request_headers</span><span class="s2">[</span><span class="s3">&quot;if-modified-since&quot;</span><span class="s2">])</span>
+            <span class="s1">last_modified </span><span class="s2">= </span><span class="s1">parsedate</span><span class="s2">(</span><span class="s1">response_headers</span><span class="s2">[</span><span class="s3">&quot;last-modified&quot;</span><span class="s2">])</span>
+            <span class="s0">if </span><span class="s1">if_modified_since </span><span class="s0">is not None and </span><span class="s1">last_modified </span><span class="s0">is not None and </span><span class="s1">if_modified_since </span><span class="s2">&gt;= </span><span class="s1">last_modified</span><span class="s2">:</span>
+                <span class="s0">return True</span>
+        <span class="s0">except </span><span class="s1">KeyError</span><span class="s2">:</span>
+            <span class="s0">pass</span>
+
+        <span class="s0">return False</span>
+</pre>
+</body>
+</html>

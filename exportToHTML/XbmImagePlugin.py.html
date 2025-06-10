@@ -1,0 +1,121 @@
+<html>
+<head>
+<title>XbmImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #a5c261;}
+.s5 { color: #2aacb8;}
+.s6 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+XbmImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># XBM File handling</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1995-09-08 fl   Created</span>
+<span class="s0"># 1996-11-01 fl   Added save support</span>
+<span class="s0"># 1997-07-07 fl   Made header parser more tolerant</span>
+<span class="s0"># 1997-07-22 fl   Fixed yet another parser bug</span>
+<span class="s0"># 2001-02-17 fl   Use 're' instead of 'regex' (Python 2.1) (0.4)</span>
+<span class="s0"># 2001-05-13 fl   Added hotspot handling (based on code from Bernhard Herzog)</span>
+<span class="s0"># 2004-02-24 fl   Allow some whitespace before first #define</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2004 by Secret Labs AB</span>
+<span class="s0"># Copyright (c) 1996-1997 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">IO</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">ImageFile</span>
+
+<span class="s0"># XBM header</span>
+<span class="s1">xbm_head </span><span class="s3">= </span><span class="s1">re</span><span class="s3">.</span><span class="s1">compile</span><span class="s3">(</span>
+    <span class="s4">rb&quot;\s*#define[ \t]+.*_width[ \t]+(?P&lt;width&gt;[0-9]+)[\r\n]+&quot;</span>
+    <span class="s4">b&quot;#define[ </span><span class="s2">\t</span><span class="s4">]+.*_height[ </span><span class="s2">\t</span><span class="s4">]+(?P&lt;height&gt;[0-9]+)[</span><span class="s2">\r\n</span><span class="s4">]+&quot;</span>
+    <span class="s4">b&quot;(?P&lt;hotspot&gt;&quot;</span>
+    <span class="s4">b&quot;#define[ </span><span class="s2">\t</span><span class="s4">]+[^_]*_x_hot[ </span><span class="s2">\t</span><span class="s4">]+(?P&lt;xhot&gt;[0-9]+)[</span><span class="s2">\r\n</span><span class="s4">]+&quot;</span>
+    <span class="s4">b&quot;#define[ </span><span class="s2">\t</span><span class="s4">]+[^_]*_y_hot[ </span><span class="s2">\t</span><span class="s4">]+(?P&lt;yhot&gt;[0-9]+)[</span><span class="s2">\r\n</span><span class="s4">]+&quot;</span>
+    <span class="s4">b&quot;)?&quot;</span>
+    <span class="s4">rb&quot;[\000-\377]*_bits\[]&quot;</span>
+<span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_accept</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">: </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s2">return </span><span class="s1">prefix</span><span class="s3">.</span><span class="s1">lstrip</span><span class="s3">()[:</span><span class="s5">7</span><span class="s3">] == </span><span class="s4">b&quot;#define&quot;</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for X11 bitmaps.</span>
+
+
+<span class="s2">class </span><span class="s1">XbmImageFile</span><span class="s3">(</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">ImageFile</span><span class="s3">):</span>
+    <span class="s1">format </span><span class="s3">= </span><span class="s6">&quot;XBM&quot;</span>
+    <span class="s1">format_description </span><span class="s3">= </span><span class="s6">&quot;X11 Bitmap&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">assert </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp </span><span class="s2">is not None</span>
+
+        <span class="s1">m </span><span class="s3">= </span><span class="s1">xbm_head</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">512</span><span class="s3">))</span>
+
+        <span class="s2">if not </span><span class="s1">m</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;not a XBM file&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s1">xsize </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s6">&quot;width&quot;</span><span class="s3">))</span>
+        <span class="s1">ysize </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s6">&quot;height&quot;</span><span class="s3">))</span>
+
+        <span class="s2">if </span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s6">&quot;hotspot&quot;</span><span class="s3">):</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s6">&quot;hotspot&quot;</span><span class="s3">] = (</span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s6">&quot;xhot&quot;</span><span class="s3">)), </span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s6">&quot;yhot&quot;</span><span class="s3">)))</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s6">&quot;1&quot;</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= </span><span class="s1">xsize</span><span class="s3">, </span><span class="s1">ysize</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= [</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s6">&quot;xbm&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">m</span><span class="s3">.</span><span class="s1">end</span><span class="s3">())]</span>
+
+
+<span class="s2">def </span><span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">!= </span><span class="s6">&quot;1&quot;</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s6">f&quot;cannot write mode </span><span class="s2">{</span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span><span class="s2">} </span><span class="s6">as XBM&quot;</span>
+        <span class="s2">raise </span><span class="s1">OSError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s6">f&quot;#define im_width </span><span class="s2">{</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">0</span><span class="s3">]</span><span class="s2">}\n</span><span class="s6">&quot;</span><span class="s3">.</span><span class="s1">encode</span><span class="s3">(</span><span class="s6">&quot;ascii&quot;</span><span class="s3">))</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s6">f&quot;#define im_height </span><span class="s2">{</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">1</span><span class="s3">]</span><span class="s2">}\n</span><span class="s6">&quot;</span><span class="s3">.</span><span class="s1">encode</span><span class="s3">(</span><span class="s6">&quot;ascii&quot;</span><span class="s3">))</span>
+
+    <span class="s1">hotspot </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;hotspot&quot;</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">hotspot</span><span class="s3">:</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s6">f&quot;#define im_x_hot </span><span class="s2">{</span><span class="s1">hotspot</span><span class="s3">[</span><span class="s5">0</span><span class="s3">]</span><span class="s2">}\n</span><span class="s6">&quot;</span><span class="s3">.</span><span class="s1">encode</span><span class="s3">(</span><span class="s6">&quot;ascii&quot;</span><span class="s3">))</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s6">f&quot;#define im_y_hot </span><span class="s2">{</span><span class="s1">hotspot</span><span class="s3">[</span><span class="s5">1</span><span class="s3">]</span><span class="s2">}\n</span><span class="s6">&quot;</span><span class="s3">.</span><span class="s1">encode</span><span class="s3">(</span><span class="s6">&quot;ascii&quot;</span><span class="s3">))</span>
+
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">b&quot;static char im_bits[] = {</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s3">)</span>
+
+    <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">, [</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s6">&quot;xbm&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)])</span>
+
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s4">b&quot;};</span><span class="s2">\n</span><span class="s4">&quot;</span><span class="s3">)</span>
+
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_open</span><span class="s3">(</span><span class="s1">XbmImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">XbmImageFile</span><span class="s3">, </span><span class="s1">_accept</span><span class="s3">)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_save</span><span class="s3">(</span><span class="s1">XbmImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">_save</span><span class="s3">)</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_extension</span><span class="s3">(</span><span class="s1">XbmImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s6">&quot;.xbm&quot;</span><span class="s3">)</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_mime</span><span class="s3">(</span><span class="s1">XbmImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s6">&quot;image/xbm&quot;</span><span class="s3">)</span>
+</pre>
+</body>
+</html>

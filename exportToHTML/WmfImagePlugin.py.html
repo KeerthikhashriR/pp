@@ -1,0 +1,208 @@
+<html>
+<head>
+<title>WmfImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #6aab73;}
+.s6 { color: #2aacb8;}
+.s7 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+WmfImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># WMF stub codec</span>
+<span class="s0">#</span>
+<span class="s0"># history:</span>
+<span class="s0"># 1996-12-14 fl   Created</span>
+<span class="s0"># 2004-02-22 fl   Turned into a stub driver</span>
+<span class="s0"># 2004-02-23 fl   Added EMF support</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) Secret Labs AB 1997-2004.  All rights reserved.</span>
+<span class="s0"># Copyright (c) Fredrik Lundh 1996.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s0"># WMF/EMF reference documentation:</span>
+<span class="s0"># https://winprotocoldoc.blob.core.windows.net/productionwindowsarchives/MS-WMF/[MS-WMF].pdf</span>
+<span class="s0"># http://wvware.sourceforge.net/caolan/index.html</span>
+<span class="s0"># http://wvware.sourceforge.net/caolan/ora-wmf.html</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">IO</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">ImageFile</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">i16le </span><span class="s2">as </span><span class="s1">word</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">si16le </span><span class="s2">as </span><span class="s1">short</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">si32le </span><span class="s2">as </span><span class="s1">_long</span>
+
+<span class="s1">_handler </span><span class="s3">= </span><span class="s2">None</span>
+
+
+<span class="s2">def </span><span class="s1">register_handler</span><span class="s3">(</span><span class="s1">handler</span><span class="s3">: </span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">StubHandler </span><span class="s3">| </span><span class="s2">None</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Install application-specific WMF image handler. 
+ 
+    :param handler: Handler object. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">global </span><span class="s1">_handler</span>
+    <span class="s1">_handler </span><span class="s3">= </span><span class="s1">handler</span>
+
+
+<span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">, </span><span class="s5">&quot;drawwmf&quot;</span><span class="s3">):</span>
+    <span class="s0"># install default handler (windows only)</span>
+
+    <span class="s2">class </span><span class="s1">WmfHandler</span><span class="s3">(</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">StubHandler</span><span class="s3">):</span>
+        <span class="s2">def </span><span class="s1">open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">im</span><span class="s3">: </span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">StubImageFile</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+            <span class="s1">im</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s5">&quot;RGB&quot;</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">bbox </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;wmf_bbox&quot;</span><span class="s3">]</span>
+
+        <span class="s2">def </span><span class="s1">load</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">im</span><span class="s3">: </span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">StubImageFile</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+            <span class="s1">im</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s6">0</span><span class="s3">)  </span><span class="s0"># rewind</span>
+            <span class="s2">return </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">frombytes</span><span class="s3">(</span>
+                <span class="s5">&quot;RGB&quot;</span><span class="s3">,</span>
+                <span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">,</span>
+                <span class="s1">Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">.</span><span class="s1">drawwmf</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(), </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">bbox</span><span class="s3">),</span>
+                <span class="s5">&quot;raw&quot;</span><span class="s3">,</span>
+                <span class="s5">&quot;BGR&quot;</span><span class="s3">,</span>
+                <span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] * </span><span class="s6">3 </span><span class="s3">+ </span><span class="s6">3</span><span class="s3">) &amp; -</span><span class="s6">4</span><span class="s3">,</span>
+                <span class="s3">-</span><span class="s6">1</span><span class="s3">,</span>
+            <span class="s3">)</span>
+
+    <span class="s1">register_handler</span><span class="s3">(</span><span class="s1">WmfHandler</span><span class="s3">())</span>
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Read WMF file</span>
+
+
+<span class="s2">def </span><span class="s1">_accept</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">: </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s2">return </span><span class="s3">(</span>
+        <span class="s1">prefix</span><span class="s3">[:</span><span class="s6">6</span><span class="s3">] == </span><span class="s7">b&quot;</span><span class="s2">\xd7\xcd\xc6\x9a\x00\x00</span><span class="s7">&quot; </span><span class="s2">or </span><span class="s1">prefix</span><span class="s3">[:</span><span class="s6">4</span><span class="s3">] == </span><span class="s7">b&quot;</span><span class="s2">\x01\x00\x00\x00</span><span class="s7">&quot;</span>
+    <span class="s3">)</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for Windows metafiles.</span>
+
+
+<span class="s2">class </span><span class="s1">WmfStubImageFile</span><span class="s3">(</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">StubImageFile</span><span class="s3">):</span>
+    <span class="s1">format </span><span class="s3">= </span><span class="s5">&quot;WMF&quot;</span>
+    <span class="s1">format_description </span><span class="s3">= </span><span class="s5">&quot;Windows Metafile&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_inch </span><span class="s3">= </span><span class="s2">None</span>
+
+        <span class="s0"># check placable header</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s6">80</span><span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s1">s</span><span class="s3">[:</span><span class="s6">6</span><span class="s3">] == </span><span class="s7">b&quot;</span><span class="s2">\xd7\xcd\xc6\x9a\x00\x00</span><span class="s7">&quot;</span><span class="s3">:</span>
+            <span class="s0"># placeable windows metafile</span>
+
+            <span class="s0"># get units per inch</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_inch </span><span class="s3">= </span><span class="s1">word</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">14</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_inch </span><span class="s3">== </span><span class="s6">0</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;Invalid inch&quot;</span>
+                <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+            <span class="s0"># get bounding box</span>
+            <span class="s1">x0 </span><span class="s3">= </span><span class="s1">short</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">6</span><span class="s3">)</span>
+            <span class="s1">y0 </span><span class="s3">= </span><span class="s1">short</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">8</span><span class="s3">)</span>
+            <span class="s1">x1 </span><span class="s3">= </span><span class="s1">short</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">10</span><span class="s3">)</span>
+            <span class="s1">y1 </span><span class="s3">= </span><span class="s1">short</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">12</span><span class="s3">)</span>
+
+            <span class="s0"># normalize size to 72 dots per inch</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;dpi&quot;</span><span class="s3">] = </span><span class="s6">72</span>
+            <span class="s1">size </span><span class="s3">= (</span>
+                <span class="s3">(</span><span class="s1">x1 </span><span class="s3">- </span><span class="s1">x0</span><span class="s3">) * </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;dpi&quot;</span><span class="s3">] // </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_inch</span><span class="s3">,</span>
+                <span class="s3">(</span><span class="s1">y1 </span><span class="s3">- </span><span class="s1">y0</span><span class="s3">) * </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;dpi&quot;</span><span class="s3">] // </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_inch</span><span class="s3">,</span>
+            <span class="s3">)</span>
+
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;wmf_bbox&quot;</span><span class="s3">] = </span><span class="s1">x0</span><span class="s3">, </span><span class="s1">y0</span><span class="s3">, </span><span class="s1">x1</span><span class="s3">, </span><span class="s1">y1</span>
+
+            <span class="s0"># sanity check (standard metafile header)</span>
+            <span class="s2">if </span><span class="s1">s</span><span class="s3">[</span><span class="s6">22</span><span class="s3">:</span><span class="s6">26</span><span class="s3">] != </span><span class="s7">b&quot;</span><span class="s2">\x01\x00\t\x00</span><span class="s7">&quot;</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;Unsupported WMF file format&quot;</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s2">elif </span><span class="s1">s</span><span class="s3">[:</span><span class="s6">4</span><span class="s3">] == </span><span class="s7">b&quot;</span><span class="s2">\x01\x00\x00\x00</span><span class="s7">&quot; </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[</span><span class="s6">40</span><span class="s3">:</span><span class="s6">44</span><span class="s3">] == </span><span class="s7">b&quot; EMF&quot;</span><span class="s3">:</span>
+            <span class="s0"># enhanced metafile</span>
+
+            <span class="s0"># get bounding box</span>
+            <span class="s1">x0 </span><span class="s3">= </span><span class="s1">_long</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">8</span><span class="s3">)</span>
+            <span class="s1">y0 </span><span class="s3">= </span><span class="s1">_long</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">12</span><span class="s3">)</span>
+            <span class="s1">x1 </span><span class="s3">= </span><span class="s1">_long</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">16</span><span class="s3">)</span>
+            <span class="s1">y1 </span><span class="s3">= </span><span class="s1">_long</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">20</span><span class="s3">)</span>
+
+            <span class="s0"># get frame (in 0.01 millimeter units)</span>
+            <span class="s1">frame </span><span class="s3">= </span><span class="s1">_long</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">24</span><span class="s3">), </span><span class="s1">_long</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">28</span><span class="s3">), </span><span class="s1">_long</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">32</span><span class="s3">), </span><span class="s1">_long</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s6">36</span><span class="s3">)</span>
+
+            <span class="s1">size </span><span class="s3">= </span><span class="s1">x1 </span><span class="s3">- </span><span class="s1">x0</span><span class="s3">, </span><span class="s1">y1 </span><span class="s3">- </span><span class="s1">y0</span>
+
+            <span class="s0"># calculate dots per inch from bbox and frame</span>
+            <span class="s1">xdpi </span><span class="s3">= </span><span class="s6">2540.0 </span><span class="s3">* (</span><span class="s1">x1 </span><span class="s3">- </span><span class="s1">x0</span><span class="s3">) / (</span><span class="s1">frame</span><span class="s3">[</span><span class="s6">2</span><span class="s3">] - </span><span class="s1">frame</span><span class="s3">[</span><span class="s6">0</span><span class="s3">])</span>
+            <span class="s1">ydpi </span><span class="s3">= </span><span class="s6">2540.0 </span><span class="s3">* (</span><span class="s1">y1 </span><span class="s3">- </span><span class="s1">y0</span><span class="s3">) / (</span><span class="s1">frame</span><span class="s3">[</span><span class="s6">3</span><span class="s3">] - </span><span class="s1">frame</span><span class="s3">[</span><span class="s6">1</span><span class="s3">])</span>
+
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;wmf_bbox&quot;</span><span class="s3">] = </span><span class="s1">x0</span><span class="s3">, </span><span class="s1">y0</span><span class="s3">, </span><span class="s1">x1</span><span class="s3">, </span><span class="s1">y1</span>
+
+            <span class="s2">if </span><span class="s1">xdpi </span><span class="s3">== </span><span class="s1">ydpi</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;dpi&quot;</span><span class="s3">] = </span><span class="s1">xdpi</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;dpi&quot;</span><span class="s3">] = </span><span class="s1">xdpi</span><span class="s3">, </span><span class="s1">ydpi</span>
+
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;Unsupported file format&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s5">&quot;RGB&quot;</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= </span><span class="s1">size</span>
+
+        <span class="s1">loader </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_load</span><span class="s3">()</span>
+        <span class="s2">if </span><span class="s1">loader</span><span class="s3">:</span>
+            <span class="s1">loader</span><span class="s3">.</span><span class="s1">open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">_load</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; ImageFile</span><span class="s3">.</span><span class="s1">StubHandler </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">_handler</span>
+
+    <span class="s2">def </span><span class="s1">load</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">dpi</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">.</span><span class="s1">PixelAccess </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">dpi </span><span class="s2">is not None and </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_inch </span><span class="s2">is not None</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;dpi&quot;</span><span class="s3">] = </span><span class="s1">dpi</span>
+            <span class="s1">x0</span><span class="s3">, </span><span class="s1">y0</span><span class="s3">, </span><span class="s1">x1</span><span class="s3">, </span><span class="s1">y1 </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;wmf_bbox&quot;</span><span class="s3">]</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= (</span>
+                <span class="s3">(</span><span class="s1">x1 </span><span class="s3">- </span><span class="s1">x0</span><span class="s3">) * </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;dpi&quot;</span><span class="s3">] // </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_inch</span><span class="s3">,</span>
+                <span class="s3">(</span><span class="s1">y1 </span><span class="s3">- </span><span class="s1">y0</span><span class="s3">) * </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s5">&quot;dpi&quot;</span><span class="s3">] // </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_inch</span><span class="s3">,</span>
+            <span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">super</span><span class="s3">().</span><span class="s1">load</span><span class="s3">()</span>
+
+
+<span class="s2">def </span><span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s2">if </span><span class="s1">_handler </span><span class="s2">is None or not </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">_handler</span><span class="s3">, </span><span class="s5">&quot;save&quot;</span><span class="s3">):</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s5">&quot;WMF save handler not installed&quot;</span>
+        <span class="s2">raise </span><span class="s1">OSError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+    <span class="s1">_handler</span><span class="s3">.</span><span class="s1">save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">, </span><span class="s1">filename</span><span class="s3">)</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Registry stuff</span>
+
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_open</span><span class="s3">(</span><span class="s1">WmfStubImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">WmfStubImageFile</span><span class="s3">, </span><span class="s1">_accept</span><span class="s3">)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_save</span><span class="s3">(</span><span class="s1">WmfStubImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">_save</span><span class="s3">)</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_extensions</span><span class="s3">(</span><span class="s1">WmfStubImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, [</span><span class="s5">&quot;.wmf&quot;</span><span class="s3">, </span><span class="s5">&quot;.emf&quot;</span><span class="s3">])</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,750 @@
+<html>
+<head>
+<title>type_adapter.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #7a7e85;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+type_adapter.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;Type adapter specification.&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations </span><span class="s2">as </span><span class="s1">_annotations</span>
+
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">from </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">abc </span><span class="s2">import </span><span class="s1">Callable</span><span class="s3">, </span><span class="s1">Iterable</span>
+<span class="s2">from </span><span class="s1">dataclasses </span><span class="s2">import </span><span class="s1">is_dataclass</span>
+<span class="s2">from </span><span class="s1">types </span><span class="s2">import </span><span class="s1">FrameType</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s3">(</span>
+    <span class="s1">Any</span><span class="s3">,</span>
+    <span class="s1">Generic</span><span class="s3">,</span>
+    <span class="s1">Literal</span><span class="s3">,</span>
+    <span class="s1">TypeVar</span><span class="s3">,</span>
+    <span class="s1">cast</span><span class="s3">,</span>
+    <span class="s1">final</span><span class="s3">,</span>
+    <span class="s1">overload</span><span class="s3">,</span>
+<span class="s3">)</span>
+
+<span class="s2">from </span><span class="s1">pydantic_core </span><span class="s2">import </span><span class="s1">CoreSchema</span><span class="s3">, </span><span class="s1">SchemaSerializer</span><span class="s3">, </span><span class="s1">SchemaValidator</span><span class="s3">, </span><span class="s1">Some</span>
+<span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">ParamSpec</span><span class="s3">, </span><span class="s1">is_typeddict</span>
+
+<span class="s2">from </span><span class="s1">pydantic</span><span class="s3">.</span><span class="s1">errors </span><span class="s2">import </span><span class="s1">PydanticUserError</span>
+<span class="s2">from </span><span class="s1">pydantic</span><span class="s3">.</span><span class="s1">main </span><span class="s2">import </span><span class="s1">BaseModel</span><span class="s3">, </span><span class="s1">IncEx</span>
+
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_internal </span><span class="s2">import </span><span class="s1">_config</span><span class="s3">, </span><span class="s1">_generate_schema</span><span class="s3">, </span><span class="s1">_mock_val_ser</span><span class="s3">, </span><span class="s1">_namespace_utils</span><span class="s3">, </span><span class="s1">_repr</span><span class="s3">, </span><span class="s1">_typing_extra</span><span class="s3">, </span><span class="s1">_utils</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">config </span><span class="s2">import </span><span class="s1">ConfigDict</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">errors </span><span class="s2">import </span><span class="s1">PydanticUndefinedAnnotation</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">json_schema </span><span class="s2">import </span><span class="s3">(</span>
+    <span class="s1">DEFAULT_REF_TEMPLATE</span><span class="s3">,</span>
+    <span class="s1">GenerateJsonSchema</span><span class="s3">,</span>
+    <span class="s1">JsonSchemaKeyT</span><span class="s3">,</span>
+    <span class="s1">JsonSchemaMode</span><span class="s3">,</span>
+    <span class="s1">JsonSchemaValue</span><span class="s3">,</span>
+<span class="s3">)</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">plugin</span><span class="s3">.</span><span class="s1">_schema_validator </span><span class="s2">import </span><span class="s1">PluggableSchemaValidator</span><span class="s3">, </span><span class="s1">create_schema_validator</span>
+
+<span class="s1">T </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s4">'T'</span><span class="s3">)</span>
+<span class="s1">R </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s4">'R'</span><span class="s3">)</span>
+<span class="s1">P </span><span class="s3">= </span><span class="s1">ParamSpec</span><span class="s3">(</span><span class="s4">'P'</span><span class="s3">)</span>
+<span class="s1">TypeAdapterT </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s4">'TypeAdapterT'</span><span class="s3">, </span><span class="s1">bound</span><span class="s3">=</span><span class="s4">'TypeAdapter'</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_getattr_no_parents</span><span class="s3">(</span><span class="s1">obj</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">attribute</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Returns the attribute value without attempting to look up attributes from parent types.&quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">obj</span><span class="s3">, </span><span class="s4">'__dict__'</span><span class="s3">):</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">obj</span><span class="s3">.</span><span class="s1">__dict__</span><span class="s3">[</span><span class="s1">attribute</span><span class="s3">]</span>
+        <span class="s2">except </span><span class="s1">KeyError</span><span class="s3">:</span>
+            <span class="s2">pass</span>
+
+    <span class="s1">slots </span><span class="s3">= </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">obj</span><span class="s3">, </span><span class="s4">'__slots__'</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">slots </span><span class="s2">is not None and </span><span class="s1">attribute </span><span class="s2">in </span><span class="s1">slots</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">obj</span><span class="s3">, </span><span class="s1">attribute</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">AttributeError</span><span class="s3">(</span><span class="s1">attribute</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_type_has_config</span><span class="s3">(</span><span class="s1">type_</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Returns whether the type has config.&quot;&quot;&quot;</span>
+    <span class="s1">type_ </span><span class="s3">= </span><span class="s1">_typing_extra</span><span class="s3">.</span><span class="s1">annotated_type</span><span class="s3">(</span><span class="s1">type_</span><span class="s3">) </span><span class="s2">or </span><span class="s1">type_</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">issubclass</span><span class="s3">(</span><span class="s1">type_</span><span class="s3">, </span><span class="s1">BaseModel</span><span class="s3">) </span><span class="s2">or </span><span class="s1">is_dataclass</span><span class="s3">(</span><span class="s1">type_</span><span class="s3">) </span><span class="s2">or </span><span class="s1">is_typeddict</span><span class="s3">(</span><span class="s1">type_</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s1">TypeError</span><span class="s3">:</span>
+        <span class="s5"># type is not a class</span>
+        <span class="s2">return False</span>
+
+
+<span class="s3">@</span><span class="s1">final</span>
+<span class="s2">class </span><span class="s1">TypeAdapter</span><span class="s3">(</span><span class="s1">Generic</span><span class="s3">[</span><span class="s1">T</span><span class="s3">]):</span>
+    <span class="s0">&quot;&quot;&quot;!!! abstract &quot;Usage Documentation&quot; 
+        [`TypeAdapter`](../concepts/type_adapter.md) 
+ 
+    Type adapters provide a flexible way to perform validation and serialization based on a Python type. 
+ 
+    A `TypeAdapter` instance exposes some of the functionality from `BaseModel` instance methods 
+    for types that do not have such methods (such as dataclasses, primitive types, and more). 
+ 
+    **Note:** `TypeAdapter` instances are not types, and cannot be used as type annotations for fields. 
+ 
+    Args: 
+        type: The type associated with the `TypeAdapter`. 
+        config: Configuration for the `TypeAdapter`, should be a dictionary conforming to 
+            [`ConfigDict`][pydantic.config.ConfigDict]. 
+ 
+            !!! note 
+                You cannot provide a configuration when instantiating a `TypeAdapter` if the type you're using 
+                has its own config that cannot be overridden (ex: `BaseModel`, `TypedDict`, and `dataclass`). A 
+                [`type-adapter-config-unused`](../errors/usage_errors.md#type-adapter-config-unused) error will 
+                be raised in this case. 
+        _parent_depth: Depth at which to search for the [parent frame][frame-objects]. This frame is used when 
+            resolving forward annotations during schema building, by looking for the globals and locals of this 
+            frame. Defaults to 2, which will result in the frame where the `TypeAdapter` was instantiated. 
+ 
+            !!! note 
+                This parameter is named with an underscore to suggest its private nature and discourage use. 
+                It may be deprecated in a minor version, so we only recommend using it if you're comfortable 
+                with potential change in behavior/support. It's default value is 2 because internally, 
+                the `TypeAdapter` class makes another call to fetch the frame. 
+        module: The module that passes to plugin if provided. 
+ 
+    Attributes: 
+        core_schema: The core schema for the type. 
+        validator: The schema validator for the type. 
+        serializer: The schema serializer for the type. 
+        pydantic_complete: Whether the core schema for the type is successfully built. 
+ 
+    ??? tip &quot;Compatibility with `mypy`&quot; 
+        Depending on the type used, `mypy` might raise an error when instantiating a `TypeAdapter`. As a workaround, you can explicitly 
+        annotate your variable: 
+ 
+        ```py 
+        from typing import Union 
+ 
+        from pydantic import TypeAdapter 
+ 
+        ta: TypeAdapter[Union[str, int]] = TypeAdapter(Union[str, int])  # type: ignore[arg-type] 
+        ``` 
+ 
+    ??? info &quot;Namespace management nuances and implementation details&quot; 
+ 
+        Here, we collect some notes on namespace management, and subtle differences from `BaseModel`: 
+ 
+        `BaseModel` uses its own `__module__` to find out where it was defined 
+        and then looks for symbols to resolve forward references in those globals. 
+        On the other hand, `TypeAdapter` can be initialized with arbitrary objects, 
+        which may not be types and thus do not have a `__module__` available. 
+        So instead we look at the globals in our parent stack frame. 
+ 
+        It is expected that the `ns_resolver` passed to this function will have the correct 
+        namespace for the type we're adapting. See the source code for `TypeAdapter.__init__` 
+        and `TypeAdapter.rebuild` for various ways to construct this namespace. 
+ 
+        This works for the case where this function is called in a module that 
+        has the target of forward references in its scope, but 
+        does not always work for more complex cases. 
+ 
+        For example, take the following: 
+ 
+        ```python {title=&quot;a.py&quot;} 
+        IntList = list[int] 
+        OuterDict = dict[str, 'IntList'] 
+        ``` 
+ 
+        ```python {test=&quot;skip&quot; title=&quot;b.py&quot;} 
+        from a import OuterDict 
+ 
+        from pydantic import TypeAdapter 
+ 
+        IntList = int  # replaces the symbol the forward reference is looking for 
+        v = TypeAdapter(OuterDict) 
+        v({'x': 1})  # should fail but doesn't 
+        ``` 
+ 
+        If `OuterDict` were a `BaseModel`, this would work because it would resolve 
+        the forward reference within the `a.py` namespace. 
+        But `TypeAdapter(OuterDict)` can't determine what module `OuterDict` came from. 
+ 
+        In other words, the assumption that _all_ forward references exist in the 
+        module we are being called from is not technically always true. 
+        Although most of the time it is and it works fine for recursive models and such, 
+        `BaseModel`'s behavior isn't perfect either and _can_ break in similar ways, 
+        so there is no right or wrong between the two. 
+ 
+        But at the very least this behavior is _subtly_ different from `BaseModel`'s. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">core_schema</span><span class="s3">: </span><span class="s1">CoreSchema</span>
+    <span class="s1">validator</span><span class="s3">: </span><span class="s1">SchemaValidator </span><span class="s3">| </span><span class="s1">PluggableSchemaValidator</span>
+    <span class="s1">serializer</span><span class="s3">: </span><span class="s1">SchemaSerializer</span>
+    <span class="s1">pydantic_complete</span><span class="s3">: </span><span class="s1">bool</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">type</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">T</span><span class="s3">],</span>
+        <span class="s3">*,</span>
+        <span class="s1">config</span><span class="s3">: </span><span class="s1">ConfigDict </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= ...,</span>
+        <span class="s1">_parent_depth</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= ...,</span>
+        <span class="s1">module</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= ...,</span>
+    <span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">: ...</span>
+
+    <span class="s5"># This second overload is for unsupported special forms (such as Annotated, Union, etc.)</span>
+    <span class="s5"># Currently there is no way to type this correctly</span>
+    <span class="s5"># See https://github.com/python/typing/pull/1618</span>
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">type</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+        <span class="s3">*,</span>
+        <span class="s1">config</span><span class="s3">: </span><span class="s1">ConfigDict </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= ...,</span>
+        <span class="s1">_parent_depth</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= ...,</span>
+        <span class="s1">module</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= ...,</span>
+    <span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">: ...</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">type</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+        <span class="s3">*,</span>
+        <span class="s1">config</span><span class="s3">: </span><span class="s1">ConfigDict </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">_parent_depth</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s6">2</span><span class="s3">,</span>
+        <span class="s1">module</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">_type_has_config</span><span class="s3">(</span><span class="s1">type</span><span class="s3">) </span><span class="s2">and </span><span class="s1">config </span><span class="s2">is not None</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+                <span class="s4">'Cannot use `config` when the type is a BaseModel, dataclass or TypedDict.'</span>
+                <span class="s4">' These types can have their own config and setting the config via the `config`'</span>
+                <span class="s4">' parameter to TypeAdapter will not override it, thus the `config` you passed to'</span>
+                <span class="s4">' TypeAdapter becomes meaningless, which is probably not what you want.'</span><span class="s3">,</span>
+                <span class="s1">code</span><span class="s3">=</span><span class="s4">'type-adapter-config-unused'</span><span class="s3">,</span>
+            <span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_type </span><span class="s3">= </span><span class="s1">type</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_config </span><span class="s3">= </span><span class="s1">config</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_parent_depth </span><span class="s3">= </span><span class="s1">_parent_depth</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">pydantic_complete </span><span class="s3">= </span><span class="s2">False</span>
+
+        <span class="s1">parent_frame </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_fetch_parent_frame</span><span class="s3">()</span>
+        <span class="s2">if </span><span class="s1">parent_frame </span><span class="s2">is not None</span><span class="s3">:</span>
+            <span class="s1">globalns </span><span class="s3">= </span><span class="s1">parent_frame</span><span class="s3">.</span><span class="s1">f_globals</span>
+            <span class="s5"># Do not provide a local ns if the type adapter happens to be instantiated at the module level:</span>
+            <span class="s1">localns </span><span class="s3">= </span><span class="s1">parent_frame</span><span class="s3">.</span><span class="s1">f_locals </span><span class="s2">if </span><span class="s1">parent_frame</span><span class="s3">.</span><span class="s1">f_locals </span><span class="s2">is not </span><span class="s1">globalns </span><span class="s2">else </span><span class="s3">{}</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">globalns </span><span class="s3">= {}</span>
+            <span class="s1">localns </span><span class="s3">= {}</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_module_name </span><span class="s3">= </span><span class="s1">module </span><span class="s2">or </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">str</span><span class="s3">, </span><span class="s1">globalns</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'__name__'</span><span class="s3">, </span><span class="s4">''</span><span class="s3">))</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_init_core_attrs</span><span class="s3">(</span>
+            <span class="s1">ns_resolver</span><span class="s3">=</span><span class="s1">_namespace_utils</span><span class="s3">.</span><span class="s1">NsResolver</span><span class="s3">(</span>
+                <span class="s1">namespaces_tuple</span><span class="s3">=</span><span class="s1">_namespace_utils</span><span class="s3">.</span><span class="s1">NamespacesTuple</span><span class="s3">(</span><span class="s1">locals</span><span class="s3">=</span><span class="s1">localns</span><span class="s3">, </span><span class="s1">globals</span><span class="s3">=</span><span class="s1">globalns</span><span class="s3">),</span>
+                <span class="s1">parent_namespace</span><span class="s3">=</span><span class="s1">localns</span><span class="s3">,</span>
+            <span class="s3">),</span>
+            <span class="s1">force</span><span class="s3">=</span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">_fetch_parent_frame</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; FrameType </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">frame </span><span class="s3">= </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">_getframe</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_parent_depth</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">frame</span><span class="s3">.</span><span class="s1">f_globals</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'__name__'</span><span class="s3">) == </span><span class="s4">'typing'</span><span class="s3">:</span>
+            <span class="s5"># Because `TypeAdapter` is generic, explicitly parametrizing the class results</span>
+            <span class="s5"># in a `typing._GenericAlias` instance, which proxies instantiation calls to the</span>
+            <span class="s5"># &quot;real&quot; `TypeAdapter` class and thus adding an extra frame to the call. To avoid</span>
+            <span class="s5"># pulling anything from the `typing` module, use the correct frame (the one before):</span>
+            <span class="s2">return </span><span class="s1">frame</span><span class="s3">.</span><span class="s1">f_back</span>
+
+        <span class="s2">return </span><span class="s1">frame</span>
+
+    <span class="s2">def </span><span class="s1">_init_core_attrs</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">, </span><span class="s1">ns_resolver</span><span class="s3">: </span><span class="s1">_namespace_utils</span><span class="s3">.</span><span class="s1">NsResolver</span><span class="s3">, </span><span class="s1">force</span><span class="s3">: </span><span class="s1">bool</span><span class="s3">, </span><span class="s1">raise_errors</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span>
+    <span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+        <span class="s0">&quot;&quot;&quot;Initialize the core schema, validator, and serializer for the type. 
+ 
+        Args: 
+            ns_resolver: The namespace resolver to use when building the core schema for the adapted type. 
+            force: Whether to force the construction of the core schema, validator, and serializer. 
+                If `force` is set to `False` and `_defer_build` is `True`, the core schema, validator, and serializer will be set to mocks. 
+            raise_errors: Whether to raise errors if initializing any of the core attrs fails. 
+ 
+        Returns: 
+            `True` if the core schema, validator, and serializer were successfully initialized, otherwise `False`. 
+ 
+        Raises: 
+            PydanticUndefinedAnnotation: If `PydanticUndefinedAnnotation` occurs in`__get_pydantic_core_schema__` 
+                and `raise_errors=True`. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">force </span><span class="s2">and </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_defer_build</span><span class="s3">:</span>
+            <span class="s1">_mock_val_ser</span><span class="s3">.</span><span class="s1">set_type_adapter_mocks</span><span class="s3">(</span><span class="s1">self</span><span class="s3">)</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">pydantic_complete </span><span class="s3">= </span><span class="s2">False</span>
+            <span class="s2">return False</span>
+
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">core_schema </span><span class="s3">= </span><span class="s1">_getattr_no_parents</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_type</span><span class="s3">, </span><span class="s4">'__pydantic_core_schema__'</span><span class="s3">)</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">validator </span><span class="s3">= </span><span class="s1">_getattr_no_parents</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_type</span><span class="s3">, </span><span class="s4">'__pydantic_validator__'</span><span class="s3">)</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">serializer </span><span class="s3">= </span><span class="s1">_getattr_no_parents</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_type</span><span class="s3">, </span><span class="s4">'__pydantic_serializer__'</span><span class="s3">)</span>
+
+            <span class="s5"># TODO: we don't go through the rebuild logic here directly because we don't want</span>
+            <span class="s5"># to repeat all of the namespace fetching logic that we've already done</span>
+            <span class="s5"># so we simply skip to the block below that does the actual schema generation</span>
+            <span class="s2">if </span><span class="s3">(</span>
+                <span class="s1">isinstance</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">core_schema</span><span class="s3">, </span><span class="s1">_mock_val_ser</span><span class="s3">.</span><span class="s1">MockCoreSchema</span><span class="s3">)</span>
+                <span class="s2">or </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">validator</span><span class="s3">, </span><span class="s1">_mock_val_ser</span><span class="s3">.</span><span class="s1">MockValSer</span><span class="s3">)</span>
+                <span class="s2">or </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">serializer</span><span class="s3">, </span><span class="s1">_mock_val_ser</span><span class="s3">.</span><span class="s1">MockValSer</span><span class="s3">)</span>
+            <span class="s3">):</span>
+                <span class="s2">raise </span><span class="s1">AttributeError</span><span class="s3">()</span>
+        <span class="s2">except </span><span class="s1">AttributeError</span><span class="s3">:</span>
+            <span class="s1">config_wrapper </span><span class="s3">= </span><span class="s1">_config</span><span class="s3">.</span><span class="s1">ConfigWrapper</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_config</span><span class="s3">)</span>
+
+            <span class="s1">schema_generator </span><span class="s3">= </span><span class="s1">_generate_schema</span><span class="s3">.</span><span class="s1">GenerateSchema</span><span class="s3">(</span><span class="s1">config_wrapper</span><span class="s3">, </span><span class="s1">ns_resolver</span><span class="s3">=</span><span class="s1">ns_resolver</span><span class="s3">)</span>
+
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">core_schema </span><span class="s3">= </span><span class="s1">schema_generator</span><span class="s3">.</span><span class="s1">generate_schema</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_type</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">PydanticUndefinedAnnotation</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s1">raise_errors</span><span class="s3">:</span>
+                    <span class="s2">raise</span>
+                <span class="s1">_mock_val_ser</span><span class="s3">.</span><span class="s1">set_type_adapter_mocks</span><span class="s3">(</span><span class="s1">self</span><span class="s3">)</span>
+                <span class="s2">return False</span>
+
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">core_schema </span><span class="s3">= </span><span class="s1">schema_generator</span><span class="s3">.</span><span class="s1">clean_schema</span><span class="s3">(</span><span class="s1">core_schema</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">_generate_schema</span><span class="s3">.</span><span class="s1">InvalidSchemaError</span><span class="s3">:</span>
+                <span class="s1">_mock_val_ser</span><span class="s3">.</span><span class="s1">set_type_adapter_mocks</span><span class="s3">(</span><span class="s1">self</span><span class="s3">)</span>
+                <span class="s2">return False</span>
+
+            <span class="s1">core_config </span><span class="s3">= </span><span class="s1">config_wrapper</span><span class="s3">.</span><span class="s1">core_config</span><span class="s3">(</span><span class="s2">None</span><span class="s3">)</span>
+
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">validator </span><span class="s3">= </span><span class="s1">create_schema_validator</span><span class="s3">(</span>
+                <span class="s1">schema</span><span class="s3">=</span><span class="s1">self</span><span class="s3">.</span><span class="s1">core_schema</span><span class="s3">,</span>
+                <span class="s1">schema_type</span><span class="s3">=</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_type</span><span class="s3">,</span>
+                <span class="s1">schema_type_module</span><span class="s3">=</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_module_name</span><span class="s3">,</span>
+                <span class="s1">schema_type_name</span><span class="s3">=</span><span class="s1">str</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_type</span><span class="s3">),</span>
+                <span class="s1">schema_kind</span><span class="s3">=</span><span class="s4">'TypeAdapter'</span><span class="s3">,</span>
+                <span class="s1">config</span><span class="s3">=</span><span class="s1">core_config</span><span class="s3">,</span>
+                <span class="s1">plugin_settings</span><span class="s3">=</span><span class="s1">config_wrapper</span><span class="s3">.</span><span class="s1">plugin_settings</span><span class="s3">,</span>
+            <span class="s3">)</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">serializer </span><span class="s3">= </span><span class="s1">SchemaSerializer</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">core_schema</span><span class="s3">, </span><span class="s1">core_config</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">pydantic_complete </span><span class="s3">= </span><span class="s2">True</span>
+        <span class="s2">return True</span>
+
+    <span class="s3">@</span><span class="s1">property</span>
+    <span class="s2">def </span><span class="s1">_defer_build</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+        <span class="s1">config </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_config </span><span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_config </span><span class="s2">is not None else </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_model_config</span>
+        <span class="s2">if </span><span class="s1">config</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">config</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'defer_build'</span><span class="s3">) </span><span class="s2">is True</span>
+        <span class="s2">return False</span>
+
+    <span class="s3">@</span><span class="s1">property</span>
+    <span class="s2">def </span><span class="s1">_model_config</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; ConfigDict </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">type_</span><span class="s3">: </span><span class="s1">Any </span><span class="s3">= </span><span class="s1">_typing_extra</span><span class="s3">.</span><span class="s1">annotated_type</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_type</span><span class="s3">) </span><span class="s2">or </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_type  </span><span class="s5"># Eg FastAPI heavily uses Annotated</span>
+        <span class="s2">if </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">lenient_issubclass</span><span class="s3">(</span><span class="s1">type_</span><span class="s3">, </span><span class="s1">BaseModel</span><span class="s3">):</span>
+            <span class="s2">return </span><span class="s1">type_</span><span class="s3">.</span><span class="s1">model_config</span>
+        <span class="s2">return </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">type_</span><span class="s3">, </span><span class="s4">'__pydantic_config__'</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">__repr__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; str</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s4">f'TypeAdapter(</span><span class="s2">{</span><span class="s1">_repr</span><span class="s3">.</span><span class="s1">display_as_type</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_type</span><span class="s3">)</span><span class="s2">}</span><span class="s4">)'</span>
+
+    <span class="s2">def </span><span class="s1">rebuild</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s3">*,</span>
+        <span class="s1">force</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">raise_errors</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">_parent_namespace_depth</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s6">2</span><span class="s3">,</span>
+        <span class="s1">_types_namespace</span><span class="s3">: </span><span class="s1">_namespace_utils</span><span class="s3">.</span><span class="s1">MappingNamespace </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; bool </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s0">&quot;&quot;&quot;Try to rebuild the pydantic-core schema for the adapter's type. 
+ 
+        This may be necessary when one of the annotations is a ForwardRef which could not be resolved during 
+        the initial attempt to build the schema, and automatic rebuilding fails. 
+ 
+        Args: 
+            force: Whether to force the rebuilding of the type adapter's schema, defaults to `False`. 
+            raise_errors: Whether to raise errors, defaults to `True`. 
+            _parent_namespace_depth: Depth at which to search for the [parent frame][frame-objects]. This 
+                frame is used when resolving forward annotations during schema rebuilding, by looking for 
+                the locals of this frame. Defaults to 2, which will result in the frame where the method 
+                was called. 
+            _types_namespace: An explicit types namespace to use, instead of using the local namespace 
+                from the parent frame. Defaults to `None`. 
+ 
+        Returns: 
+            Returns `None` if the schema is already &quot;complete&quot; and rebuilding was not required. 
+            If rebuilding _was_ required, returns `True` if rebuilding was successful, otherwise `False`. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">force </span><span class="s2">and </span><span class="s1">self</span><span class="s3">.</span><span class="s1">pydantic_complete</span><span class="s3">:</span>
+            <span class="s2">return None</span>
+
+        <span class="s2">if </span><span class="s1">_types_namespace </span><span class="s2">is not None</span><span class="s3">:</span>
+            <span class="s1">rebuild_ns </span><span class="s3">= </span><span class="s1">_types_namespace</span>
+        <span class="s2">elif </span><span class="s1">_parent_namespace_depth </span><span class="s3">&gt; </span><span class="s6">0</span><span class="s3">:</span>
+            <span class="s1">rebuild_ns </span><span class="s3">= </span><span class="s1">_typing_extra</span><span class="s3">.</span><span class="s1">parent_frame_namespace</span><span class="s3">(</span><span class="s1">parent_depth</span><span class="s3">=</span><span class="s1">_parent_namespace_depth</span><span class="s3">, </span><span class="s1">force</span><span class="s3">=</span><span class="s2">True</span><span class="s3">) </span><span class="s2">or </span><span class="s3">{}</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">rebuild_ns </span><span class="s3">= {}</span>
+
+        <span class="s5"># we have to manually fetch globals here because there's no type on the stack of the NsResolver</span>
+        <span class="s5"># and so we skip the globalns = get_module_ns_of(typ) call that would normally happen</span>
+        <span class="s1">globalns </span><span class="s3">= </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">_getframe</span><span class="s3">(</span><span class="s1">max</span><span class="s3">(</span><span class="s1">_parent_namespace_depth </span><span class="s3">- </span><span class="s6">1</span><span class="s3">, </span><span class="s6">1</span><span class="s3">)).</span><span class="s1">f_globals</span>
+        <span class="s1">ns_resolver </span><span class="s3">= </span><span class="s1">_namespace_utils</span><span class="s3">.</span><span class="s1">NsResolver</span><span class="s3">(</span>
+            <span class="s1">namespaces_tuple</span><span class="s3">=</span><span class="s1">_namespace_utils</span><span class="s3">.</span><span class="s1">NamespacesTuple</span><span class="s3">(</span><span class="s1">locals</span><span class="s3">=</span><span class="s1">rebuild_ns</span><span class="s3">, </span><span class="s1">globals</span><span class="s3">=</span><span class="s1">globalns</span><span class="s3">),</span>
+            <span class="s1">parent_namespace</span><span class="s3">=</span><span class="s1">rebuild_ns</span><span class="s3">,</span>
+        <span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_init_core_attrs</span><span class="s3">(</span><span class="s1">ns_resolver</span><span class="s3">=</span><span class="s1">ns_resolver</span><span class="s3">, </span><span class="s1">force</span><span class="s3">=</span><span class="s2">True</span><span class="s3">, </span><span class="s1">raise_errors</span><span class="s3">=</span><span class="s1">raise_errors</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">validate_python</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">object</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+        <span class="s3">/,</span>
+        <span class="s3">*,</span>
+        <span class="s1">strict</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">from_attributes</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">context</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">experimental_allow_partial</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'off'</span><span class="s3">, </span><span class="s4">'on'</span><span class="s3">, </span><span class="s4">'trailing-strings'</span><span class="s3">] = </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">by_alias</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">by_name</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; T</span><span class="s3">:</span>
+        <span class="s0">&quot;&quot;&quot;Validate a Python object against the model. 
+ 
+        Args: 
+            object: The Python object to validate against the model. 
+            strict: Whether to strictly check types. 
+            from_attributes: Whether to extract data from object attributes. 
+            context: Additional context to pass to the validator. 
+            experimental_allow_partial: **Experimental** whether to enable 
+                [partial validation](../concepts/experimental.md#partial-validation), e.g. to process streams. 
+                * False / 'off': Default behavior, no partial validation. 
+                * True / 'on': Enable partial validation. 
+                * 'trailing-strings': Enable partial validation and allow trailing strings in the input. 
+            by_alias: Whether to use the field's alias when validating against the provided input data. 
+            by_name: Whether to use the field's name when validating against the provided input data. 
+ 
+        !!! note 
+            When using `TypeAdapter` with a Pydantic `dataclass`, the use of the `from_attributes` 
+            argument is not supported. 
+ 
+        Returns: 
+            The validated object. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">by_alias </span><span class="s2">is False and </span><span class="s1">by_name </span><span class="s2">is not True</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+                <span class="s4">'At least one of `by_alias` or `by_name` must be set to True.'</span><span class="s3">,</span>
+                <span class="s1">code</span><span class="s3">=</span><span class="s4">'validate-by-alias-and-name-false'</span><span class="s3">,</span>
+            <span class="s3">)</span>
+
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">validator</span><span class="s3">.</span><span class="s1">validate_python</span><span class="s3">(</span>
+            <span class="s1">object</span><span class="s3">,</span>
+            <span class="s1">strict</span><span class="s3">=</span><span class="s1">strict</span><span class="s3">,</span>
+            <span class="s1">from_attributes</span><span class="s3">=</span><span class="s1">from_attributes</span><span class="s3">,</span>
+            <span class="s1">context</span><span class="s3">=</span><span class="s1">context</span><span class="s3">,</span>
+            <span class="s1">allow_partial</span><span class="s3">=</span><span class="s1">experimental_allow_partial</span><span class="s3">,</span>
+            <span class="s1">by_alias</span><span class="s3">=</span><span class="s1">by_alias</span><span class="s3">,</span>
+            <span class="s1">by_name</span><span class="s3">=</span><span class="s1">by_name</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">validate_json</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">data</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes </span><span class="s3">| </span><span class="s1">bytearray</span><span class="s3">,</span>
+        <span class="s3">/,</span>
+        <span class="s3">*,</span>
+        <span class="s1">strict</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">context</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">experimental_allow_partial</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'off'</span><span class="s3">, </span><span class="s4">'on'</span><span class="s3">, </span><span class="s4">'trailing-strings'</span><span class="s3">] = </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">by_alias</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">by_name</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; T</span><span class="s3">:</span>
+        <span class="s0">&quot;&quot;&quot;!!! abstract &quot;Usage Documentation&quot; 
+            [JSON Parsing](../concepts/json.md#json-parsing) 
+ 
+        Validate a JSON string or bytes against the model. 
+ 
+        Args: 
+            data: The JSON data to validate against the model. 
+            strict: Whether to strictly check types. 
+            context: Additional context to use during validation. 
+            experimental_allow_partial: **Experimental** whether to enable 
+                [partial validation](../concepts/experimental.md#partial-validation), e.g. to process streams. 
+                * False / 'off': Default behavior, no partial validation. 
+                * True / 'on': Enable partial validation. 
+                * 'trailing-strings': Enable partial validation and allow trailing strings in the input. 
+            by_alias: Whether to use the field's alias when validating against the provided input data. 
+            by_name: Whether to use the field's name when validating against the provided input data. 
+ 
+        Returns: 
+            The validated object. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">by_alias </span><span class="s2">is False and </span><span class="s1">by_name </span><span class="s2">is not True</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+                <span class="s4">'At least one of `by_alias` or `by_name` must be set to True.'</span><span class="s3">,</span>
+                <span class="s1">code</span><span class="s3">=</span><span class="s4">'validate-by-alias-and-name-false'</span><span class="s3">,</span>
+            <span class="s3">)</span>
+
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">validator</span><span class="s3">.</span><span class="s1">validate_json</span><span class="s3">(</span>
+            <span class="s1">data</span><span class="s3">,</span>
+            <span class="s1">strict</span><span class="s3">=</span><span class="s1">strict</span><span class="s3">,</span>
+            <span class="s1">context</span><span class="s3">=</span><span class="s1">context</span><span class="s3">,</span>
+            <span class="s1">allow_partial</span><span class="s3">=</span><span class="s1">experimental_allow_partial</span><span class="s3">,</span>
+            <span class="s1">by_alias</span><span class="s3">=</span><span class="s1">by_alias</span><span class="s3">,</span>
+            <span class="s1">by_name</span><span class="s3">=</span><span class="s1">by_name</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">validate_strings</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">obj</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+        <span class="s3">/,</span>
+        <span class="s3">*,</span>
+        <span class="s1">strict</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">context</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">experimental_allow_partial</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'off'</span><span class="s3">, </span><span class="s4">'on'</span><span class="s3">, </span><span class="s4">'trailing-strings'</span><span class="s3">] = </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">by_alias</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">by_name</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; T</span><span class="s3">:</span>
+        <span class="s0">&quot;&quot;&quot;Validate object contains string data against the model. 
+ 
+        Args: 
+            obj: The object contains string data to validate. 
+            strict: Whether to strictly check types. 
+            context: Additional context to use during validation. 
+            experimental_allow_partial: **Experimental** whether to enable 
+                [partial validation](../concepts/experimental.md#partial-validation), e.g. to process streams. 
+                * False / 'off': Default behavior, no partial validation. 
+                * True / 'on': Enable partial validation. 
+                * 'trailing-strings': Enable partial validation and allow trailing strings in the input. 
+            by_alias: Whether to use the field's alias when validating against the provided input data. 
+            by_name: Whether to use the field's name when validating against the provided input data. 
+ 
+        Returns: 
+            The validated object. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">by_alias </span><span class="s2">is False and </span><span class="s1">by_name </span><span class="s2">is not True</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">PydanticUserError</span><span class="s3">(</span>
+                <span class="s4">'At least one of `by_alias` or `by_name` must be set to True.'</span><span class="s3">,</span>
+                <span class="s1">code</span><span class="s3">=</span><span class="s4">'validate-by-alias-and-name-false'</span><span class="s3">,</span>
+            <span class="s3">)</span>
+
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">validator</span><span class="s3">.</span><span class="s1">validate_strings</span><span class="s3">(</span>
+            <span class="s1">obj</span><span class="s3">,</span>
+            <span class="s1">strict</span><span class="s3">=</span><span class="s1">strict</span><span class="s3">,</span>
+            <span class="s1">context</span><span class="s3">=</span><span class="s1">context</span><span class="s3">,</span>
+            <span class="s1">allow_partial</span><span class="s3">=</span><span class="s1">experimental_allow_partial</span><span class="s3">,</span>
+            <span class="s1">by_alias</span><span class="s3">=</span><span class="s1">by_alias</span><span class="s3">,</span>
+            <span class="s1">by_name</span><span class="s3">=</span><span class="s1">by_name</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">get_default_value</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, *, </span><span class="s1">strict</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">, </span><span class="s1">context</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">) </span><span class="s1">-&gt; Some</span><span class="s3">[</span><span class="s1">T</span><span class="s3">] | </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s0">&quot;&quot;&quot;Get the default value for the wrapped type. 
+ 
+        Args: 
+            strict: Whether to strictly check types. 
+            context: Additional context to pass to the validator. 
+ 
+        Returns: 
+            The default value wrapped in a `Some` if there is one or None if not. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">validator</span><span class="s3">.</span><span class="s1">get_default_value</span><span class="s3">(</span><span class="s1">strict</span><span class="s3">=</span><span class="s1">strict</span><span class="s3">, </span><span class="s1">context</span><span class="s3">=</span><span class="s1">context</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">dump_python</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">instance</span><span class="s3">: </span><span class="s1">T</span><span class="s3">,</span>
+        <span class="s3">/,</span>
+        <span class="s3">*,</span>
+        <span class="s1">mode</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'json'</span><span class="s3">, </span><span class="s4">'python'</span><span class="s3">] = </span><span class="s4">'python'</span><span class="s3">,</span>
+        <span class="s1">include</span><span class="s3">: </span><span class="s1">IncEx </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">exclude</span><span class="s3">: </span><span class="s1">IncEx </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">by_alias</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">exclude_unset</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">exclude_defaults</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">exclude_none</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">round_trip</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">warnings</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'none'</span><span class="s3">, </span><span class="s4">'warn'</span><span class="s3">, </span><span class="s4">'error'</span><span class="s3">] = </span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">fallback</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">Any</span><span class="s3">], </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">serialize_as_any</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">context</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+        <span class="s0">&quot;&quot;&quot;Dump an instance of the adapted type to a Python object. 
+ 
+        Args: 
+            instance: The Python object to serialize. 
+            mode: The output format. 
+            include: Fields to include in the output. 
+            exclude: Fields to exclude from the output. 
+            by_alias: Whether to use alias names for field names. 
+            exclude_unset: Whether to exclude unset fields. 
+            exclude_defaults: Whether to exclude fields with default values. 
+            exclude_none: Whether to exclude fields with None values. 
+            round_trip: Whether to output the serialized data in a way that is compatible with deserialization. 
+            warnings: How to handle serialization errors. False/&quot;none&quot; ignores them, True/&quot;warn&quot; logs errors, 
+                &quot;error&quot; raises a [`PydanticSerializationError`][pydantic_core.PydanticSerializationError]. 
+            fallback: A function to call when an unknown value is encountered. If not provided, 
+                a [`PydanticSerializationError`][pydantic_core.PydanticSerializationError] error is raised. 
+            serialize_as_any: Whether to serialize fields with duck-typing serialization behavior. 
+            context: Additional context to pass to the serializer. 
+ 
+        Returns: 
+            The serialized object. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">serializer</span><span class="s3">.</span><span class="s1">to_python</span><span class="s3">(</span>
+            <span class="s1">instance</span><span class="s3">,</span>
+            <span class="s1">mode</span><span class="s3">=</span><span class="s1">mode</span><span class="s3">,</span>
+            <span class="s1">by_alias</span><span class="s3">=</span><span class="s1">by_alias</span><span class="s3">,</span>
+            <span class="s1">include</span><span class="s3">=</span><span class="s1">include</span><span class="s3">,</span>
+            <span class="s1">exclude</span><span class="s3">=</span><span class="s1">exclude</span><span class="s3">,</span>
+            <span class="s1">exclude_unset</span><span class="s3">=</span><span class="s1">exclude_unset</span><span class="s3">,</span>
+            <span class="s1">exclude_defaults</span><span class="s3">=</span><span class="s1">exclude_defaults</span><span class="s3">,</span>
+            <span class="s1">exclude_none</span><span class="s3">=</span><span class="s1">exclude_none</span><span class="s3">,</span>
+            <span class="s1">round_trip</span><span class="s3">=</span><span class="s1">round_trip</span><span class="s3">,</span>
+            <span class="s1">warnings</span><span class="s3">=</span><span class="s1">warnings</span><span class="s3">,</span>
+            <span class="s1">fallback</span><span class="s3">=</span><span class="s1">fallback</span><span class="s3">,</span>
+            <span class="s1">serialize_as_any</span><span class="s3">=</span><span class="s1">serialize_as_any</span><span class="s3">,</span>
+            <span class="s1">context</span><span class="s3">=</span><span class="s1">context</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">dump_json</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">instance</span><span class="s3">: </span><span class="s1">T</span><span class="s3">,</span>
+        <span class="s3">/,</span>
+        <span class="s3">*,</span>
+        <span class="s1">indent</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">include</span><span class="s3">: </span><span class="s1">IncEx </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">exclude</span><span class="s3">: </span><span class="s1">IncEx </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">by_alias</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">exclude_unset</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">exclude_defaults</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">exclude_none</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">round_trip</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">warnings</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">| </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'none'</span><span class="s3">, </span><span class="s4">'warn'</span><span class="s3">, </span><span class="s4">'error'</span><span class="s3">] = </span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">fallback</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">Any</span><span class="s3">], </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">serialize_as_any</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+        <span class="s1">context</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; bytes</span><span class="s3">:</span>
+        <span class="s0">&quot;&quot;&quot;!!! abstract &quot;Usage Documentation&quot; 
+            [JSON Serialization](../concepts/json.md#json-serialization) 
+ 
+        Serialize an instance of the adapted type to JSON. 
+ 
+        Args: 
+            instance: The instance to be serialized. 
+            indent: Number of spaces for JSON indentation. 
+            include: Fields to include. 
+            exclude: Fields to exclude. 
+            by_alias: Whether to use alias names for field names. 
+            exclude_unset: Whether to exclude unset fields. 
+            exclude_defaults: Whether to exclude fields with default values. 
+            exclude_none: Whether to exclude fields with a value of `None`. 
+            round_trip: Whether to serialize and deserialize the instance to ensure round-tripping. 
+            warnings: How to handle serialization errors. False/&quot;none&quot; ignores them, True/&quot;warn&quot; logs errors, 
+                &quot;error&quot; raises a [`PydanticSerializationError`][pydantic_core.PydanticSerializationError]. 
+            fallback: A function to call when an unknown value is encountered. If not provided, 
+                a [`PydanticSerializationError`][pydantic_core.PydanticSerializationError] error is raised. 
+            serialize_as_any: Whether to serialize fields with duck-typing serialization behavior. 
+            context: Additional context to pass to the serializer. 
+ 
+        Returns: 
+            The JSON representation of the given instance as bytes. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">serializer</span><span class="s3">.</span><span class="s1">to_json</span><span class="s3">(</span>
+            <span class="s1">instance</span><span class="s3">,</span>
+            <span class="s1">indent</span><span class="s3">=</span><span class="s1">indent</span><span class="s3">,</span>
+            <span class="s1">include</span><span class="s3">=</span><span class="s1">include</span><span class="s3">,</span>
+            <span class="s1">exclude</span><span class="s3">=</span><span class="s1">exclude</span><span class="s3">,</span>
+            <span class="s1">by_alias</span><span class="s3">=</span><span class="s1">by_alias</span><span class="s3">,</span>
+            <span class="s1">exclude_unset</span><span class="s3">=</span><span class="s1">exclude_unset</span><span class="s3">,</span>
+            <span class="s1">exclude_defaults</span><span class="s3">=</span><span class="s1">exclude_defaults</span><span class="s3">,</span>
+            <span class="s1">exclude_none</span><span class="s3">=</span><span class="s1">exclude_none</span><span class="s3">,</span>
+            <span class="s1">round_trip</span><span class="s3">=</span><span class="s1">round_trip</span><span class="s3">,</span>
+            <span class="s1">warnings</span><span class="s3">=</span><span class="s1">warnings</span><span class="s3">,</span>
+            <span class="s1">fallback</span><span class="s3">=</span><span class="s1">fallback</span><span class="s3">,</span>
+            <span class="s1">serialize_as_any</span><span class="s3">=</span><span class="s1">serialize_as_any</span><span class="s3">,</span>
+            <span class="s1">context</span><span class="s3">=</span><span class="s1">context</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">json_schema</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s3">*,</span>
+        <span class="s1">by_alias</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">ref_template</span><span class="s3">: </span><span class="s1">str </span><span class="s3">= </span><span class="s1">DEFAULT_REF_TEMPLATE</span><span class="s3">,</span>
+        <span class="s1">schema_generator</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">GenerateJsonSchema</span><span class="s3">] = </span><span class="s1">GenerateJsonSchema</span><span class="s3">,</span>
+        <span class="s1">mode</span><span class="s3">: </span><span class="s1">JsonSchemaMode </span><span class="s3">= </span><span class="s4">'validation'</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Generate a JSON schema for the adapted type. 
+ 
+        Args: 
+            by_alias: Whether to use alias names for field names. 
+            ref_template: The format string used for generating $ref strings. 
+            schema_generator: The generator class used for creating the schema. 
+            mode: The mode to use for schema generation. 
+ 
+        Returns: 
+            The JSON schema for the model as a dictionary. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">schema_generator_instance </span><span class="s3">= </span><span class="s1">schema_generator</span><span class="s3">(</span><span class="s1">by_alias</span><span class="s3">=</span><span class="s1">by_alias</span><span class="s3">, </span><span class="s1">ref_template</span><span class="s3">=</span><span class="s1">ref_template</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">core_schema</span><span class="s3">, </span><span class="s1">_mock_val_ser</span><span class="s3">.</span><span class="s1">MockCoreSchema</span><span class="s3">):</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">rebuild</span><span class="s3">()</span>
+            <span class="s2">assert not </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">core_schema</span><span class="s3">, </span><span class="s1">_mock_val_ser</span><span class="s3">.</span><span class="s1">MockCoreSchema</span><span class="s3">), </span><span class="s4">'this is a bug! please report it'</span>
+        <span class="s2">return </span><span class="s1">schema_generator_instance</span><span class="s3">.</span><span class="s1">generate</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">core_schema</span><span class="s3">, </span><span class="s1">mode</span><span class="s3">=</span><span class="s1">mode</span><span class="s3">)</span>
+
+    <span class="s3">@</span><span class="s1">staticmethod</span>
+    <span class="s2">def </span><span class="s1">json_schemas</span><span class="s3">(</span>
+        <span class="s1">inputs</span><span class="s3">: </span><span class="s1">Iterable</span><span class="s3">[</span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">JsonSchemaKeyT</span><span class="s3">, </span><span class="s1">JsonSchemaMode</span><span class="s3">, </span><span class="s1">TypeAdapter</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]]],</span>
+        <span class="s3">/,</span>
+        <span class="s3">*,</span>
+        <span class="s1">by_alias</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s1">title</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">description</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">ref_template</span><span class="s3">: </span><span class="s1">str </span><span class="s3">= </span><span class="s1">DEFAULT_REF_TEMPLATE</span><span class="s3">,</span>
+        <span class="s1">schema_generator</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">GenerateJsonSchema</span><span class="s3">] = </span><span class="s1">GenerateJsonSchema</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">dict</span><span class="s3">[</span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">JsonSchemaKeyT</span><span class="s3">, </span><span class="s1">JsonSchemaMode</span><span class="s3">], </span><span class="s1">JsonSchemaValue</span><span class="s3">], </span><span class="s1">JsonSchemaValue</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Generate a JSON schema including definitions from multiple type adapters. 
+ 
+        Args: 
+            inputs: Inputs to schema generation. The first two items will form the keys of the (first) 
+                output mapping; the type adapters will provide the core schemas that get converted into 
+                definitions in the output JSON schema. 
+            by_alias: Whether to use alias names. 
+            title: The title for the schema. 
+            description: The description for the schema. 
+            ref_template: The format string used for generating $ref strings. 
+            schema_generator: The generator class used for creating the schema. 
+ 
+        Returns: 
+            A tuple where: 
+ 
+                - The first element is a dictionary whose keys are tuples of JSON schema key type and JSON mode, and 
+                    whose values are the JSON schema corresponding to that pair of inputs. (These schemas may have 
+                    JsonRef references to definitions that are defined in the second returned element.) 
+                - The second element is a JSON schema containing all definitions referenced in the first returned 
+                    element, along with the optional title and description keys. 
+ 
+        &quot;&quot;&quot;</span>
+        <span class="s1">schema_generator_instance </span><span class="s3">= </span><span class="s1">schema_generator</span><span class="s3">(</span><span class="s1">by_alias</span><span class="s3">=</span><span class="s1">by_alias</span><span class="s3">, </span><span class="s1">ref_template</span><span class="s3">=</span><span class="s1">ref_template</span><span class="s3">)</span>
+
+        <span class="s1">inputs_ </span><span class="s3">= []</span>
+        <span class="s2">for </span><span class="s1">key</span><span class="s3">, </span><span class="s1">mode</span><span class="s3">, </span><span class="s1">adapter </span><span class="s2">in </span><span class="s1">inputs</span><span class="s3">:</span>
+            <span class="s5"># This is the same pattern we follow for model json schemas - we attempt a core schema rebuild if we detect a mock</span>
+            <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">adapter</span><span class="s3">.</span><span class="s1">core_schema</span><span class="s3">, </span><span class="s1">_mock_val_ser</span><span class="s3">.</span><span class="s1">MockCoreSchema</span><span class="s3">):</span>
+                <span class="s1">adapter</span><span class="s3">.</span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">rebuild</span><span class="s3">()</span>
+                <span class="s2">assert not </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">adapter</span><span class="s3">.</span><span class="s1">core_schema</span><span class="s3">, </span><span class="s1">_mock_val_ser</span><span class="s3">.</span><span class="s1">MockCoreSchema</span><span class="s3">), (</span>
+                    <span class="s4">'this is a bug! please report it'</span>
+                <span class="s3">)</span>
+            <span class="s1">inputs_</span><span class="s3">.</span><span class="s1">append</span><span class="s3">((</span><span class="s1">key</span><span class="s3">, </span><span class="s1">mode</span><span class="s3">, </span><span class="s1">adapter</span><span class="s3">.</span><span class="s1">core_schema</span><span class="s3">))</span>
+
+        <span class="s1">json_schemas_map</span><span class="s3">, </span><span class="s1">definitions </span><span class="s3">= </span><span class="s1">schema_generator_instance</span><span class="s3">.</span><span class="s1">generate_definitions</span><span class="s3">(</span><span class="s1">inputs_</span><span class="s3">)</span>
+
+        <span class="s1">json_schema</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] = {}</span>
+        <span class="s2">if </span><span class="s1">definitions</span><span class="s3">:</span>
+            <span class="s1">json_schema</span><span class="s3">[</span><span class="s4">'$defs'</span><span class="s3">] = </span><span class="s1">definitions</span>
+        <span class="s2">if </span><span class="s1">title</span><span class="s3">:</span>
+            <span class="s1">json_schema</span><span class="s3">[</span><span class="s4">'title'</span><span class="s3">] = </span><span class="s1">title</span>
+        <span class="s2">if </span><span class="s1">description</span><span class="s3">:</span>
+            <span class="s1">json_schema</span><span class="s3">[</span><span class="s4">'description'</span><span class="s3">] = </span><span class="s1">description</span>
+
+        <span class="s2">return </span><span class="s1">json_schemas_map</span><span class="s3">, </span><span class="s1">json_schema</span>
+</pre>
+</body>
+</html>

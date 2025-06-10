@@ -1,0 +1,594 @@
+<html>
+<head>
+<title>httptools_impl.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #a5c261;}
+.s4 { color: #2aacb8;}
+.s5 { color: #6aab73;}
+.s6 { color: #7a7e85;}
+.s7 { color: #5f826b; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+httptools_impl.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">asyncio</span>
+<span class="s0">import </span><span class="s1">http</span>
+<span class="s0">import </span><span class="s1">logging</span>
+<span class="s0">import </span><span class="s1">re</span>
+<span class="s0">import </span><span class="s1">urllib</span>
+<span class="s0">from </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">events </span><span class="s0">import </span><span class="s1">TimerHandle</span>
+<span class="s0">from </span><span class="s1">collections </span><span class="s0">import </span><span class="s1">deque</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Callable</span><span class="s2">, </span><span class="s1">Literal</span><span class="s2">, </span><span class="s1">cast</span>
+
+<span class="s0">import </span><span class="s1">httptools</span>
+
+<span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">_types </span><span class="s0">import </span><span class="s2">(</span>
+    <span class="s1">ASGI3Application</span><span class="s2">,</span>
+    <span class="s1">ASGIReceiveEvent</span><span class="s2">,</span>
+    <span class="s1">ASGISendEvent</span><span class="s2">,</span>
+    <span class="s1">HTTPRequestEvent</span><span class="s2">,</span>
+    <span class="s1">HTTPResponseStartEvent</span><span class="s2">,</span>
+    <span class="s1">HTTPScope</span><span class="s2">,</span>
+<span class="s2">)</span>
+<span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">config </span><span class="s0">import </span><span class="s1">Config</span>
+<span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">logging </span><span class="s0">import </span><span class="s1">TRACE_LOG_LEVEL</span>
+<span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">protocols</span><span class="s2">.</span><span class="s1">http</span><span class="s2">.</span><span class="s1">flow_control </span><span class="s0">import </span><span class="s1">CLOSE_HEADER</span><span class="s2">, </span><span class="s1">HIGH_WATER_LIMIT</span><span class="s2">, </span><span class="s1">FlowControl</span><span class="s2">, </span><span class="s1">service_unavailable</span>
+<span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">protocols</span><span class="s2">.</span><span class="s1">utils </span><span class="s0">import </span><span class="s1">get_client_addr</span><span class="s2">, </span><span class="s1">get_local_addr</span><span class="s2">, </span><span class="s1">get_path_with_query_string</span><span class="s2">, </span><span class="s1">get_remote_addr</span><span class="s2">, </span><span class="s1">is_ssl</span>
+<span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">server </span><span class="s0">import </span><span class="s1">ServerState</span>
+
+<span class="s1">HEADER_RE </span><span class="s2">= </span><span class="s1">re</span><span class="s2">.</span><span class="s1">compile</span><span class="s2">(</span><span class="s3">b'[</span><span class="s0">\x00</span><span class="s3">-</span><span class="s0">\x1f\x7f</span><span class="s3">()&lt;&gt;@,;:[]={} </span><span class="s0">\t\\</span><span class="s3">&quot;]'</span><span class="s2">)</span>
+<span class="s1">HEADER_VALUE_RE </span><span class="s2">= </span><span class="s1">re</span><span class="s2">.</span><span class="s1">compile</span><span class="s2">(</span><span class="s3">b&quot;[</span><span class="s0">\x00</span><span class="s3">-</span><span class="s0">\x08\x0a</span><span class="s3">-</span><span class="s0">\x1f\x7f</span><span class="s3">]&quot;</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">_get_status_line</span><span class="s2">(</span><span class="s1">status_code</span><span class="s2">: </span><span class="s1">int</span><span class="s2">) </span><span class="s1">-&gt; bytes</span><span class="s2">:</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s1">phrase </span><span class="s2">= </span><span class="s1">http</span><span class="s2">.</span><span class="s1">HTTPStatus</span><span class="s2">(</span><span class="s1">status_code</span><span class="s2">).</span><span class="s1">phrase</span><span class="s2">.</span><span class="s1">encode</span><span class="s2">()</span>
+    <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+        <span class="s1">phrase </span><span class="s2">= </span><span class="s3">b&quot;&quot;</span>
+    <span class="s0">return </span><span class="s3">b&quot;&quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">([</span><span class="s3">b&quot;HTTP/1.1 &quot;</span><span class="s2">, </span><span class="s1">str</span><span class="s2">(</span><span class="s1">status_code</span><span class="s2">).</span><span class="s1">encode</span><span class="s2">(), </span><span class="s3">b&quot; &quot;</span><span class="s2">, </span><span class="s1">phrase</span><span class="s2">, </span><span class="s3">b&quot;</span><span class="s0">\r\n</span><span class="s3">&quot;</span><span class="s2">])</span>
+
+
+<span class="s1">STATUS_LINE </span><span class="s2">= {</span><span class="s1">status_code</span><span class="s2">: </span><span class="s1">_get_status_line</span><span class="s2">(</span><span class="s1">status_code</span><span class="s2">) </span><span class="s0">for </span><span class="s1">status_code </span><span class="s0">in </span><span class="s1">range</span><span class="s2">(</span><span class="s4">100</span><span class="s2">, </span><span class="s4">600</span><span class="s2">)}</span>
+
+
+<span class="s0">class </span><span class="s1">HttpToolsProtocol</span><span class="s2">(</span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">Protocol</span><span class="s2">):</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">config</span><span class="s2">: </span><span class="s1">Config</span><span class="s2">,</span>
+        <span class="s1">server_state</span><span class="s2">: </span><span class="s1">ServerState</span><span class="s2">,</span>
+        <span class="s1">app_state</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">],</span>
+        <span class="s1">_loop</span><span class="s2">: </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">AbstractEventLoop </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if not </span><span class="s1">config</span><span class="s2">.</span><span class="s1">loaded</span><span class="s2">:</span>
+            <span class="s1">config</span><span class="s2">.</span><span class="s1">load</span><span class="s2">()</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">config </span><span class="s2">= </span><span class="s1">config</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app </span><span class="s2">= </span><span class="s1">config</span><span class="s2">.</span><span class="s1">loaded_app</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">loop </span><span class="s2">= </span><span class="s1">_loop </span><span class="s0">or </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">get_event_loop</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">logger </span><span class="s2">= </span><span class="s1">logging</span><span class="s2">.</span><span class="s1">getLogger</span><span class="s2">(</span><span class="s5">&quot;uvicorn.error&quot;</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">access_logger </span><span class="s2">= </span><span class="s1">logging</span><span class="s2">.</span><span class="s1">getLogger</span><span class="s2">(</span><span class="s5">&quot;uvicorn.access&quot;</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">access_log </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">access_logger</span><span class="s2">.</span><span class="s1">hasHandlers</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">parser </span><span class="s2">= </span><span class="s1">httptools</span><span class="s2">.</span><span class="s1">HttpRequestParser</span><span class="s2">(</span><span class="s1">self</span><span class="s2">)</span>
+
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s6"># Enable dangerous leniencies to allow server to a response on the first request from a pipelined request.</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">parser</span><span class="s2">.</span><span class="s1">set_dangerous_leniencies</span><span class="s2">(</span><span class="s1">lenient_data_after_close</span><span class="s2">=</span><span class="s0">True</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">AttributeError</span><span class="s2">:  </span><span class="s6"># pragma: no cover</span>
+            <span class="s6"># httptools &lt; 0.6.3</span>
+            <span class="s0">pass</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">ws_protocol_class </span><span class="s2">= </span><span class="s1">config</span><span class="s2">.</span><span class="s1">ws_protocol_class</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">root_path </span><span class="s2">= </span><span class="s1">config</span><span class="s2">.</span><span class="s1">root_path</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">limit_concurrency </span><span class="s2">= </span><span class="s1">config</span><span class="s2">.</span><span class="s1">limit_concurrency</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app_state </span><span class="s2">= </span><span class="s1">app_state</span>
+
+        <span class="s6"># Timeouts</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">timeout_keep_alive_task</span><span class="s2">: </span><span class="s1">TimerHandle </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">timeout_keep_alive </span><span class="s2">= </span><span class="s1">config</span><span class="s2">.</span><span class="s1">timeout_keep_alive</span>
+
+        <span class="s6"># Global state</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">server_state </span><span class="s2">= </span><span class="s1">server_state</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">connections </span><span class="s2">= </span><span class="s1">server_state</span><span class="s2">.</span><span class="s1">connections</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">tasks </span><span class="s2">= </span><span class="s1">server_state</span><span class="s2">.</span><span class="s1">tasks</span>
+
+        <span class="s6"># Per-connection state</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">: </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">Transport </span><span class="s2">= </span><span class="s0">None  </span><span class="s6"># type: ignore[assignment]</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">flow</span><span class="s2">: </span><span class="s1">FlowControl </span><span class="s2">= </span><span class="s0">None  </span><span class="s6"># type: ignore[assignment]</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">server</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">int</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">client</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">int</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">scheme</span><span class="s2">: </span><span class="s1">Literal</span><span class="s2">[</span><span class="s5">&quot;http&quot;</span><span class="s2">, </span><span class="s5">&quot;https&quot;</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">pipeline</span><span class="s2">: </span><span class="s1">deque</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">RequestResponseCycle</span><span class="s2">, </span><span class="s1">ASGI3Application</span><span class="s2">]] = </span><span class="s1">deque</span><span class="s2">()</span>
+
+        <span class="s6"># Per-request state</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">: </span><span class="s1">HTTPScope </span><span class="s2">= </span><span class="s0">None  </span><span class="s6"># type: ignore[assignment]</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">headers</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">]] = </span><span class="s0">None  </span><span class="s6"># type: ignore[assignment]</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">expect_100_continue </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">cycle</span><span class="s2">: </span><span class="s1">RequestResponseCycle </span><span class="s2">= </span><span class="s0">None  </span><span class="s6"># type: ignore[assignment]</span>
+
+    <span class="s6"># Protocol interface</span>
+    <span class="s0">def </span><span class="s1">connection_made</span><span class="s2">(  </span><span class="s6"># type: ignore[override]</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">transport</span><span class="s2">: </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">Transport</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">connections</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">self</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">transport </span><span class="s2">= </span><span class="s1">transport</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">flow </span><span class="s2">= </span><span class="s1">FlowControl</span><span class="s2">(</span><span class="s1">transport</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">server </span><span class="s2">= </span><span class="s1">get_local_addr</span><span class="s2">(</span><span class="s1">transport</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">client </span><span class="s2">= </span><span class="s1">get_remote_addr</span><span class="s2">(</span><span class="s1">transport</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">scheme </span><span class="s2">= </span><span class="s5">&quot;https&quot; </span><span class="s0">if </span><span class="s1">is_ssl</span><span class="s2">(</span><span class="s1">transport</span><span class="s2">) </span><span class="s0">else </span><span class="s5">&quot;http&quot;</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">level </span><span class="s2">&lt;= </span><span class="s1">TRACE_LOG_LEVEL</span><span class="s2">:</span>
+            <span class="s1">prefix </span><span class="s2">= </span><span class="s5">&quot;%s:%d - &quot; </span><span class="s2">% </span><span class="s1">self</span><span class="s2">.</span><span class="s1">client </span><span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">client </span><span class="s0">else </span><span class="s5">&quot;&quot;</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">log</span><span class="s2">(</span><span class="s1">TRACE_LOG_LEVEL</span><span class="s2">, </span><span class="s5">&quot;%sHTTP connection made&quot;</span><span class="s2">, </span><span class="s1">prefix</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">connection_lost</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">exc</span><span class="s2">: </span><span class="s1">Exception </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">connections</span><span class="s2">.</span><span class="s1">discard</span><span class="s2">(</span><span class="s1">self</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">level </span><span class="s2">&lt;= </span><span class="s1">TRACE_LOG_LEVEL</span><span class="s2">:</span>
+            <span class="s1">prefix </span><span class="s2">= </span><span class="s5">&quot;%s:%d - &quot; </span><span class="s2">% </span><span class="s1">self</span><span class="s2">.</span><span class="s1">client </span><span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">client </span><span class="s0">else </span><span class="s5">&quot;&quot;</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">log</span><span class="s2">(</span><span class="s1">TRACE_LOG_LEVEL</span><span class="s2">, </span><span class="s5">&quot;%sHTTP connection lost&quot;</span><span class="s2">, </span><span class="s1">prefix</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cycle </span><span class="s0">and not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cycle</span><span class="s2">.</span><span class="s1">response_complete</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">cycle</span><span class="s2">.</span><span class="s1">disconnected </span><span class="s2">= </span><span class="s0">True</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cycle </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">cycle</span><span class="s2">.</span><span class="s1">message_event</span><span class="s2">.</span><span class="s1">set</span><span class="s2">()</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">flow </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">flow</span><span class="s2">.</span><span class="s1">resume_writing</span><span class="s2">()</span>
+        <span class="s0">if </span><span class="s1">exc </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_unset_keepalive_if_required</span><span class="s2">()</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">parser </span><span class="s2">= </span><span class="s0">None</span>
+
+    <span class="s0">def </span><span class="s1">eof_received</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">pass</span>
+
+    <span class="s0">def </span><span class="s1">_unset_keepalive_if_required</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">timeout_keep_alive_task </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">timeout_keep_alive_task</span><span class="s2">.</span><span class="s1">cancel</span><span class="s2">()</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">timeout_keep_alive_task </span><span class="s2">= </span><span class="s0">None</span>
+
+    <span class="s0">def </span><span class="s1">_get_upgrade</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; bytes </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">connection </span><span class="s2">= []</span>
+        <span class="s1">upgrade </span><span class="s2">= </span><span class="s0">None</span>
+        <span class="s0">for </span><span class="s1">name</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">headers</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">name </span><span class="s2">== </span><span class="s3">b&quot;connection&quot;</span><span class="s2">:</span>
+                <span class="s1">connection </span><span class="s2">= [</span><span class="s1">token</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">().</span><span class="s1">strip</span><span class="s2">() </span><span class="s0">for </span><span class="s1">token </span><span class="s0">in </span><span class="s1">value</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s3">b&quot;,&quot;</span><span class="s2">)]</span>
+            <span class="s0">if </span><span class="s1">name </span><span class="s2">== </span><span class="s3">b&quot;upgrade&quot;</span><span class="s2">:</span>
+                <span class="s1">upgrade </span><span class="s2">= </span><span class="s1">value</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">()</span>
+        <span class="s0">if </span><span class="s3">b&quot;upgrade&quot; </span><span class="s0">in </span><span class="s1">connection</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">upgrade</span>
+        <span class="s0">return None  </span><span class="s6"># pragma: full coverage</span>
+
+    <span class="s0">def </span><span class="s1">_should_upgrade_to_ws</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">ws_protocol_class </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">return False</span>
+        <span class="s0">return True</span>
+
+    <span class="s0">def </span><span class="s1">_unsupported_upgrade_warning</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">warning</span><span class="s2">(</span><span class="s5">&quot;Unsupported upgrade request.&quot;</span><span class="s2">)</span>
+        <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_should_upgrade_to_ws</span><span class="s2">():</span>
+            <span class="s1">msg </span><span class="s2">= </span><span class="s5">&quot;No supported WebSocket library detected. Please use </span><span class="s0">\&quot;</span><span class="s5">pip install 'uvicorn[standard]'</span><span class="s0">\&quot;</span><span class="s5">, or install 'websockets' or 'wsproto' manually.&quot;  </span><span class="s6"># noqa: E501</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">warning</span><span class="s2">(</span><span class="s1">msg</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_should_upgrade</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s1">upgrade </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_get_upgrade</span><span class="s2">()</span>
+        <span class="s0">return </span><span class="s1">upgrade </span><span class="s2">== </span><span class="s3">b&quot;websocket&quot; </span><span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_should_upgrade_to_ws</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">data_received</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">data</span><span class="s2">: </span><span class="s1">bytes</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_unset_keepalive_if_required</span><span class="s2">()</span>
+
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">parser</span><span class="s2">.</span><span class="s1">feed_data</span><span class="s2">(</span><span class="s1">data</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">httptools</span><span class="s2">.</span><span class="s1">HttpParserError</span><span class="s2">:</span>
+            <span class="s1">msg </span><span class="s2">= </span><span class="s5">&quot;Invalid HTTP request received.&quot;</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">warning</span><span class="s2">(</span><span class="s1">msg</span><span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">send_400_response</span><span class="s2">(</span><span class="s1">msg</span><span class="s2">)</span>
+            <span class="s0">return</span>
+        <span class="s0">except </span><span class="s1">httptools</span><span class="s2">.</span><span class="s1">HttpParserUpgrade</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_should_upgrade</span><span class="s2">():</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">handle_websocket_upgrade</span><span class="s2">()</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_unsupported_upgrade_warning</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">handle_websocket_upgrade</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">level </span><span class="s2">&lt;= </span><span class="s1">TRACE_LOG_LEVEL</span><span class="s2">:</span>
+            <span class="s1">prefix </span><span class="s2">= </span><span class="s5">&quot;%s:%d - &quot; </span><span class="s2">% </span><span class="s1">self</span><span class="s2">.</span><span class="s1">client </span><span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">client </span><span class="s0">else </span><span class="s5">&quot;&quot;</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">log</span><span class="s2">(</span><span class="s1">TRACE_LOG_LEVEL</span><span class="s2">, </span><span class="s5">&quot;%sUpgrading to WebSocket&quot;</span><span class="s2">, </span><span class="s1">prefix</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">connections</span><span class="s2">.</span><span class="s1">discard</span><span class="s2">(</span><span class="s1">self</span><span class="s2">)</span>
+        <span class="s1">method </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">[</span><span class="s5">&quot;method&quot;</span><span class="s2">].</span><span class="s1">encode</span><span class="s2">()</span>
+        <span class="s1">output </span><span class="s2">= [</span><span class="s1">method</span><span class="s2">, </span><span class="s3">b&quot; &quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">url</span><span class="s2">, </span><span class="s3">b&quot; HTTP/1.1</span><span class="s0">\r\n</span><span class="s3">&quot;</span><span class="s2">]</span>
+        <span class="s0">for </span><span class="s1">name</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">[</span><span class="s5">&quot;headers&quot;</span><span class="s2">]:</span>
+            <span class="s1">output </span><span class="s2">+= [</span><span class="s1">name</span><span class="s2">, </span><span class="s3">b&quot;: &quot;</span><span class="s2">, </span><span class="s1">value</span><span class="s2">, </span><span class="s3">b&quot;</span><span class="s0">\r\n</span><span class="s3">&quot;</span><span class="s2">]</span>
+        <span class="s1">output</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s3">b&quot;</span><span class="s0">\r\n</span><span class="s3">&quot;</span><span class="s2">)</span>
+        <span class="s1">protocol </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">ws_protocol_class</span><span class="s2">(  </span><span class="s6"># type: ignore[call-arg, misc]</span>
+            <span class="s1">config</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">,</span>
+            <span class="s1">server_state</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_state</span><span class="s2">,</span>
+            <span class="s1">app_state</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">app_state</span><span class="s2">,</span>
+        <span class="s2">)</span>
+        <span class="s1">protocol</span><span class="s2">.</span><span class="s1">connection_made</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">)</span>
+        <span class="s1">protocol</span><span class="s2">.</span><span class="s1">data_received</span><span class="s2">(</span><span class="s3">b&quot;&quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">output</span><span class="s2">))</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">.</span><span class="s1">set_protocol</span><span class="s2">(</span><span class="s1">protocol</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">send_400_response</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">msg</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">content </span><span class="s2">= [</span><span class="s1">STATUS_LINE</span><span class="s2">[</span><span class="s4">400</span><span class="s2">]]</span>
+        <span class="s0">for </span><span class="s1">name</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_state</span><span class="s2">.</span><span class="s1">default_headers</span><span class="s2">:</span>
+            <span class="s1">content</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">([</span><span class="s1">name</span><span class="s2">, </span><span class="s3">b&quot;: &quot;</span><span class="s2">, </span><span class="s1">value</span><span class="s2">, </span><span class="s3">b&quot;</span><span class="s0">\r\n</span><span class="s3">&quot;</span><span class="s2">])  </span><span class="s6"># pragma: full coverage</span>
+        <span class="s1">content</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">(</span>
+            <span class="s2">[</span>
+                <span class="s3">b&quot;content-type: text/plain; charset=utf-8</span><span class="s0">\r\n</span><span class="s3">&quot;</span><span class="s2">,</span>
+                <span class="s3">b&quot;content-length: &quot; </span><span class="s2">+ </span><span class="s1">str</span><span class="s2">(</span><span class="s1">len</span><span class="s2">(</span><span class="s1">msg</span><span class="s2">)).</span><span class="s1">encode</span><span class="s2">(</span><span class="s5">&quot;ascii&quot;</span><span class="s2">) + </span><span class="s3">b&quot;</span><span class="s0">\r\n</span><span class="s3">&quot;</span><span class="s2">,</span>
+                <span class="s3">b&quot;connection: close</span><span class="s0">\r\n</span><span class="s3">&quot;</span><span class="s2">,</span>
+                <span class="s3">b&quot;</span><span class="s0">\r\n</span><span class="s3">&quot;</span><span class="s2">,</span>
+                <span class="s1">msg</span><span class="s2">.</span><span class="s1">encode</span><span class="s2">(</span><span class="s5">&quot;ascii&quot;</span><span class="s2">),</span>
+            <span class="s2">]</span>
+        <span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">.</span><span class="s1">write</span><span class="s2">(</span><span class="s3">b&quot;&quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">content</span><span class="s2">))</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">on_message_begin</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">url </span><span class="s2">= </span><span class="s3">b&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">expect_100_continue </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">headers </span><span class="s2">= []</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">scope </span><span class="s2">= {  </span><span class="s6"># type: ignore[typeddict-item]</span>
+            <span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;http&quot;</span><span class="s2">,</span>
+            <span class="s5">&quot;asgi&quot;</span><span class="s2">: {</span><span class="s5">&quot;version&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">.</span><span class="s1">asgi_version</span><span class="s2">, </span><span class="s5">&quot;spec_version&quot;</span><span class="s2">: </span><span class="s5">&quot;2.3&quot;</span><span class="s2">},</span>
+            <span class="s5">&quot;http_version&quot;</span><span class="s2">: </span><span class="s5">&quot;1.1&quot;</span><span class="s2">,</span>
+            <span class="s5">&quot;server&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">server</span><span class="s2">,</span>
+            <span class="s5">&quot;client&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">client</span><span class="s2">,</span>
+            <span class="s5">&quot;scheme&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">scheme</span><span class="s2">,  </span><span class="s6"># type: ignore[typeddict-item]</span>
+            <span class="s5">&quot;root_path&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">root_path</span><span class="s2">,</span>
+            <span class="s5">&quot;headers&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">headers</span><span class="s2">,</span>
+            <span class="s5">&quot;state&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app_state</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">(),</span>
+        <span class="s2">}</span>
+
+    <span class="s6"># Parser callbacks</span>
+    <span class="s0">def </span><span class="s1">on_url</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">url</span><span class="s2">: </span><span class="s1">bytes</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">url </span><span class="s2">+= </span><span class="s1">url</span>
+
+    <span class="s0">def </span><span class="s1">on_header</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">bytes</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">name </span><span class="s2">= </span><span class="s1">name</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">()</span>
+        <span class="s0">if </span><span class="s1">name </span><span class="s2">== </span><span class="s3">b&quot;expect&quot; </span><span class="s0">and </span><span class="s1">value</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">() == </span><span class="s3">b&quot;100-continue&quot;</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">expect_100_continue </span><span class="s2">= </span><span class="s0">True</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">headers</span><span class="s2">.</span><span class="s1">append</span><span class="s2">((</span><span class="s1">name</span><span class="s2">, </span><span class="s1">value</span><span class="s2">))</span>
+
+    <span class="s0">def </span><span class="s1">on_headers_complete</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">http_version </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">parser</span><span class="s2">.</span><span class="s1">get_http_version</span><span class="s2">()</span>
+        <span class="s1">method </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">parser</span><span class="s2">.</span><span class="s1">get_method</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">[</span><span class="s5">&quot;method&quot;</span><span class="s2">] = </span><span class="s1">method</span><span class="s2">.</span><span class="s1">decode</span><span class="s2">(</span><span class="s5">&quot;ascii&quot;</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">http_version </span><span class="s2">!= </span><span class="s5">&quot;1.1&quot;</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">[</span><span class="s5">&quot;http_version&quot;</span><span class="s2">] = </span><span class="s1">http_version</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">parser</span><span class="s2">.</span><span class="s1">should_upgrade</span><span class="s2">() </span><span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_should_upgrade</span><span class="s2">():</span>
+            <span class="s0">return</span>
+        <span class="s1">parsed_url </span><span class="s2">= </span><span class="s1">httptools</span><span class="s2">.</span><span class="s1">parse_url</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">url</span><span class="s2">)</span>
+        <span class="s1">raw_path </span><span class="s2">= </span><span class="s1">parsed_url</span><span class="s2">.</span><span class="s1">path</span>
+        <span class="s1">path </span><span class="s2">= </span><span class="s1">raw_path</span><span class="s2">.</span><span class="s1">decode</span><span class="s2">(</span><span class="s5">&quot;ascii&quot;</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s5">&quot;%&quot; </span><span class="s0">in </span><span class="s1">path</span><span class="s2">:</span>
+            <span class="s1">path </span><span class="s2">= </span><span class="s1">urllib</span><span class="s2">.</span><span class="s1">parse</span><span class="s2">.</span><span class="s1">unquote</span><span class="s2">(</span><span class="s1">path</span><span class="s2">)</span>
+        <span class="s1">full_path </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">root_path </span><span class="s2">+ </span><span class="s1">path</span>
+        <span class="s1">full_raw_path </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">root_path</span><span class="s2">.</span><span class="s1">encode</span><span class="s2">(</span><span class="s5">&quot;ascii&quot;</span><span class="s2">) + </span><span class="s1">raw_path</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">[</span><span class="s5">&quot;path&quot;</span><span class="s2">] = </span><span class="s1">full_path</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">[</span><span class="s5">&quot;raw_path&quot;</span><span class="s2">] = </span><span class="s1">full_raw_path</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">[</span><span class="s5">&quot;query_string&quot;</span><span class="s2">] = </span><span class="s1">parsed_url</span><span class="s2">.</span><span class="s1">query </span><span class="s0">or </span><span class="s3">b&quot;&quot;</span>
+
+        <span class="s6"># Handle 503 responses when 'limit_concurrency' is exceeded.</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">limit_concurrency </span><span class="s0">is not None and </span><span class="s2">(</span>
+            <span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">connections</span><span class="s2">) &gt;= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">limit_concurrency </span><span class="s0">or </span><span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">tasks</span><span class="s2">) &gt;= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">limit_concurrency</span>
+        <span class="s2">):</span>
+            <span class="s1">app </span><span class="s2">= </span><span class="s1">service_unavailable</span>
+            <span class="s1">message </span><span class="s2">= </span><span class="s5">&quot;Exceeded concurrency limit.&quot;</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">warning</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">app </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span>
+
+        <span class="s1">existing_cycle </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cycle</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">cycle </span><span class="s2">= </span><span class="s1">RequestResponseCycle</span><span class="s2">(</span>
+            <span class="s1">scope</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">,</span>
+            <span class="s1">transport</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">,</span>
+            <span class="s1">flow</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">flow</span><span class="s2">,</span>
+            <span class="s1">logger</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">,</span>
+            <span class="s1">access_logger</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">access_logger</span><span class="s2">,</span>
+            <span class="s1">access_log</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">access_log</span><span class="s2">,</span>
+            <span class="s1">default_headers</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_state</span><span class="s2">.</span><span class="s1">default_headers</span><span class="s2">,</span>
+            <span class="s1">message_event</span><span class="s2">=</span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">Event</span><span class="s2">(),</span>
+            <span class="s1">expect_100_continue</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">expect_100_continue</span><span class="s2">,</span>
+            <span class="s1">keep_alive</span><span class="s2">=</span><span class="s1">http_version </span><span class="s2">!= </span><span class="s5">&quot;1.0&quot;</span><span class="s2">,</span>
+            <span class="s1">on_response</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">on_response_complete</span><span class="s2">,</span>
+        <span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">existing_cycle </span><span class="s0">is None or </span><span class="s1">existing_cycle</span><span class="s2">.</span><span class="s1">response_complete</span><span class="s2">:</span>
+            <span class="s6"># Standard case - start processing the request.</span>
+            <span class="s1">task </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">loop</span><span class="s2">.</span><span class="s1">create_task</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">cycle</span><span class="s2">.</span><span class="s1">run_asgi</span><span class="s2">(</span><span class="s1">app</span><span class="s2">))</span>
+            <span class="s1">task</span><span class="s2">.</span><span class="s1">add_done_callback</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">tasks</span><span class="s2">.</span><span class="s1">discard</span><span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">tasks</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">task</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s6"># Pipelined HTTP requests need to be queued up.</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">flow</span><span class="s2">.</span><span class="s1">pause_reading</span><span class="s2">()</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">pipeline</span><span class="s2">.</span><span class="s1">appendleft</span><span class="s2">((</span><span class="s1">self</span><span class="s2">.</span><span class="s1">cycle</span><span class="s2">, </span><span class="s1">app</span><span class="s2">))</span>
+
+    <span class="s0">def </span><span class="s1">on_body</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">body</span><span class="s2">: </span><span class="s1">bytes</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">parser</span><span class="s2">.</span><span class="s1">should_upgrade</span><span class="s2">() </span><span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_should_upgrade</span><span class="s2">()) </span><span class="s0">or </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cycle</span><span class="s2">.</span><span class="s1">response_complete</span><span class="s2">:</span>
+            <span class="s0">return</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">cycle</span><span class="s2">.</span><span class="s1">body </span><span class="s2">+= </span><span class="s1">body</span>
+        <span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">cycle</span><span class="s2">.</span><span class="s1">body</span><span class="s2">) &gt; </span><span class="s1">HIGH_WATER_LIMIT</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">flow</span><span class="s2">.</span><span class="s1">pause_reading</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">cycle</span><span class="s2">.</span><span class="s1">message_event</span><span class="s2">.</span><span class="s1">set</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">on_message_complete</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">parser</span><span class="s2">.</span><span class="s1">should_upgrade</span><span class="s2">() </span><span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_should_upgrade</span><span class="s2">()) </span><span class="s0">or </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cycle</span><span class="s2">.</span><span class="s1">response_complete</span><span class="s2">:</span>
+            <span class="s0">return</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">cycle</span><span class="s2">.</span><span class="s1">more_body </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">cycle</span><span class="s2">.</span><span class="s1">message_event</span><span class="s2">.</span><span class="s1">set</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">on_response_complete</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s6"># Callback for pipelined HTTP requests to be started.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">server_state</span><span class="s2">.</span><span class="s1">total_requests </span><span class="s2">+= </span><span class="s4">1</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">.</span><span class="s1">is_closing</span><span class="s2">():</span>
+            <span class="s0">return</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_unset_keepalive_if_required</span><span class="s2">()</span>
+
+        <span class="s6"># Unpause data reads if needed.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">flow</span><span class="s2">.</span><span class="s1">resume_reading</span><span class="s2">()</span>
+
+        <span class="s6"># Unblock any pipelined events. If there are none, arm the</span>
+        <span class="s6"># Keep-Alive timeout instead.</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">pipeline</span><span class="s2">:</span>
+            <span class="s1">cycle</span><span class="s2">, </span><span class="s1">app </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">pipeline</span><span class="s2">.</span><span class="s1">pop</span><span class="s2">()</span>
+            <span class="s1">task </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">loop</span><span class="s2">.</span><span class="s1">create_task</span><span class="s2">(</span><span class="s1">cycle</span><span class="s2">.</span><span class="s1">run_asgi</span><span class="s2">(</span><span class="s1">app</span><span class="s2">))</span>
+            <span class="s1">task</span><span class="s2">.</span><span class="s1">add_done_callback</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">tasks</span><span class="s2">.</span><span class="s1">discard</span><span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">tasks</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">task</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">timeout_keep_alive_task </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">loop</span><span class="s2">.</span><span class="s1">call_later</span><span class="s2">(</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">timeout_keep_alive</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">timeout_keep_alive_handler</span>
+            <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">shutdown</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s7">&quot;&quot;&quot; 
+        Called by the server to commence a graceful shutdown. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cycle </span><span class="s0">is None or </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cycle</span><span class="s2">.</span><span class="s1">response_complete</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">cycle</span><span class="s2">.</span><span class="s1">keep_alive </span><span class="s2">= </span><span class="s0">False</span>
+
+    <span class="s0">def </span><span class="s1">pause_writing</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s7">&quot;&quot;&quot; 
+        Called by the transport when the write buffer exceeds the high water mark. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">flow</span><span class="s2">.</span><span class="s1">pause_writing</span><span class="s2">()  </span><span class="s6"># pragma: full coverage</span>
+
+    <span class="s0">def </span><span class="s1">resume_writing</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s7">&quot;&quot;&quot; 
+        Called by the transport when the write buffer drops below the low water mark. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">flow</span><span class="s2">.</span><span class="s1">resume_writing</span><span class="s2">()  </span><span class="s6"># pragma: full coverage</span>
+
+    <span class="s0">def </span><span class="s1">timeout_keep_alive_handler</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s7">&quot;&quot;&quot; 
+        Called on a keep-alive connection if no new data is received after a short 
+        delay. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">.</span><span class="s1">is_closing</span><span class="s2">():</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+
+
+<span class="s0">class </span><span class="s1">RequestResponseCycle</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">scope</span><span class="s2">: </span><span class="s1">HTTPScope</span><span class="s2">,</span>
+        <span class="s1">transport</span><span class="s2">: </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">Transport</span><span class="s2">,</span>
+        <span class="s1">flow</span><span class="s2">: </span><span class="s1">FlowControl</span><span class="s2">,</span>
+        <span class="s1">logger</span><span class="s2">: </span><span class="s1">logging</span><span class="s2">.</span><span class="s1">Logger</span><span class="s2">,</span>
+        <span class="s1">access_logger</span><span class="s2">: </span><span class="s1">logging</span><span class="s2">.</span><span class="s1">Logger</span><span class="s2">,</span>
+        <span class="s1">access_log</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">,</span>
+        <span class="s1">default_headers</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">]],</span>
+        <span class="s1">message_event</span><span class="s2">: </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">Event</span><span class="s2">,</span>
+        <span class="s1">expect_100_continue</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">,</span>
+        <span class="s1">keep_alive</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">,</span>
+        <span class="s1">on_response</span><span class="s2">: </span><span class="s1">Callable</span><span class="s2">[..., </span><span class="s0">None</span><span class="s2">],</span>
+    <span class="s2">):</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">scope </span><span class="s2">= </span><span class="s1">scope</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">transport </span><span class="s2">= </span><span class="s1">transport</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">flow </span><span class="s2">= </span><span class="s1">flow</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">logger </span><span class="s2">= </span><span class="s1">logger</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">access_logger </span><span class="s2">= </span><span class="s1">access_logger</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">access_log </span><span class="s2">= </span><span class="s1">access_log</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">default_headers </span><span class="s2">= </span><span class="s1">default_headers</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">message_event </span><span class="s2">= </span><span class="s1">message_event</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">on_response </span><span class="s2">= </span><span class="s1">on_response</span>
+
+        <span class="s6"># Connection state</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">disconnected </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">keep_alive </span><span class="s2">= </span><span class="s1">keep_alive</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">waiting_for_100_continue </span><span class="s2">= </span><span class="s1">expect_100_continue</span>
+
+        <span class="s6"># Request state</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">body </span><span class="s2">= </span><span class="s3">b&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">more_body </span><span class="s2">= </span><span class="s0">True</span>
+
+        <span class="s6"># Response state</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">response_started </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">response_complete </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">chunked_encoding</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">expected_content_length </span><span class="s2">= </span><span class="s4">0</span>
+
+    <span class="s6"># ASGI exception wrapper</span>
+    <span class="s0">async def </span><span class="s1">run_asgi</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">app</span><span class="s2">: </span><span class="s1">ASGI3Application</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">result </span><span class="s2">= </span><span class="s0">await </span><span class="s1">app</span><span class="s2">(  </span><span class="s6"># type: ignore[func-returns-value]</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span>
+            <span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">BaseException </span><span class="s0">as </span><span class="s1">exc</span><span class="s2">:</span>
+            <span class="s1">msg </span><span class="s2">= </span><span class="s5">&quot;Exception in ASGI application</span><span class="s0">\n</span><span class="s5">&quot;</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">error</span><span class="s2">(</span><span class="s1">msg</span><span class="s2">, </span><span class="s1">exc_info</span><span class="s2">=</span><span class="s1">exc</span><span class="s2">)</span>
+            <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">response_started</span><span class="s2">:</span>
+                <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send_500_response</span><span class="s2">()</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">result </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s1">msg </span><span class="s2">= </span><span class="s5">&quot;ASGI callable should return None, but returned '%s'.&quot;</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">error</span><span class="s2">(</span><span class="s1">msg</span><span class="s2">, </span><span class="s1">result</span><span class="s2">)</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+            <span class="s0">elif not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">response_started </span><span class="s0">and not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">disconnected</span><span class="s2">:</span>
+                <span class="s1">msg </span><span class="s2">= </span><span class="s5">&quot;ASGI callable returned without starting response.&quot;</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">error</span><span class="s2">(</span><span class="s1">msg</span><span class="s2">)</span>
+                <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send_500_response</span><span class="s2">()</span>
+            <span class="s0">elif not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">response_complete </span><span class="s0">and not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">disconnected</span><span class="s2">:</span>
+                <span class="s1">msg </span><span class="s2">= </span><span class="s5">&quot;ASGI callable returned without completing response.&quot;</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">error</span><span class="s2">(</span><span class="s1">msg</span><span class="s2">)</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+        <span class="s0">finally</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">on_response </span><span class="s2">= </span><span class="s0">lambda</span><span class="s2">: </span><span class="s0">None</span>
+
+    <span class="s0">async def </span><span class="s1">send_500_response</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">(</span>
+            <span class="s2">{</span>
+                <span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;http.response.start&quot;</span><span class="s2">,</span>
+                <span class="s5">&quot;status&quot;</span><span class="s2">: </span><span class="s4">500</span><span class="s2">,</span>
+                <span class="s5">&quot;headers&quot;</span><span class="s2">: [</span>
+                    <span class="s2">(</span><span class="s3">b&quot;content-type&quot;</span><span class="s2">, </span><span class="s3">b&quot;text/plain; charset=utf-8&quot;</span><span class="s2">),</span>
+                    <span class="s2">(</span><span class="s3">b&quot;content-length&quot;</span><span class="s2">, </span><span class="s3">b&quot;21&quot;</span><span class="s2">),</span>
+                    <span class="s2">(</span><span class="s3">b&quot;connection&quot;</span><span class="s2">, </span><span class="s3">b&quot;close&quot;</span><span class="s2">),</span>
+                <span class="s2">],</span>
+            <span class="s2">}</span>
+        <span class="s2">)</span>
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">({</span><span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;http.response.body&quot;</span><span class="s2">, </span><span class="s5">&quot;body&quot;</span><span class="s2">: </span><span class="s3">b&quot;Internal Server Error&quot;</span><span class="s2">, </span><span class="s5">&quot;more_body&quot;</span><span class="s2">: </span><span class="s0">False</span><span class="s2">})</span>
+
+    <span class="s6"># ASGI interface</span>
+    <span class="s0">async def </span><span class="s1">send</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">message</span><span class="s2">: </span><span class="s1">ASGISendEvent</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">message_type </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;type&quot;</span><span class="s2">]</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">flow</span><span class="s2">.</span><span class="s1">write_paused </span><span class="s0">and not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">disconnected</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">flow</span><span class="s2">.</span><span class="s1">drain</span><span class="s2">()  </span><span class="s6"># pragma: full coverage</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">disconnected</span><span class="s2">:</span>
+            <span class="s0">return  </span><span class="s6"># pragma: full coverage</span>
+
+        <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">response_started</span><span class="s2">:</span>
+            <span class="s6"># Sending response status line and headers</span>
+            <span class="s0">if </span><span class="s1">message_type </span><span class="s2">!= </span><span class="s5">&quot;http.response.start&quot;</span><span class="s2">:</span>
+                <span class="s1">msg </span><span class="s2">= </span><span class="s5">&quot;Expected ASGI message 'http.response.start', but got '%s'.&quot;</span>
+                <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s1">msg </span><span class="s2">% </span><span class="s1">message_type</span><span class="s2">)</span>
+            <span class="s1">message </span><span class="s2">= </span><span class="s1">cast</span><span class="s2">(</span><span class="s5">&quot;HTTPResponseStartEvent&quot;</span><span class="s2">, </span><span class="s1">message</span><span class="s2">)</span>
+
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">response_started </span><span class="s2">= </span><span class="s0">True</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">waiting_for_100_continue </span><span class="s2">= </span><span class="s0">False</span>
+
+            <span class="s1">status_code </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;status&quot;</span><span class="s2">]</span>
+            <span class="s1">headers </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">default_headers </span><span class="s2">+ </span><span class="s1">list</span><span class="s2">(</span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;headers&quot;</span><span class="s2">, []))</span>
+
+            <span class="s0">if </span><span class="s1">CLOSE_HEADER </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">[</span><span class="s5">&quot;headers&quot;</span><span class="s2">] </span><span class="s0">and </span><span class="s1">CLOSE_HEADER </span><span class="s0">not in </span><span class="s1">headers</span><span class="s2">:</span>
+                <span class="s1">headers </span><span class="s2">= </span><span class="s1">headers </span><span class="s2">+ [</span><span class="s1">CLOSE_HEADER</span><span class="s2">]</span>
+
+            <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">access_log</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">access_logger</span><span class="s2">.</span><span class="s1">info</span><span class="s2">(</span>
+                    <span class="s5">'%s - &quot;%s %s HTTP/%s&quot; %d'</span><span class="s2">,</span>
+                    <span class="s1">get_client_addr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">),</span>
+                    <span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">[</span><span class="s5">&quot;method&quot;</span><span class="s2">],</span>
+                    <span class="s1">get_path_with_query_string</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">),</span>
+                    <span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">[</span><span class="s5">&quot;http_version&quot;</span><span class="s2">],</span>
+                    <span class="s1">status_code</span><span class="s2">,</span>
+                <span class="s2">)</span>
+
+            <span class="s6"># Write response status line and headers</span>
+            <span class="s1">content </span><span class="s2">= [</span><span class="s1">STATUS_LINE</span><span class="s2">[</span><span class="s1">status_code</span><span class="s2">]]</span>
+
+            <span class="s0">for </span><span class="s1">name</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">headers</span><span class="s2">:</span>
+                <span class="s0">if </span><span class="s1">HEADER_RE</span><span class="s2">.</span><span class="s1">search</span><span class="s2">(</span><span class="s1">name</span><span class="s2">):</span>
+                    <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s5">&quot;Invalid HTTP header name.&quot;</span><span class="s2">)  </span><span class="s6"># pragma: full coverage</span>
+                <span class="s0">if </span><span class="s1">HEADER_VALUE_RE</span><span class="s2">.</span><span class="s1">search</span><span class="s2">(</span><span class="s1">value</span><span class="s2">):</span>
+                    <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s5">&quot;Invalid HTTP header value.&quot;</span><span class="s2">)</span>
+
+                <span class="s1">name </span><span class="s2">= </span><span class="s1">name</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">()</span>
+                <span class="s0">if </span><span class="s1">name </span><span class="s2">== </span><span class="s3">b&quot;content-length&quot; </span><span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">chunked_encoding </span><span class="s0">is None</span><span class="s2">:</span>
+                    <span class="s1">self</span><span class="s2">.</span><span class="s1">expected_content_length </span><span class="s2">= </span><span class="s1">int</span><span class="s2">(</span><span class="s1">value</span><span class="s2">.</span><span class="s1">decode</span><span class="s2">())</span>
+                    <span class="s1">self</span><span class="s2">.</span><span class="s1">chunked_encoding </span><span class="s2">= </span><span class="s0">False</span>
+                <span class="s0">elif </span><span class="s1">name </span><span class="s2">== </span><span class="s3">b&quot;transfer-encoding&quot; </span><span class="s0">and </span><span class="s1">value</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">() == </span><span class="s3">b&quot;chunked&quot;</span><span class="s2">:</span>
+                    <span class="s1">self</span><span class="s2">.</span><span class="s1">expected_content_length </span><span class="s2">= </span><span class="s4">0</span>
+                    <span class="s1">self</span><span class="s2">.</span><span class="s1">chunked_encoding </span><span class="s2">= </span><span class="s0">True</span>
+                <span class="s0">elif </span><span class="s1">name </span><span class="s2">== </span><span class="s3">b&quot;connection&quot; </span><span class="s0">and </span><span class="s1">value</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">() == </span><span class="s3">b&quot;close&quot;</span><span class="s2">:</span>
+                    <span class="s1">self</span><span class="s2">.</span><span class="s1">keep_alive </span><span class="s2">= </span><span class="s0">False</span>
+                <span class="s1">content</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">([</span><span class="s1">name</span><span class="s2">, </span><span class="s3">b&quot;: &quot;</span><span class="s2">, </span><span class="s1">value</span><span class="s2">, </span><span class="s3">b&quot;</span><span class="s0">\r\n</span><span class="s3">&quot;</span><span class="s2">])</span>
+
+            <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">chunked_encoding </span><span class="s0">is None and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">[</span><span class="s5">&quot;method&quot;</span><span class="s2">] != </span><span class="s5">&quot;HEAD&quot; </span><span class="s0">and </span><span class="s1">status_code </span><span class="s0">not in </span><span class="s2">(</span><span class="s4">204</span><span class="s2">, </span><span class="s4">304</span><span class="s2">):</span>
+                <span class="s6"># Neither content-length nor transfer-encoding specified</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">chunked_encoding </span><span class="s2">= </span><span class="s0">True</span>
+                <span class="s1">content</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s3">b&quot;transfer-encoding: chunked</span><span class="s0">\r\n</span><span class="s3">&quot;</span><span class="s2">)</span>
+
+            <span class="s1">content</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s3">b&quot;</span><span class="s0">\r\n</span><span class="s3">&quot;</span><span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">.</span><span class="s1">write</span><span class="s2">(</span><span class="s3">b&quot;&quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">content</span><span class="s2">))</span>
+
+        <span class="s0">elif not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">response_complete</span><span class="s2">:</span>
+            <span class="s6"># Sending response body</span>
+            <span class="s0">if </span><span class="s1">message_type </span><span class="s2">!= </span><span class="s5">&quot;http.response.body&quot;</span><span class="s2">:</span>
+                <span class="s1">msg </span><span class="s2">= </span><span class="s5">&quot;Expected ASGI message 'http.response.body', but got '%s'.&quot;</span>
+                <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s1">msg </span><span class="s2">% </span><span class="s1">message_type</span><span class="s2">)</span>
+
+            <span class="s1">body </span><span class="s2">= </span><span class="s1">cast</span><span class="s2">(</span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;body&quot;</span><span class="s2">, </span><span class="s3">b&quot;&quot;</span><span class="s2">))</span>
+            <span class="s1">more_body </span><span class="s2">= </span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;more_body&quot;</span><span class="s2">, </span><span class="s0">False</span><span class="s2">)</span>
+
+            <span class="s6"># Write response body</span>
+            <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">[</span><span class="s5">&quot;method&quot;</span><span class="s2">] == </span><span class="s5">&quot;HEAD&quot;</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">expected_content_length </span><span class="s2">= </span><span class="s4">0</span>
+            <span class="s0">elif </span><span class="s1">self</span><span class="s2">.</span><span class="s1">chunked_encoding</span><span class="s2">:</span>
+                <span class="s0">if </span><span class="s1">body</span><span class="s2">:</span>
+                    <span class="s1">content </span><span class="s2">= [</span><span class="s3">b&quot;%x</span><span class="s0">\r\n</span><span class="s3">&quot; </span><span class="s2">% </span><span class="s1">len</span><span class="s2">(</span><span class="s1">body</span><span class="s2">), </span><span class="s1">body</span><span class="s2">, </span><span class="s3">b&quot;</span><span class="s0">\r\n</span><span class="s3">&quot;</span><span class="s2">]</span>
+                <span class="s0">else</span><span class="s2">:</span>
+                    <span class="s1">content </span><span class="s2">= []</span>
+                <span class="s0">if not </span><span class="s1">more_body</span><span class="s2">:</span>
+                    <span class="s1">content</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s3">b&quot;0</span><span class="s0">\r\n\r\n</span><span class="s3">&quot;</span><span class="s2">)</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">.</span><span class="s1">write</span><span class="s2">(</span><span class="s3">b&quot;&quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">content</span><span class="s2">))</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">num_bytes </span><span class="s2">= </span><span class="s1">len</span><span class="s2">(</span><span class="s1">body</span><span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">num_bytes </span><span class="s2">&gt; </span><span class="s1">self</span><span class="s2">.</span><span class="s1">expected_content_length</span><span class="s2">:</span>
+                    <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s5">&quot;Response content longer than Content-Length&quot;</span><span class="s2">)</span>
+                <span class="s0">else</span><span class="s2">:</span>
+                    <span class="s1">self</span><span class="s2">.</span><span class="s1">expected_content_length </span><span class="s2">-= </span><span class="s1">num_bytes</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">.</span><span class="s1">write</span><span class="s2">(</span><span class="s1">body</span><span class="s2">)</span>
+
+            <span class="s6"># Handle response completion</span>
+            <span class="s0">if not </span><span class="s1">more_body</span><span class="s2">:</span>
+                <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">expected_content_length </span><span class="s2">!= </span><span class="s4">0</span><span class="s2">:</span>
+                    <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s5">&quot;Response content shorter than Content-Length&quot;</span><span class="s2">)</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">response_complete </span><span class="s2">= </span><span class="s0">True</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">message_event</span><span class="s2">.</span><span class="s1">set</span><span class="s2">()</span>
+                <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">keep_alive</span><span class="s2">:</span>
+                    <span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">on_response</span><span class="s2">()</span>
+
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s6"># Response already sent</span>
+            <span class="s1">msg </span><span class="s2">= </span><span class="s5">&quot;Unexpected ASGI message '%s' sent, after response already completed.&quot;</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s1">msg </span><span class="s2">% </span><span class="s1">message_type</span><span class="s2">)</span>
+
+    <span class="s0">async def </span><span class="s1">receive</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; ASGIReceiveEvent</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">waiting_for_100_continue </span><span class="s0">and not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">.</span><span class="s1">is_closing</span><span class="s2">():</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">transport</span><span class="s2">.</span><span class="s1">write</span><span class="s2">(</span><span class="s3">b&quot;HTTP/1.1 100 Continue</span><span class="s0">\r\n\r\n</span><span class="s3">&quot;</span><span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">waiting_for_100_continue </span><span class="s2">= </span><span class="s0">False</span>
+
+        <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">disconnected </span><span class="s0">and not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">response_complete</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">flow</span><span class="s2">.</span><span class="s1">resume_reading</span><span class="s2">()</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">message_event</span><span class="s2">.</span><span class="s1">wait</span><span class="s2">()</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">message_event</span><span class="s2">.</span><span class="s1">clear</span><span class="s2">()</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">disconnected </span><span class="s0">or </span><span class="s1">self</span><span class="s2">.</span><span class="s1">response_complete</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s2">{</span><span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;http.disconnect&quot;</span><span class="s2">}</span>
+        <span class="s1">message</span><span class="s2">: </span><span class="s1">HTTPRequestEvent </span><span class="s2">= {</span><span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;http.request&quot;</span><span class="s2">, </span><span class="s5">&quot;body&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">body</span><span class="s2">, </span><span class="s5">&quot;more_body&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">more_body</span><span class="s2">}</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">body </span><span class="s2">= </span><span class="s3">b&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">message</span>
+</pre>
+</body>
+</html>

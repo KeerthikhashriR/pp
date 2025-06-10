@@ -1,0 +1,1221 @@
+<html>
+<head>
+<title>GifImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #2aacb8;}
+.s6 { color: #a5c261;}
+.s7 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+GifImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># GIF file handling</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1995-09-01 fl   Created</span>
+<span class="s0"># 1996-12-14 fl   Added interlace support</span>
+<span class="s0"># 1996-12-30 fl   Added animation support</span>
+<span class="s0"># 1997-01-05 fl   Added write support, fixed local colour map bug</span>
+<span class="s0"># 1997-02-23 fl   Make sure to load raster data in getdata()</span>
+<span class="s0"># 1997-07-05 fl   Support external decoder (0.4)</span>
+<span class="s0"># 1998-07-09 fl   Handle all modes when saving (0.5)</span>
+<span class="s0"># 1998-07-15 fl   Renamed offset attribute to avoid name clash</span>
+<span class="s0"># 2001-04-16 fl   Added rewind support (seek to frame 0) (0.6)</span>
+<span class="s0"># 2001-04-17 fl   Added palette optimization (0.7)</span>
+<span class="s0"># 2002-06-06 fl   Added transparency support for save (0.8)</span>
+<span class="s0"># 2004-02-24 fl   Disable interlacing for small images</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2004 by Secret Labs AB</span>
+<span class="s0"># Copyright (c) 1995-2004 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">itertools</span>
+<span class="s2">import </span><span class="s1">math</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">subprocess</span>
+<span class="s2">from </span><span class="s1">enum </span><span class="s2">import </span><span class="s1">IntEnum</span>
+<span class="s2">from </span><span class="s1">functools </span><span class="s2">import </span><span class="s1">cached_property</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">IO</span><span class="s3">, </span><span class="s1">TYPE_CHECKING</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Literal</span><span class="s3">, </span><span class="s1">NamedTuple</span><span class="s3">, </span><span class="s1">Union</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s3">(</span>
+    <span class="s1">Image</span><span class="s3">,</span>
+    <span class="s1">ImageChops</span><span class="s3">,</span>
+    <span class="s1">ImageFile</span><span class="s3">,</span>
+    <span class="s1">ImageMath</span><span class="s3">,</span>
+    <span class="s1">ImageOps</span><span class="s3">,</span>
+    <span class="s1">ImagePalette</span><span class="s3">,</span>
+    <span class="s1">ImageSequence</span><span class="s3">,</span>
+<span class="s3">)</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">i16le </span><span class="s2">as </span><span class="s1">i16</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">o8</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">o16le </span><span class="s2">as </span><span class="s1">o16</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">_imaging</span>
+    <span class="s2">from </span><span class="s3">.</span><span class="s1">_typing </span><span class="s2">import </span><span class="s1">Buffer</span>
+
+
+<span class="s2">class </span><span class="s1">LoadingStrategy</span><span class="s3">(</span><span class="s1">IntEnum</span><span class="s3">):</span>
+    <span class="s4">&quot;&quot;&quot;.. versionadded:: 9.1.0&quot;&quot;&quot;</span>
+
+    <span class="s1">RGB_AFTER_FIRST </span><span class="s3">= </span><span class="s5">0</span>
+    <span class="s1">RGB_AFTER_DIFFERENT_PALETTE_ONLY </span><span class="s3">= </span><span class="s5">1</span>
+    <span class="s1">RGB_ALWAYS </span><span class="s3">= </span><span class="s5">2</span>
+
+
+<span class="s0">#: .. versionadded:: 9.1.0</span>
+<span class="s1">LOADING_STRATEGY </span><span class="s3">= </span><span class="s1">LoadingStrategy</span><span class="s3">.</span><span class="s1">RGB_AFTER_FIRST</span>
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Identify/read GIF files</span>
+
+
+<span class="s2">def </span><span class="s1">_accept</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">: </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s2">return </span><span class="s1">prefix</span><span class="s3">[:</span><span class="s5">6</span><span class="s3">] </span><span class="s2">in </span><span class="s3">[</span><span class="s6">b&quot;GIF87a&quot;</span><span class="s3">, </span><span class="s6">b&quot;GIF89a&quot;</span><span class="s3">]</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for GIF images.  This plugin supports both GIF87 and</span>
+<span class="s0"># GIF89 images.</span>
+
+
+<span class="s2">class </span><span class="s1">GifImageFile</span><span class="s3">(</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">ImageFile</span><span class="s3">):</span>
+    <span class="s1">format </span><span class="s3">= </span><span class="s7">&quot;GIF&quot;</span>
+    <span class="s1">format_description </span><span class="s3">= </span><span class="s7">&quot;Compuserve GIF&quot;</span>
+    <span class="s1">_close_exclusive_fp_after_loading </span><span class="s3">= </span><span class="s2">False</span>
+
+    <span class="s1">global_palette </span><span class="s3">= </span><span class="s2">None</span>
+
+    <span class="s2">def </span><span class="s1">data</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; bytes </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">1</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">s </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[</span><span class="s5">0</span><span class="s3">]:</span>
+            <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s1">s</span><span class="s3">[</span><span class="s5">0</span><span class="s3">])</span>
+        <span class="s2">return None</span>
+
+    <span class="s2">def </span><span class="s1">_is_palette_needed</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">p</span><span class="s3">: </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s5">0</span><span class="s3">, </span><span class="s1">len</span><span class="s3">(</span><span class="s1">p</span><span class="s3">), </span><span class="s5">3</span><span class="s3">):</span>
+            <span class="s2">if not </span><span class="s3">(</span><span class="s1">i </span><span class="s3">// </span><span class="s5">3 </span><span class="s3">== </span><span class="s1">p</span><span class="s3">[</span><span class="s1">i</span><span class="s3">] == </span><span class="s1">p</span><span class="s3">[</span><span class="s1">i </span><span class="s3">+ </span><span class="s5">1</span><span class="s3">] == </span><span class="s1">p</span><span class="s3">[</span><span class="s1">i </span><span class="s3">+ </span><span class="s5">2</span><span class="s3">]):</span>
+                <span class="s2">return True</span>
+        <span class="s2">return False</span>
+
+    <span class="s2">def </span><span class="s1">_open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s0"># Screen</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">13</span><span class="s3">)</span>
+        <span class="s2">if not </span><span class="s1">_accept</span><span class="s3">(</span><span class="s1">s</span><span class="s3">):</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s7">&quot;not a GIF file&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;version&quot;</span><span class="s3">] = </span><span class="s1">s</span><span class="s3">[:</span><span class="s5">6</span><span class="s3">]</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s5">6</span><span class="s3">), </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s5">8</span><span class="s3">)</span>
+        <span class="s1">flags </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s5">10</span><span class="s3">]</span>
+        <span class="s1">bits </span><span class="s3">= (</span><span class="s1">flags </span><span class="s3">&amp; </span><span class="s5">7</span><span class="s3">) + </span><span class="s5">1</span>
+
+        <span class="s2">if </span><span class="s1">flags </span><span class="s3">&amp; </span><span class="s5">128</span><span class="s3">:</span>
+            <span class="s0"># get global palette</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;background&quot;</span><span class="s3">] = </span><span class="s1">s</span><span class="s3">[</span><span class="s5">11</span><span class="s3">]</span>
+            <span class="s0"># check if palette contains colour indices</span>
+            <span class="s1">p </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">3 </span><span class="s3">&lt;&lt; </span><span class="s1">bits</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_is_palette_needed</span><span class="s3">(</span><span class="s1">p</span><span class="s3">):</span>
+                <span class="s1">p </span><span class="s3">= </span><span class="s1">ImagePalette</span><span class="s3">.</span><span class="s1">raw</span><span class="s3">(</span><span class="s7">&quot;RGB&quot;</span><span class="s3">, </span><span class="s1">p</span><span class="s3">)</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">global_palette </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">palette </span><span class="s3">= </span><span class="s1">p</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_fp </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp  </span><span class="s0"># FIXME: hack</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__rewind </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">()</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_n_frames</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_seek</span><span class="s3">(</span><span class="s5">0</span><span class="s3">)  </span><span class="s0"># get ready to read first frame</span>
+
+    <span class="s3">@</span><span class="s1">property</span>
+    <span class="s2">def </span><span class="s1">n_frames</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_n_frames </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s1">current </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">()</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s2">while True</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">_seek</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">() + </span><span class="s5">1</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">EOFError</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">_n_frames </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">() + </span><span class="s5">1</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">current</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_n_frames</span>
+
+    <span class="s3">@</span><span class="s1">cached_property</span>
+    <span class="s2">def </span><span class="s1">is_animated</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_n_frames </span><span class="s2">is not None</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_n_frames </span><span class="s3">!= </span><span class="s5">1</span>
+
+        <span class="s1">current </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">()</span>
+        <span class="s2">if </span><span class="s1">current</span><span class="s3">:</span>
+            <span class="s2">return True</span>
+
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_seek</span><span class="s3">(</span><span class="s5">1</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+            <span class="s1">is_animated </span><span class="s3">= </span><span class="s2">True</span>
+        <span class="s2">except </span><span class="s1">EOFError</span><span class="s3">:</span>
+            <span class="s1">is_animated </span><span class="s3">= </span><span class="s2">False</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">current</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">is_animated</span>
+
+    <span class="s2">def </span><span class="s1">seek</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">frame</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if not </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_seek_check</span><span class="s3">(</span><span class="s1">frame</span><span class="s3">):</span>
+            <span class="s2">return</span>
+        <span class="s2">if </span><span class="s1">frame </span><span class="s3">&lt; </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__frame</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_im </span><span class="s3">= </span><span class="s2">None</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_seek</span><span class="s3">(</span><span class="s5">0</span><span class="s3">)</span>
+
+        <span class="s1">last_frame </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__frame</span>
+        <span class="s2">for </span><span class="s1">f </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__frame </span><span class="s3">+ </span><span class="s5">1</span><span class="s3">, </span><span class="s1">frame </span><span class="s3">+ </span><span class="s5">1</span><span class="s3">):</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">_seek</span><span class="s3">(</span><span class="s1">f</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">EOFError </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">last_frame</span><span class="s3">)</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s7">&quot;no more images in GIF file&quot;</span>
+                <span class="s2">raise </span><span class="s1">EOFError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">) </span><span class="s2">from </span><span class="s1">e</span>
+
+    <span class="s2">def </span><span class="s1">_seek</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">frame</span><span class="s3">: </span><span class="s1">int</span><span class="s3">, </span><span class="s1">update_image</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">frame </span><span class="s3">== </span><span class="s5">0</span><span class="s3">:</span>
+            <span class="s0"># rewind</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">__offset </span><span class="s3">= </span><span class="s5">0</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">dispose</span><span class="s3">: </span><span class="s1">_imaging</span><span class="s3">.</span><span class="s1">ImagingCore </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">__frame </span><span class="s3">= -</span><span class="s5">1</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__rewind</span><span class="s3">)</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">disposal_method </span><span class="s3">= </span><span class="s5">0</span>
+            <span class="s2">if </span><span class="s7">&quot;comment&quot; </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+                <span class="s2">del </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;comment&quot;</span><span class="s3">]</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s0"># ensure that the previous frame was loaded</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s2">and </span><span class="s1">update_image</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">load</span><span class="s3">()</span>
+
+        <span class="s2">if </span><span class="s1">frame </span><span class="s3">!= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__frame </span><span class="s3">+ </span><span class="s5">1</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s7">f&quot;cannot seek to frame </span><span class="s2">{</span><span class="s1">frame</span><span class="s2">}</span><span class="s7">&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">fp </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_fp</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__offset</span><span class="s3">:</span>
+            <span class="s0"># backup to last frame</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__offset</span><span class="s3">)</span>
+            <span class="s2">while </span><span class="s1">self</span><span class="s3">.</span><span class="s1">data</span><span class="s3">():</span>
+                <span class="s2">pass</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">__offset </span><span class="s3">= </span><span class="s5">0</span>
+
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">1</span><span class="s3">)</span>
+        <span class="s2">if not </span><span class="s1">s </span><span class="s2">or </span><span class="s1">s </span><span class="s3">== </span><span class="s6">b&quot;;&quot;</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s7">&quot;no more images in GIF file&quot;</span>
+            <span class="s2">raise </span><span class="s1">EOFError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s1">palette</span><span class="s3">: </span><span class="s1">ImagePalette</span><span class="s3">.</span><span class="s1">ImagePalette </span><span class="s3">| </span><span class="s1">Literal</span><span class="s3">[</span><span class="s2">False</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+
+        <span class="s1">info</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] = {}</span>
+        <span class="s1">frame_transparency </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s1">interlace </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s1">frame_dispose_extent </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s2">while True</span><span class="s3">:</span>
+            <span class="s2">if not </span><span class="s1">s</span><span class="s3">:</span>
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">1</span><span class="s3">)</span>
+            <span class="s2">if not </span><span class="s1">s </span><span class="s2">or </span><span class="s1">s </span><span class="s3">== </span><span class="s6">b&quot;;&quot;</span><span class="s3">:</span>
+                <span class="s2">break</span>
+
+            <span class="s2">elif </span><span class="s1">s </span><span class="s3">== </span><span class="s6">b&quot;!&quot;</span><span class="s3">:</span>
+                <span class="s0">#</span>
+                <span class="s0"># extensions</span>
+                <span class="s0">#</span>
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">1</span><span class="s3">)</span>
+                <span class="s1">block </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">data</span><span class="s3">()</span>
+                <span class="s2">if </span><span class="s1">s</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] == </span><span class="s5">249 </span><span class="s2">and </span><span class="s1">block </span><span class="s2">is not None</span><span class="s3">:</span>
+                    <span class="s0">#</span>
+                    <span class="s0"># graphic control extension</span>
+                    <span class="s0">#</span>
+                    <span class="s1">flags </span><span class="s3">= </span><span class="s1">block</span><span class="s3">[</span><span class="s5">0</span><span class="s3">]</span>
+                    <span class="s2">if </span><span class="s1">flags </span><span class="s3">&amp; </span><span class="s5">1</span><span class="s3">:</span>
+                        <span class="s1">frame_transparency </span><span class="s3">= </span><span class="s1">block</span><span class="s3">[</span><span class="s5">3</span><span class="s3">]</span>
+                    <span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;duration&quot;</span><span class="s3">] = </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">block</span><span class="s3">, </span><span class="s5">1</span><span class="s3">) * </span><span class="s5">10</span>
+
+                    <span class="s0"># disposal method - find the value of bits 4 - 6</span>
+                    <span class="s1">dispose_bits </span><span class="s3">= </span><span class="s5">0b00011100 </span><span class="s3">&amp; </span><span class="s1">flags</span>
+                    <span class="s1">dispose_bits </span><span class="s3">= </span><span class="s1">dispose_bits </span><span class="s3">&gt;&gt; </span><span class="s5">2</span>
+                    <span class="s2">if </span><span class="s1">dispose_bits</span><span class="s3">:</span>
+                        <span class="s0"># only set the dispose if it is not</span>
+                        <span class="s0"># unspecified. I'm not sure if this is</span>
+                        <span class="s0"># correct, but it seems to prevent the last</span>
+                        <span class="s0"># frame from looking odd for some animations</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">disposal_method </span><span class="s3">= </span><span class="s1">dispose_bits</span>
+                <span class="s2">elif </span><span class="s1">s</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] == </span><span class="s5">254</span><span class="s3">:</span>
+                    <span class="s0">#</span>
+                    <span class="s0"># comment extension</span>
+                    <span class="s0">#</span>
+                    <span class="s1">comment </span><span class="s3">= </span><span class="s6">b&quot;&quot;</span>
+
+                    <span class="s0"># Read this comment block</span>
+                    <span class="s2">while </span><span class="s1">block</span><span class="s3">:</span>
+                        <span class="s1">comment </span><span class="s3">+= </span><span class="s1">block</span>
+                        <span class="s1">block </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">data</span><span class="s3">()</span>
+
+                    <span class="s2">if </span><span class="s7">&quot;comment&quot; </span><span class="s2">in </span><span class="s1">info</span><span class="s3">:</span>
+                        <span class="s0"># If multiple comment blocks in frame, separate with \n</span>
+                        <span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;comment&quot;</span><span class="s3">] += </span><span class="s6">b&quot;</span><span class="s2">\n</span><span class="s6">&quot; </span><span class="s3">+ </span><span class="s1">comment</span>
+                    <span class="s2">else</span><span class="s3">:</span>
+                        <span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;comment&quot;</span><span class="s3">] = </span><span class="s1">comment</span>
+                    <span class="s1">s </span><span class="s3">= </span><span class="s2">None</span>
+                    <span class="s2">continue</span>
+                <span class="s2">elif </span><span class="s1">s</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] == </span><span class="s5">255 </span><span class="s2">and </span><span class="s1">frame </span><span class="s3">== </span><span class="s5">0 </span><span class="s2">and </span><span class="s1">block </span><span class="s2">is not None</span><span class="s3">:</span>
+                    <span class="s0">#</span>
+                    <span class="s0"># application extension</span>
+                    <span class="s0">#</span>
+                    <span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;extension&quot;</span><span class="s3">] = </span><span class="s1">block</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">()</span>
+                    <span class="s2">if </span><span class="s1">block</span><span class="s3">[:</span><span class="s5">11</span><span class="s3">] == </span><span class="s6">b&quot;NETSCAPE2.0&quot;</span><span class="s3">:</span>
+                        <span class="s1">block </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">data</span><span class="s3">()</span>
+                        <span class="s2">if </span><span class="s1">block </span><span class="s2">and </span><span class="s1">len</span><span class="s3">(</span><span class="s1">block</span><span class="s3">) &gt;= </span><span class="s5">3 </span><span class="s2">and </span><span class="s1">block</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] == </span><span class="s5">1</span><span class="s3">:</span>
+                            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;loop&quot;</span><span class="s3">] = </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">block</span><span class="s3">, </span><span class="s5">1</span><span class="s3">)</span>
+                <span class="s2">while </span><span class="s1">self</span><span class="s3">.</span><span class="s1">data</span><span class="s3">():</span>
+                    <span class="s2">pass</span>
+
+            <span class="s2">elif </span><span class="s1">s </span><span class="s3">== </span><span class="s6">b&quot;,&quot;</span><span class="s3">:</span>
+                <span class="s0">#</span>
+                <span class="s0"># local image</span>
+                <span class="s0">#</span>
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">9</span><span class="s3">)</span>
+
+                <span class="s0"># extent</span>
+                <span class="s1">x0</span><span class="s3">, </span><span class="s1">y0 </span><span class="s3">= </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s5">0</span><span class="s3">), </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s5">2</span><span class="s3">)</span>
+                <span class="s1">x1</span><span class="s3">, </span><span class="s1">y1 </span><span class="s3">= </span><span class="s1">x0 </span><span class="s3">+ </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s5">4</span><span class="s3">), </span><span class="s1">y0 </span><span class="s3">+ </span><span class="s1">i16</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s5">6</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s3">(</span><span class="s1">x1 </span><span class="s3">&gt; </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] </span><span class="s2">or </span><span class="s1">y1 </span><span class="s3">&gt; </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">1</span><span class="s3">]) </span><span class="s2">and </span><span class="s1">update_image</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= </span><span class="s1">max</span><span class="s3">(</span><span class="s1">x1</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">0</span><span class="s3">]), </span><span class="s1">max</span><span class="s3">(</span><span class="s1">y1</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">1</span><span class="s3">])</span>
+                    <span class="s1">Image</span><span class="s3">.</span><span class="s1">_decompression_bomb_check</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_size</span><span class="s3">)</span>
+                <span class="s1">frame_dispose_extent </span><span class="s3">= </span><span class="s1">x0</span><span class="s3">, </span><span class="s1">y0</span><span class="s3">, </span><span class="s1">x1</span><span class="s3">, </span><span class="s1">y1</span>
+                <span class="s1">flags </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s5">8</span><span class="s3">]</span>
+
+                <span class="s1">interlace </span><span class="s3">= (</span><span class="s1">flags </span><span class="s3">&amp; </span><span class="s5">64</span><span class="s3">) != </span><span class="s5">0</span>
+
+                <span class="s2">if </span><span class="s1">flags </span><span class="s3">&amp; </span><span class="s5">128</span><span class="s3">:</span>
+                    <span class="s1">bits </span><span class="s3">= (</span><span class="s1">flags </span><span class="s3">&amp; </span><span class="s5">7</span><span class="s3">) + </span><span class="s5">1</span>
+                    <span class="s1">p </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">3 </span><span class="s3">&lt;&lt; </span><span class="s1">bits</span><span class="s3">)</span>
+                    <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_is_palette_needed</span><span class="s3">(</span><span class="s1">p</span><span class="s3">):</span>
+                        <span class="s1">palette </span><span class="s3">= </span><span class="s1">ImagePalette</span><span class="s3">.</span><span class="s1">raw</span><span class="s3">(</span><span class="s7">&quot;RGB&quot;</span><span class="s3">, </span><span class="s1">p</span><span class="s3">)</span>
+                    <span class="s2">else</span><span class="s3">:</span>
+                        <span class="s1">palette </span><span class="s3">= </span><span class="s2">False</span>
+
+                <span class="s0"># image data</span>
+                <span class="s1">bits </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">1</span><span class="s3">)[</span><span class="s5">0</span><span class="s3">]</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">__offset </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">()</span>
+                <span class="s2">break</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s2">None</span>
+
+        <span class="s2">if </span><span class="s1">interlace </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s7">&quot;image not found in GIF frame&quot;</span>
+            <span class="s2">raise </span><span class="s1">EOFError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__frame </span><span class="s3">= </span><span class="s1">frame</span>
+        <span class="s2">if not </span><span class="s1">update_image</span><span class="s3">:</span>
+            <span class="s2">return</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= []</span>
+
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">dispose</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">paste</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">dispose</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">dispose_extent</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_palette </span><span class="s3">= </span><span class="s1">palette </span><span class="s2">if </span><span class="s1">palette </span><span class="s2">is not None else </span><span class="s1">self</span><span class="s3">.</span><span class="s1">global_palette</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_transparency </span><span class="s3">= </span><span class="s1">frame_transparency</span>
+        <span class="s2">if </span><span class="s1">frame </span><span class="s3">== </span><span class="s5">0</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_palette</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s1">LOADING_STRATEGY </span><span class="s3">== </span><span class="s1">LoadingStrategy</span><span class="s3">.</span><span class="s1">RGB_ALWAYS</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGBA&quot; </span><span class="s2">if </span><span class="s1">frame_transparency </span><span class="s2">is not None else </span><span class="s7">&quot;RGB&quot;</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;P&quot;</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;L&quot;</span>
+
+            <span class="s2">if </span><span class="s1">palette</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">palette </span><span class="s3">= </span><span class="s1">palette</span>
+            <span class="s2">elif </span><span class="s1">self</span><span class="s3">.</span><span class="s1">global_palette</span><span class="s3">:</span>
+                <span class="s2">from </span><span class="s1">copy </span><span class="s2">import </span><span class="s1">copy</span>
+
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">palette </span><span class="s3">= </span><span class="s1">copy</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">global_palette</span><span class="s3">)</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">palette </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s7">&quot;P&quot;</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s3">(</span>
+                    <span class="s1">LOADING_STRATEGY </span><span class="s3">!= </span><span class="s1">LoadingStrategy</span><span class="s3">.</span><span class="s1">RGB_AFTER_DIFFERENT_PALETTE_ONLY</span>
+                    <span class="s2">or </span><span class="s1">palette</span>
+                <span class="s3">):</span>
+                    <span class="s2">if </span><span class="s7">&quot;transparency&quot; </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">putpalettealpha</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;transparency&quot;</span><span class="s3">], </span><span class="s5">0</span><span class="s3">)</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">im </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s7">&quot;RGBA&quot;</span><span class="s3">, </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Dither</span><span class="s3">.</span><span class="s1">FLOYDSTEINBERG</span><span class="s3">)</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGBA&quot;</span>
+                        <span class="s2">del </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;transparency&quot;</span><span class="s3">]</span>
+                    <span class="s2">else</span><span class="s3">:</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGB&quot;</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">im </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s7">&quot;RGB&quot;</span><span class="s3">, </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Dither</span><span class="s3">.</span><span class="s1">FLOYDSTEINBERG</span><span class="s3">)</span>
+
+        <span class="s2">def </span><span class="s1">_rgb</span><span class="s3">(</span><span class="s1">color</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]:</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_palette</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s1">color </span><span class="s3">* </span><span class="s5">3 </span><span class="s3">+ </span><span class="s5">3 </span><span class="s3">&gt; </span><span class="s1">len</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_palette</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">):</span>
+                    <span class="s1">color </span><span class="s3">= </span><span class="s5">0</span>
+                <span class="s2">return </span><span class="s1">tuple</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_palette</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">[</span><span class="s1">color </span><span class="s3">* </span><span class="s5">3 </span><span class="s3">: </span><span class="s1">color </span><span class="s3">* </span><span class="s5">3 </span><span class="s3">+ </span><span class="s5">3</span><span class="s3">])</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s2">return </span><span class="s3">(</span><span class="s1">color</span><span class="s3">, </span><span class="s1">color</span><span class="s3">, </span><span class="s1">color</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">dispose </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">dispose_extent </span><span class="s3">= </span><span class="s1">frame_dispose_extent</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">dispose_extent </span><span class="s2">and </span><span class="s1">self</span><span class="s3">.</span><span class="s1">disposal_method </span><span class="s3">&gt;= </span><span class="s5">2</span><span class="s3">:</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">disposal_method </span><span class="s3">== </span><span class="s5">2</span><span class="s3">:</span>
+                    <span class="s0"># replace with background colour</span>
+
+                    <span class="s0"># only dispose the extent in this frame</span>
+                    <span class="s1">x0</span><span class="s3">, </span><span class="s1">y0</span><span class="s3">, </span><span class="s1">x1</span><span class="s3">, </span><span class="s1">y1 </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">dispose_extent</span>
+                    <span class="s1">dispose_size </span><span class="s3">= (</span><span class="s1">x1 </span><span class="s3">- </span><span class="s1">x0</span><span class="s3">, </span><span class="s1">y1 </span><span class="s3">- </span><span class="s1">y0</span><span class="s3">)</span>
+
+                    <span class="s1">Image</span><span class="s3">.</span><span class="s1">_decompression_bomb_check</span><span class="s3">(</span><span class="s1">dispose_size</span><span class="s3">)</span>
+
+                    <span class="s0"># by convention, attempt to use transparency first</span>
+                    <span class="s1">dispose_mode </span><span class="s3">= </span><span class="s7">&quot;P&quot;</span>
+                    <span class="s1">color </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;transparency&quot;</span><span class="s3">, </span><span class="s1">frame_transparency</span><span class="s3">)</span>
+                    <span class="s2">if </span><span class="s1">color </span><span class="s2">is not None</span><span class="s3">:</span>
+                        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">in </span><span class="s3">(</span><span class="s7">&quot;RGB&quot;</span><span class="s3">, </span><span class="s7">&quot;RGBA&quot;</span><span class="s3">):</span>
+                            <span class="s1">dispose_mode </span><span class="s3">= </span><span class="s7">&quot;RGBA&quot;</span>
+                            <span class="s1">color </span><span class="s3">= </span><span class="s1">_rgb</span><span class="s3">(</span><span class="s1">color</span><span class="s3">) + (</span><span class="s5">0</span><span class="s3">,)</span>
+                    <span class="s2">else</span><span class="s3">:</span>
+                        <span class="s1">color </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;background&quot;</span><span class="s3">, </span><span class="s5">0</span><span class="s3">)</span>
+                        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">in </span><span class="s3">(</span><span class="s7">&quot;RGB&quot;</span><span class="s3">, </span><span class="s7">&quot;RGBA&quot;</span><span class="s3">):</span>
+                            <span class="s1">dispose_mode </span><span class="s3">= </span><span class="s7">&quot;RGB&quot;</span>
+                            <span class="s1">color </span><span class="s3">= </span><span class="s1">_rgb</span><span class="s3">(</span><span class="s1">color</span><span class="s3">)</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">dispose </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">.</span><span class="s1">fill</span><span class="s3">(</span><span class="s1">dispose_mode</span><span class="s3">, </span><span class="s1">dispose_size</span><span class="s3">, </span><span class="s1">color</span><span class="s3">)</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s0"># replace with previous contents</span>
+                    <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_im </span><span class="s2">is not None</span><span class="s3">:</span>
+                        <span class="s0"># only dispose the extent in this frame</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">dispose </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_crop</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">dispose_extent</span><span class="s3">)</span>
+                    <span class="s2">elif </span><span class="s1">frame_transparency </span><span class="s2">is not None</span><span class="s3">:</span>
+                        <span class="s1">x0</span><span class="s3">, </span><span class="s1">y0</span><span class="s3">, </span><span class="s1">x1</span><span class="s3">, </span><span class="s1">y1 </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">dispose_extent</span>
+                        <span class="s1">dispose_size </span><span class="s3">= (</span><span class="s1">x1 </span><span class="s3">- </span><span class="s1">x0</span><span class="s3">, </span><span class="s1">y1 </span><span class="s3">- </span><span class="s1">y0</span><span class="s3">)</span>
+
+                        <span class="s1">Image</span><span class="s3">.</span><span class="s1">_decompression_bomb_check</span><span class="s3">(</span><span class="s1">dispose_size</span><span class="s3">)</span>
+                        <span class="s1">dispose_mode </span><span class="s3">= </span><span class="s7">&quot;P&quot;</span>
+                        <span class="s1">color </span><span class="s3">= </span><span class="s1">frame_transparency</span>
+                        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">in </span><span class="s3">(</span><span class="s7">&quot;RGB&quot;</span><span class="s3">, </span><span class="s7">&quot;RGBA&quot;</span><span class="s3">):</span>
+                            <span class="s1">dispose_mode </span><span class="s3">= </span><span class="s7">&quot;RGBA&quot;</span>
+                            <span class="s1">color </span><span class="s3">= </span><span class="s1">_rgb</span><span class="s3">(</span><span class="s1">frame_transparency</span><span class="s3">) + (</span><span class="s5">0</span><span class="s3">,)</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">dispose </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">.</span><span class="s1">fill</span><span class="s3">(</span>
+                            <span class="s1">dispose_mode</span><span class="s3">, </span><span class="s1">dispose_size</span><span class="s3">, </span><span class="s1">color</span>
+                        <span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">AttributeError</span><span class="s3">:</span>
+                <span class="s2">pass</span>
+
+        <span class="s2">if </span><span class="s1">interlace </span><span class="s2">is not None</span><span class="s3">:</span>
+            <span class="s1">transparency </span><span class="s3">= -</span><span class="s5">1</span>
+            <span class="s2">if </span><span class="s1">frame_transparency </span><span class="s2">is not None</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s1">frame </span><span class="s3">== </span><span class="s5">0</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s1">LOADING_STRATEGY </span><span class="s3">!= </span><span class="s1">LoadingStrategy</span><span class="s3">.</span><span class="s1">RGB_ALWAYS</span><span class="s3">:</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;transparency&quot;</span><span class="s3">] = </span><span class="s1">frame_transparency</span>
+                <span class="s2">elif </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">not in </span><span class="s3">(</span><span class="s7">&quot;RGB&quot;</span><span class="s3">, </span><span class="s7">&quot;RGBA&quot;</span><span class="s3">):</span>
+                    <span class="s1">transparency </span><span class="s3">= </span><span class="s1">frame_transparency</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= [</span>
+                <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span>
+                    <span class="s7">&quot;gif&quot;</span><span class="s3">,</span>
+                    <span class="s3">(</span><span class="s1">x0</span><span class="s3">, </span><span class="s1">y0</span><span class="s3">, </span><span class="s1">x1</span><span class="s3">, </span><span class="s1">y1</span><span class="s3">),</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">__offset</span><span class="s3">,</span>
+                    <span class="s3">(</span><span class="s1">bits</span><span class="s3">, </span><span class="s1">interlace</span><span class="s3">, </span><span class="s1">transparency</span><span class="s3">),</span>
+                <span class="s3">)</span>
+            <span class="s3">]</span>
+
+        <span class="s2">if </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;comment&quot;</span><span class="s3">):</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;comment&quot;</span><span class="s3">] = </span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;comment&quot;</span><span class="s3">]</span>
+        <span class="s2">for </span><span class="s1">k </span><span class="s2">in </span><span class="s3">[</span><span class="s7">&quot;duration&quot;</span><span class="s3">, </span><span class="s7">&quot;extension&quot;</span><span class="s3">]:</span>
+            <span class="s2">if </span><span class="s1">k </span><span class="s2">in </span><span class="s1">info</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s1">k</span><span class="s3">] = </span><span class="s1">info</span><span class="s3">[</span><span class="s1">k</span><span class="s3">]</span>
+            <span class="s2">elif </span><span class="s1">k </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+                <span class="s2">del </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s1">k</span><span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">load_prepare</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">temp_mode </span><span class="s3">= </span><span class="s7">&quot;P&quot; </span><span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_palette </span><span class="s2">else </span><span class="s7">&quot;L&quot;</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_prev_im </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__frame </span><span class="s3">== </span><span class="s5">0</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_transparency </span><span class="s2">is not None</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">im </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">.</span><span class="s1">fill</span><span class="s3">(</span>
+                    <span class="s1">temp_mode</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_transparency</span>
+                <span class="s3">)</span>
+        <span class="s2">elif </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">in </span><span class="s3">(</span><span class="s7">&quot;RGB&quot;</span><span class="s3">, </span><span class="s7">&quot;RGBA&quot;</span><span class="s3">):</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_prev_im </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_palette</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">im </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">.</span><span class="s1">fill</span><span class="s3">(</span><span class="s7">&quot;P&quot;</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_transparency </span><span class="s2">or </span><span class="s5">0</span><span class="s3">)</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">putpalette</span><span class="s3">(</span><span class="s7">&quot;RGB&quot;</span><span class="s3">, *</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_palette</span><span class="s3">.</span><span class="s1">getdata</span><span class="s3">())</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">_im </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s2">if not </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_prev_im </span><span class="s2">and </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_im </span><span class="s2">is not None and </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size </span><span class="s3">!= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">:</span>
+            <span class="s1">expanded_im </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">.</span><span class="s1">fill</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_palette</span><span class="s3">:</span>
+                <span class="s1">expanded_im</span><span class="s3">.</span><span class="s1">putpalette</span><span class="s3">(</span><span class="s7">&quot;RGB&quot;</span><span class="s3">, *</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_palette</span><span class="s3">.</span><span class="s1">getdata</span><span class="s3">())</span>
+            <span class="s1">expanded_im</span><span class="s3">.</span><span class="s1">paste</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">im </span><span class="s3">= </span><span class="s1">expanded_im</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s1">temp_mode</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_palette </span><span class="s3">= </span><span class="s2">None</span>
+
+        <span class="s1">super</span><span class="s3">().</span><span class="s1">load_prepare</span><span class="s3">()</span>
+
+    <span class="s2">def </span><span class="s1">load_end</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__frame </span><span class="s3">== </span><span class="s5">0</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s7">&quot;P&quot; </span><span class="s2">and </span><span class="s1">LOADING_STRATEGY </span><span class="s3">== </span><span class="s1">LoadingStrategy</span><span class="s3">.</span><span class="s1">RGB_ALWAYS</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_transparency </span><span class="s2">is not None</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">putpalettealpha</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_transparency</span><span class="s3">, </span><span class="s5">0</span><span class="s3">)</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGBA&quot;</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s7">&quot;RGB&quot;</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">im </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">, </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Dither</span><span class="s3">.</span><span class="s1">FLOYDSTEINBERG</span><span class="s3">)</span>
+            <span class="s2">return</span>
+        <span class="s2">if not </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_prev_im</span><span class="s3">:</span>
+            <span class="s2">return</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size </span><span class="s3">!= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_prev_im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_transparency </span><span class="s2">is not None</span><span class="s3">:</span>
+                <span class="s1">expanded_im </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">.</span><span class="s1">fill</span><span class="s3">(</span><span class="s7">&quot;RGBA&quot;</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">expanded_im </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">.</span><span class="s1">fill</span><span class="s3">(</span><span class="s7">&quot;P&quot;</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+                <span class="s1">expanded_im</span><span class="s3">.</span><span class="s1">putpalette</span><span class="s3">(</span><span class="s7">&quot;RGB&quot;</span><span class="s3">, </span><span class="s7">&quot;RGB&quot;</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">getpalette</span><span class="s3">())</span>
+                <span class="s1">expanded_im </span><span class="s3">= </span><span class="s1">expanded_im</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s7">&quot;RGB&quot;</span><span class="s3">)</span>
+            <span class="s1">expanded_im</span><span class="s3">.</span><span class="s1">paste</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_prev_im</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_prev_im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_prev_im </span><span class="s3">= </span><span class="s1">expanded_im</span>
+            <span class="s2">assert </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_prev_im </span><span class="s2">is not None</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_transparency </span><span class="s2">is not None</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">putpalettealpha</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_frame_transparency</span><span class="s3">, </span><span class="s5">0</span><span class="s3">)</span>
+            <span class="s1">frame_im </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s7">&quot;RGBA&quot;</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">frame_im </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s7">&quot;RGB&quot;</span><span class="s3">)</span>
+
+        <span class="s2">assert </span><span class="s1">self</span><span class="s3">.</span><span class="s1">dispose_extent </span><span class="s2">is not None</span>
+        <span class="s1">frame_im </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_crop</span><span class="s3">(</span><span class="s1">frame_im</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">dispose_extent</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">im </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_prev_im</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span>
+        <span class="s2">if </span><span class="s1">frame_im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s7">&quot;RGBA&quot;</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">paste</span><span class="s3">(</span><span class="s1">frame_im</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">dispose_extent</span><span class="s3">, </span><span class="s1">frame_im</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">paste</span><span class="s3">(</span><span class="s1">frame_im</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">dispose_extent</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">tell</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__frame</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Write GIF files</span>
+
+
+<span class="s1">RAWMODE </span><span class="s3">= {</span><span class="s7">&quot;1&quot;</span><span class="s3">: </span><span class="s7">&quot;L&quot;</span><span class="s3">, </span><span class="s7">&quot;L&quot;</span><span class="s3">: </span><span class="s7">&quot;L&quot;</span><span class="s3">, </span><span class="s7">&quot;P&quot;</span><span class="s3">: </span><span class="s7">&quot;P&quot;</span><span class="s3">}</span>
+
+
+<span class="s2">def </span><span class="s1">_normalize_mode</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Takes an image (or frame), returns an image in a mode that is appropriate 
+    for saving in a Gif. 
+ 
+    It may return the original image, or it may return an image converted to 
+    palette or 'L' mode. 
+ 
+    :param im: Image object 
+    :returns: Image object 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">in </span><span class="s1">RAWMODE</span><span class="s3">:</span>
+        <span class="s1">im</span><span class="s3">.</span><span class="s1">load</span><span class="s3">()</span>
+        <span class="s2">return </span><span class="s1">im</span>
+    <span class="s2">if </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">getmodebase</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">) == </span><span class="s7">&quot;RGB&quot;</span><span class="s3">:</span>
+        <span class="s1">im </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s7">&quot;P&quot;</span><span class="s3">, </span><span class="s1">palette</span><span class="s3">=</span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Palette</span><span class="s3">.</span><span class="s1">ADAPTIVE</span><span class="s3">)</span>
+        <span class="s2">assert </span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette </span><span class="s2">is not None</span>
+        <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s7">&quot;RGBA&quot;</span><span class="s3">:</span>
+            <span class="s2">for </span><span class="s1">rgba </span><span class="s2">in </span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">.</span><span class="s1">colors</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s1">rgba</span><span class="s3">[</span><span class="s5">3</span><span class="s3">] == </span><span class="s5">0</span><span class="s3">:</span>
+                    <span class="s1">im</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;transparency&quot;</span><span class="s3">] = </span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">.</span><span class="s1">colors</span><span class="s3">[</span><span class="s1">rgba</span><span class="s3">]</span>
+                    <span class="s2">break</span>
+        <span class="s2">return </span><span class="s1">im</span>
+    <span class="s2">return </span><span class="s1">im</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s7">&quot;L&quot;</span><span class="s3">)</span>
+
+
+<span class="s1">_Palette </span><span class="s3">= </span><span class="s1">Union</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">, </span><span class="s1">bytearray</span><span class="s3">, </span><span class="s1">list</span><span class="s3">[</span><span class="s1">int</span><span class="s3">], </span><span class="s1">ImagePalette</span><span class="s3">.</span><span class="s1">ImagePalette</span><span class="s3">]</span>
+
+
+<span class="s2">def </span><span class="s1">_normalize_palette</span><span class="s3">(</span>
+    <span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">palette</span><span class="s3">: </span><span class="s1">_Palette </span><span class="s3">| </span><span class="s2">None</span><span class="s3">, </span><span class="s1">info</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]</span>
+<span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Normalizes the palette for image. 
+      - Sets the palette to the incoming palette, if provided. 
+      - Ensures that there's a palette for L mode images 
+      - Optimizes the palette if necessary/desired. 
+ 
+    :param im: Image object 
+    :param palette: bytes object containing the source palette, or .... 
+    :param info: encoderinfo 
+    :returns: Image object 
+    &quot;&quot;&quot;</span>
+    <span class="s1">source_palette </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s2">if </span><span class="s1">palette</span><span class="s3">:</span>
+        <span class="s0"># a bytes palette</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">palette</span><span class="s3">, (</span><span class="s1">bytes</span><span class="s3">, </span><span class="s1">bytearray</span><span class="s3">, </span><span class="s1">list</span><span class="s3">)):</span>
+            <span class="s1">source_palette </span><span class="s3">= </span><span class="s1">bytearray</span><span class="s3">(</span><span class="s1">palette</span><span class="s3">[:</span><span class="s5">768</span><span class="s3">])</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">palette</span><span class="s3">, </span><span class="s1">ImagePalette</span><span class="s3">.</span><span class="s1">ImagePalette</span><span class="s3">):</span>
+            <span class="s1">source_palette </span><span class="s3">= </span><span class="s1">bytearray</span><span class="s3">(</span><span class="s1">palette</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s7">&quot;P&quot;</span><span class="s3">:</span>
+        <span class="s2">if not </span><span class="s1">source_palette</span><span class="s3">:</span>
+            <span class="s1">im_palette </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">getpalette</span><span class="s3">(</span><span class="s2">None</span><span class="s3">)</span>
+            <span class="s2">assert </span><span class="s1">im_palette </span><span class="s2">is not None</span>
+            <span class="s1">source_palette </span><span class="s3">= </span><span class="s1">bytearray</span><span class="s3">(</span><span class="s1">im_palette</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:  </span><span class="s0"># L-mode</span>
+        <span class="s2">if not </span><span class="s1">source_palette</span><span class="s3">:</span>
+            <span class="s1">source_palette </span><span class="s3">= </span><span class="s1">bytearray</span><span class="s3">(</span><span class="s1">i </span><span class="s3">// </span><span class="s5">3 </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s5">768</span><span class="s3">))</span>
+        <span class="s1">im</span><span class="s3">.</span><span class="s1">palette </span><span class="s3">= </span><span class="s1">ImagePalette</span><span class="s3">.</span><span class="s1">ImagePalette</span><span class="s3">(</span><span class="s7">&quot;RGB&quot;</span><span class="s3">, </span><span class="s1">palette</span><span class="s3">=</span><span class="s1">source_palette</span><span class="s3">)</span>
+    <span class="s2">assert </span><span class="s1">source_palette </span><span class="s2">is not None</span>
+
+    <span class="s2">if </span><span class="s1">palette</span><span class="s3">:</span>
+        <span class="s1">used_palette_colors</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">int </span><span class="s3">| </span><span class="s2">None</span><span class="s3">] = []</span>
+        <span class="s2">assert </span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette </span><span class="s2">is not None</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s5">0</span><span class="s3">, </span><span class="s1">len</span><span class="s3">(</span><span class="s1">source_palette</span><span class="s3">), </span><span class="s5">3</span><span class="s3">):</span>
+            <span class="s1">source_color </span><span class="s3">= </span><span class="s1">tuple</span><span class="s3">(</span><span class="s1">source_palette</span><span class="s3">[</span><span class="s1">i </span><span class="s3">: </span><span class="s1">i </span><span class="s3">+ </span><span class="s5">3</span><span class="s3">])</span>
+            <span class="s1">index </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">.</span><span class="s1">colors</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">source_color</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">index </span><span class="s2">in </span><span class="s1">used_palette_colors</span><span class="s3">:</span>
+                <span class="s1">index </span><span class="s3">= </span><span class="s2">None</span>
+            <span class="s1">used_palette_colors</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">index</span><span class="s3">)</span>
+        <span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">index </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">used_palette_colors</span><span class="s3">):</span>
+            <span class="s2">if </span><span class="s1">index </span><span class="s2">is None</span><span class="s3">:</span>
+                <span class="s2">for </span><span class="s1">j </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">len</span><span class="s3">(</span><span class="s1">used_palette_colors</span><span class="s3">)):</span>
+                    <span class="s2">if </span><span class="s1">j </span><span class="s2">not in </span><span class="s1">used_palette_colors</span><span class="s3">:</span>
+                        <span class="s1">used_palette_colors</span><span class="s3">[</span><span class="s1">i</span><span class="s3">] = </span><span class="s1">j</span>
+                        <span class="s2">break</span>
+        <span class="s1">dest_map</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">int</span><span class="s3">] = []</span>
+        <span class="s2">for </span><span class="s1">index </span><span class="s2">in </span><span class="s1">used_palette_colors</span><span class="s3">:</span>
+            <span class="s2">assert </span><span class="s1">index </span><span class="s2">is not None</span>
+            <span class="s1">dest_map</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">index</span><span class="s3">)</span>
+        <span class="s1">im </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">remap_palette</span><span class="s3">(</span><span class="s1">dest_map</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">optimized_palette_colors </span><span class="s3">= </span><span class="s1">_get_optimize</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">info</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">optimized_palette_colors </span><span class="s2">is not None</span><span class="s3">:</span>
+            <span class="s1">im </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">remap_palette</span><span class="s3">(</span><span class="s1">optimized_palette_colors</span><span class="s3">, </span><span class="s1">source_palette</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s7">&quot;transparency&quot; </span><span class="s2">in </span><span class="s1">info</span><span class="s3">:</span>
+                <span class="s2">try</span><span class="s3">:</span>
+                    <span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;transparency&quot;</span><span class="s3">] = </span><span class="s1">optimized_palette_colors</span><span class="s3">.</span><span class="s1">index</span><span class="s3">(</span>
+                        <span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;transparency&quot;</span><span class="s3">]</span>
+                    <span class="s3">)</span>
+                <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+                    <span class="s2">del </span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;transparency&quot;</span><span class="s3">]</span>
+            <span class="s2">return </span><span class="s1">im</span>
+
+    <span class="s2">assert </span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette </span><span class="s2">is not None</span>
+    <span class="s1">im</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">.</span><span class="s1">palette </span><span class="s3">= </span><span class="s1">source_palette</span>
+    <span class="s2">return </span><span class="s1">im</span>
+
+
+<span class="s2">def </span><span class="s1">_write_single_frame</span><span class="s3">(</span>
+    <span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">,</span>
+    <span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">],</span>
+    <span class="s1">palette</span><span class="s3">: </span><span class="s1">_Palette </span><span class="s3">| </span><span class="s2">None</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s1">im_out </span><span class="s3">= </span><span class="s1">_normalize_mode</span><span class="s3">(</span><span class="s1">im</span><span class="s3">)</span>
+    <span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">im_out</span><span class="s3">.</span><span class="s1">info</span><span class="s3">.</span><span class="s1">items</span><span class="s3">():</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">k</span><span class="s3">, </span><span class="s1">str</span><span class="s3">):</span>
+            <span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">setdefault</span><span class="s3">(</span><span class="s1">k</span><span class="s3">, </span><span class="s1">v</span><span class="s3">)</span>
+    <span class="s1">im_out </span><span class="s3">= </span><span class="s1">_normalize_palette</span><span class="s3">(</span><span class="s1">im_out</span><span class="s3">, </span><span class="s1">palette</span><span class="s3">, </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">)</span>
+
+    <span class="s2">for </span><span class="s1">s </span><span class="s2">in </span><span class="s1">_get_global_header</span><span class="s3">(</span><span class="s1">im_out</span><span class="s3">, </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">):</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+
+    <span class="s0"># local image header</span>
+    <span class="s1">flags </span><span class="s3">= </span><span class="s5">0</span>
+    <span class="s2">if </span><span class="s1">get_interlace</span><span class="s3">(</span><span class="s1">im</span><span class="s3">):</span>
+        <span class="s1">flags </span><span class="s3">= </span><span class="s1">flags </span><span class="s3">| </span><span class="s5">64</span>
+    <span class="s1">_write_local_header</span><span class="s3">(</span><span class="s1">fp</span><span class="s3">, </span><span class="s1">im</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">), </span><span class="s1">flags</span><span class="s3">)</span>
+
+    <span class="s1">im_out</span><span class="s3">.</span><span class="s1">encoderconfig </span><span class="s3">= (</span><span class="s5">8</span><span class="s3">, </span><span class="s1">get_interlace</span><span class="s3">(</span><span class="s1">im</span><span class="s3">))</span>
+    <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_save</span><span class="s3">(</span>
+        <span class="s1">im_out</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">, [</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s7">&quot;gif&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s1">RAWMODE</span><span class="s3">[</span><span class="s1">im_out</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">])]</span>
+    <span class="s3">)</span>
+
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s6">b&quot;</span><span class="s2">\0</span><span class="s6">&quot;</span><span class="s3">)  </span><span class="s0"># end of image data</span>
+
+
+<span class="s2">def </span><span class="s1">_getbbox</span><span class="s3">(</span>
+    <span class="s1">base_im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">im_frame</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span>
+<span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">] | </span><span class="s2">None</span><span class="s3">]:</span>
+    <span class="s1">palette_bytes </span><span class="s3">= [</span>
+        <span class="s1">bytes</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">) </span><span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette </span><span class="s2">else </span><span class="s6">b&quot;&quot; </span><span class="s2">for </span><span class="s1">im </span><span class="s2">in </span><span class="s3">(</span><span class="s1">base_im</span><span class="s3">, </span><span class="s1">im_frame</span><span class="s3">)</span>
+    <span class="s3">]</span>
+    <span class="s2">if </span><span class="s1">palette_bytes</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] != </span><span class="s1">palette_bytes</span><span class="s3">[</span><span class="s5">1</span><span class="s3">]:</span>
+        <span class="s1">im_frame </span><span class="s3">= </span><span class="s1">im_frame</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s7">&quot;RGBA&quot;</span><span class="s3">)</span>
+        <span class="s1">base_im </span><span class="s3">= </span><span class="s1">base_im</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s7">&quot;RGBA&quot;</span><span class="s3">)</span>
+    <span class="s1">delta </span><span class="s3">= </span><span class="s1">ImageChops</span><span class="s3">.</span><span class="s1">subtract_modulo</span><span class="s3">(</span><span class="s1">im_frame</span><span class="s3">, </span><span class="s1">base_im</span><span class="s3">)</span>
+    <span class="s2">return </span><span class="s1">delta</span><span class="s3">, </span><span class="s1">delta</span><span class="s3">.</span><span class="s1">getbbox</span><span class="s3">(</span><span class="s1">alpha_only</span><span class="s3">=</span><span class="s2">False</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">_Frame</span><span class="s3">(</span><span class="s1">NamedTuple</span><span class="s3">):</span>
+    <span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span>
+    <span class="s1">bbox</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">] | </span><span class="s2">None</span>
+    <span class="s1">encoderinfo</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]</span>
+
+
+<span class="s2">def </span><span class="s1">_write_multiple_frames</span><span class="s3">(</span>
+    <span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">palette</span><span class="s3">: </span><span class="s1">_Palette </span><span class="s3">| </span><span class="s2">None</span>
+<span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s1">duration </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;duration&quot;</span><span class="s3">)</span>
+    <span class="s1">disposal </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;disposal&quot;</span><span class="s3">, </span><span class="s1">im</span><span class="s3">.</span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;disposal&quot;</span><span class="s3">))</span>
+
+    <span class="s1">im_frames</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">_Frame</span><span class="s3">] = []</span>
+    <span class="s1">previous_im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s1">frame_count </span><span class="s3">= </span><span class="s5">0</span>
+    <span class="s1">background_im </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s2">for </span><span class="s1">imSequence </span><span class="s2">in </span><span class="s1">itertools</span><span class="s3">.</span><span class="s1">chain</span><span class="s3">([</span><span class="s1">im</span><span class="s3">], </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;append_images&quot;</span><span class="s3">, [])):</span>
+        <span class="s2">for </span><span class="s1">im_frame </span><span class="s2">in </span><span class="s1">ImageSequence</span><span class="s3">.</span><span class="s1">Iterator</span><span class="s3">(</span><span class="s1">imSequence</span><span class="s3">):</span>
+            <span class="s0"># a copy is required here since seek can still mutate the image</span>
+            <span class="s1">im_frame </span><span class="s3">= </span><span class="s1">_normalize_mode</span><span class="s3">(</span><span class="s1">im_frame</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">())</span>
+            <span class="s2">if </span><span class="s1">frame_count </span><span class="s3">== </span><span class="s5">0</span><span class="s3">:</span>
+                <span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">im_frame</span><span class="s3">.</span><span class="s1">info</span><span class="s3">.</span><span class="s1">items</span><span class="s3">():</span>
+                    <span class="s2">if </span><span class="s1">k </span><span class="s3">== </span><span class="s7">&quot;transparency&quot;</span><span class="s3">:</span>
+                        <span class="s2">continue</span>
+                    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">k</span><span class="s3">, </span><span class="s1">str</span><span class="s3">):</span>
+                        <span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">setdefault</span><span class="s3">(</span><span class="s1">k</span><span class="s3">, </span><span class="s1">v</span><span class="s3">)</span>
+
+            <span class="s1">encoderinfo </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+            <span class="s2">if </span><span class="s7">&quot;transparency&quot; </span><span class="s2">in </span><span class="s1">im_frame</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+                <span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">setdefault</span><span class="s3">(</span><span class="s7">&quot;transparency&quot;</span><span class="s3">, </span><span class="s1">im_frame</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;transparency&quot;</span><span class="s3">])</span>
+            <span class="s1">im_frame </span><span class="s3">= </span><span class="s1">_normalize_palette</span><span class="s3">(</span><span class="s1">im_frame</span><span class="s3">, </span><span class="s1">palette</span><span class="s3">, </span><span class="s1">encoderinfo</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">duration</span><span class="s3">, (</span><span class="s1">list</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">)):</span>
+                <span class="s1">encoderinfo</span><span class="s3">[</span><span class="s7">&quot;duration&quot;</span><span class="s3">] = </span><span class="s1">duration</span><span class="s3">[</span><span class="s1">frame_count</span><span class="s3">]</span>
+            <span class="s2">elif </span><span class="s1">duration </span><span class="s2">is None and </span><span class="s7">&quot;duration&quot; </span><span class="s2">in </span><span class="s1">im_frame</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+                <span class="s1">encoderinfo</span><span class="s3">[</span><span class="s7">&quot;duration&quot;</span><span class="s3">] = </span><span class="s1">im_frame</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;duration&quot;</span><span class="s3">]</span>
+            <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">disposal</span><span class="s3">, (</span><span class="s1">list</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">)):</span>
+                <span class="s1">encoderinfo</span><span class="s3">[</span><span class="s7">&quot;disposal&quot;</span><span class="s3">] = </span><span class="s1">disposal</span><span class="s3">[</span><span class="s1">frame_count</span><span class="s3">]</span>
+            <span class="s1">frame_count </span><span class="s3">+= </span><span class="s5">1</span>
+
+            <span class="s1">diff_frame </span><span class="s3">= </span><span class="s2">None</span>
+            <span class="s2">if </span><span class="s1">im_frames </span><span class="s2">and </span><span class="s1">previous_im</span><span class="s3">:</span>
+                <span class="s0"># delta frame</span>
+                <span class="s1">delta</span><span class="s3">, </span><span class="s1">bbox </span><span class="s3">= </span><span class="s1">_getbbox</span><span class="s3">(</span><span class="s1">previous_im</span><span class="s3">, </span><span class="s1">im_frame</span><span class="s3">)</span>
+                <span class="s2">if not </span><span class="s1">bbox</span><span class="s3">:</span>
+                    <span class="s0"># This frame is identical to the previous frame</span>
+                    <span class="s2">if </span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;duration&quot;</span><span class="s3">):</span>
+                        <span class="s1">im_frames</span><span class="s3">[-</span><span class="s5">1</span><span class="s3">].</span><span class="s1">encoderinfo</span><span class="s3">[</span><span class="s7">&quot;duration&quot;</span><span class="s3">] += </span><span class="s1">encoderinfo</span><span class="s3">[</span><span class="s7">&quot;duration&quot;</span><span class="s3">]</span>
+                    <span class="s2">continue</span>
+                <span class="s2">if </span><span class="s1">im_frames</span><span class="s3">[-</span><span class="s5">1</span><span class="s3">].</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;disposal&quot;</span><span class="s3">) == </span><span class="s5">2</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s1">background_im </span><span class="s2">is None</span><span class="s3">:</span>
+                        <span class="s1">color </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span>
+                            <span class="s7">&quot;transparency&quot;</span><span class="s3">, </span><span class="s1">im</span><span class="s3">.</span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;transparency&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">))</span>
+                        <span class="s3">)</span>
+                        <span class="s1">background </span><span class="s3">= </span><span class="s1">_get_background</span><span class="s3">(</span><span class="s1">im_frame</span><span class="s3">, </span><span class="s1">color</span><span class="s3">)</span>
+                        <span class="s1">background_im </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">new</span><span class="s3">(</span><span class="s7">&quot;P&quot;</span><span class="s3">, </span><span class="s1">im_frame</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">background</span><span class="s3">)</span>
+                        <span class="s1">first_palette </span><span class="s3">= </span><span class="s1">im_frames</span><span class="s3">[</span><span class="s5">0</span><span class="s3">].</span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette</span>
+                        <span class="s2">assert </span><span class="s1">first_palette </span><span class="s2">is not None</span>
+                        <span class="s1">background_im</span><span class="s3">.</span><span class="s1">putpalette</span><span class="s3">(</span><span class="s1">first_palette</span><span class="s3">, </span><span class="s1">first_palette</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">)</span>
+                    <span class="s1">bbox </span><span class="s3">= </span><span class="s1">_getbbox</span><span class="s3">(</span><span class="s1">background_im</span><span class="s3">, </span><span class="s1">im_frame</span><span class="s3">)[</span><span class="s5">1</span><span class="s3">]</span>
+                <span class="s2">elif </span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;optimize&quot;</span><span class="s3">) </span><span class="s2">and </span><span class="s1">im_frame</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">!= </span><span class="s7">&quot;1&quot;</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s7">&quot;transparency&quot; </span><span class="s2">not in </span><span class="s1">encoderinfo</span><span class="s3">:</span>
+                        <span class="s2">assert </span><span class="s1">im_frame</span><span class="s3">.</span><span class="s1">palette </span><span class="s2">is not None</span>
+                        <span class="s2">try</span><span class="s3">:</span>
+                            <span class="s1">encoderinfo</span><span class="s3">[</span><span class="s7">&quot;transparency&quot;</span><span class="s3">] = (</span>
+                                <span class="s1">im_frame</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">.</span><span class="s1">_new_color_index</span><span class="s3">(</span><span class="s1">im_frame</span><span class="s3">)</span>
+                            <span class="s3">)</span>
+                        <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+                            <span class="s2">pass</span>
+                    <span class="s2">if </span><span class="s7">&quot;transparency&quot; </span><span class="s2">in </span><span class="s1">encoderinfo</span><span class="s3">:</span>
+                        <span class="s0"># When the delta is zero, fill the image with transparency</span>
+                        <span class="s1">diff_frame </span><span class="s3">= </span><span class="s1">im_frame</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+                        <span class="s1">fill </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">new</span><span class="s3">(</span><span class="s7">&quot;P&quot;</span><span class="s3">, </span><span class="s1">delta</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">encoderinfo</span><span class="s3">[</span><span class="s7">&quot;transparency&quot;</span><span class="s3">])</span>
+                        <span class="s2">if </span><span class="s1">delta</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s7">&quot;RGBA&quot;</span><span class="s3">:</span>
+                            <span class="s1">r</span><span class="s3">, </span><span class="s1">g</span><span class="s3">, </span><span class="s1">b</span><span class="s3">, </span><span class="s1">a </span><span class="s3">= </span><span class="s1">delta</span><span class="s3">.</span><span class="s1">split</span><span class="s3">()</span>
+                            <span class="s1">mask </span><span class="s3">= </span><span class="s1">ImageMath</span><span class="s3">.</span><span class="s1">lambda_eval</span><span class="s3">(</span>
+                                <span class="s2">lambda </span><span class="s1">args</span><span class="s3">: </span><span class="s1">args</span><span class="s3">[</span><span class="s7">&quot;convert&quot;</span><span class="s3">](</span>
+                                    <span class="s1">args</span><span class="s3">[</span><span class="s7">&quot;max&quot;</span><span class="s3">](</span>
+                                        <span class="s1">args</span><span class="s3">[</span><span class="s7">&quot;max&quot;</span><span class="s3">](</span>
+                                            <span class="s1">args</span><span class="s3">[</span><span class="s7">&quot;max&quot;</span><span class="s3">](</span><span class="s1">args</span><span class="s3">[</span><span class="s7">&quot;r&quot;</span><span class="s3">], </span><span class="s1">args</span><span class="s3">[</span><span class="s7">&quot;g&quot;</span><span class="s3">]), </span><span class="s1">args</span><span class="s3">[</span><span class="s7">&quot;b&quot;</span><span class="s3">]</span>
+                                        <span class="s3">),</span>
+                                        <span class="s1">args</span><span class="s3">[</span><span class="s7">&quot;a&quot;</span><span class="s3">],</span>
+                                    <span class="s3">)</span>
+                                    <span class="s3">* </span><span class="s5">255</span><span class="s3">,</span>
+                                    <span class="s7">&quot;1&quot;</span><span class="s3">,</span>
+                                <span class="s3">),</span>
+                                <span class="s1">r</span><span class="s3">=</span><span class="s1">r</span><span class="s3">,</span>
+                                <span class="s1">g</span><span class="s3">=</span><span class="s1">g</span><span class="s3">,</span>
+                                <span class="s1">b</span><span class="s3">=</span><span class="s1">b</span><span class="s3">,</span>
+                                <span class="s1">a</span><span class="s3">=</span><span class="s1">a</span><span class="s3">,</span>
+                            <span class="s3">)</span>
+                        <span class="s2">else</span><span class="s3">:</span>
+                            <span class="s2">if </span><span class="s1">delta</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s7">&quot;P&quot;</span><span class="s3">:</span>
+                                <span class="s0"># Convert to L without considering palette</span>
+                                <span class="s1">delta_l </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">new</span><span class="s3">(</span><span class="s7">&quot;L&quot;</span><span class="s3">, </span><span class="s1">delta</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+                                <span class="s1">delta_l</span><span class="s3">.</span><span class="s1">putdata</span><span class="s3">(</span><span class="s1">delta</span><span class="s3">.</span><span class="s1">getdata</span><span class="s3">())</span>
+                                <span class="s1">delta </span><span class="s3">= </span><span class="s1">delta_l</span>
+                            <span class="s1">mask </span><span class="s3">= </span><span class="s1">ImageMath</span><span class="s3">.</span><span class="s1">lambda_eval</span><span class="s3">(</span>
+                                <span class="s2">lambda </span><span class="s1">args</span><span class="s3">: </span><span class="s1">args</span><span class="s3">[</span><span class="s7">&quot;convert&quot;</span><span class="s3">](</span><span class="s1">args</span><span class="s3">[</span><span class="s7">&quot;im&quot;</span><span class="s3">] * </span><span class="s5">255</span><span class="s3">, </span><span class="s7">&quot;1&quot;</span><span class="s3">),</span>
+                                <span class="s1">im</span><span class="s3">=</span><span class="s1">delta</span><span class="s3">,</span>
+                            <span class="s3">)</span>
+                        <span class="s1">diff_frame</span><span class="s3">.</span><span class="s1">paste</span><span class="s3">(</span><span class="s1">fill</span><span class="s3">, </span><span class="s1">mask</span><span class="s3">=</span><span class="s1">ImageOps</span><span class="s3">.</span><span class="s1">invert</span><span class="s3">(</span><span class="s1">mask</span><span class="s3">))</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">bbox </span><span class="s3">= </span><span class="s2">None</span>
+            <span class="s1">previous_im </span><span class="s3">= </span><span class="s1">im_frame</span>
+            <span class="s1">im_frames</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">_Frame</span><span class="s3">(</span><span class="s1">diff_frame </span><span class="s2">or </span><span class="s1">im_frame</span><span class="s3">, </span><span class="s1">bbox</span><span class="s3">, </span><span class="s1">encoderinfo</span><span class="s3">))</span>
+
+    <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">im_frames</span><span class="s3">) == </span><span class="s5">1</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s7">&quot;duration&quot; </span><span class="s2">in </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">:</span>
+            <span class="s0"># Since multiple frames will not be written, use the combined duration</span>
+            <span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">[</span><span class="s7">&quot;duration&quot;</span><span class="s3">] = </span><span class="s1">im_frames</span><span class="s3">[</span><span class="s5">0</span><span class="s3">].</span><span class="s1">encoderinfo</span><span class="s3">[</span><span class="s7">&quot;duration&quot;</span><span class="s3">]</span>
+        <span class="s2">return False</span>
+
+    <span class="s2">for </span><span class="s1">frame_data </span><span class="s2">in </span><span class="s1">im_frames</span><span class="s3">:</span>
+        <span class="s1">im_frame </span><span class="s3">= </span><span class="s1">frame_data</span><span class="s3">.</span><span class="s1">im</span>
+        <span class="s2">if not </span><span class="s1">frame_data</span><span class="s3">.</span><span class="s1">bbox</span><span class="s3">:</span>
+            <span class="s0"># global header</span>
+            <span class="s2">for </span><span class="s1">s </span><span class="s2">in </span><span class="s1">_get_global_header</span><span class="s3">(</span><span class="s1">im_frame</span><span class="s3">, </span><span class="s1">frame_data</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">):</span>
+                <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+            <span class="s1">offset </span><span class="s3">= (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s0"># compress difference</span>
+            <span class="s2">if not </span><span class="s1">palette</span><span class="s3">:</span>
+                <span class="s1">frame_data</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">[</span><span class="s7">&quot;include_color_table&quot;</span><span class="s3">] = </span><span class="s2">True</span>
+
+            <span class="s1">im_frame </span><span class="s3">= </span><span class="s1">im_frame</span><span class="s3">.</span><span class="s1">crop</span><span class="s3">(</span><span class="s1">frame_data</span><span class="s3">.</span><span class="s1">bbox</span><span class="s3">)</span>
+            <span class="s1">offset </span><span class="s3">= </span><span class="s1">frame_data</span><span class="s3">.</span><span class="s1">bbox</span><span class="s3">[:</span><span class="s5">2</span><span class="s3">]</span>
+        <span class="s1">_write_frame_data</span><span class="s3">(</span><span class="s1">fp</span><span class="s3">, </span><span class="s1">im_frame</span><span class="s3">, </span><span class="s1">offset</span><span class="s3">, </span><span class="s1">frame_data</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">)</span>
+    <span class="s2">return True</span>
+
+
+<span class="s2">def </span><span class="s1">_save_all</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">, </span><span class="s1">filename</span><span class="s3">, </span><span class="s1">save_all</span><span class="s3">=</span><span class="s2">True</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_save</span><span class="s3">(</span>
+    <span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">, </span><span class="s1">save_all</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span>
+<span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s0"># header</span>
+    <span class="s2">if </span><span class="s7">&quot;palette&quot; </span><span class="s2">in </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo </span><span class="s2">or </span><span class="s7">&quot;palette&quot; </span><span class="s2">in </span><span class="s1">im</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+        <span class="s1">palette </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;palette&quot;</span><span class="s3">, </span><span class="s1">im</span><span class="s3">.</span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;palette&quot;</span><span class="s3">))</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">palette </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">setdefault</span><span class="s3">(</span><span class="s7">&quot;optimize&quot;</span><span class="s3">, </span><span class="s2">True</span><span class="s3">)</span>
+
+    <span class="s2">if not </span><span class="s1">save_all </span><span class="s2">or not </span><span class="s1">_write_multiple_frames</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">, </span><span class="s1">palette</span><span class="s3">):</span>
+        <span class="s1">_write_single_frame</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">, </span><span class="s1">palette</span><span class="s3">)</span>
+
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s6">b&quot;;&quot;</span><span class="s3">)  </span><span class="s0"># end of file</span>
+
+    <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">fp</span><span class="s3">, </span><span class="s7">&quot;flush&quot;</span><span class="s3">):</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">flush</span><span class="s3">()</span>
+
+
+<span class="s2">def </span><span class="s1">get_interlace</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+    <span class="s1">interlace </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;interlace&quot;</span><span class="s3">, </span><span class="s5">1</span><span class="s3">)</span>
+
+    <span class="s0"># workaround for @PIL153</span>
+    <span class="s2">if </span><span class="s1">min</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">) &lt; </span><span class="s5">16</span><span class="s3">:</span>
+        <span class="s1">interlace </span><span class="s3">= </span><span class="s5">0</span>
+
+    <span class="s2">return </span><span class="s1">interlace</span>
+
+
+<span class="s2">def </span><span class="s1">_write_local_header</span><span class="s3">(</span>
+    <span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">offset</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">], </span><span class="s1">flags</span><span class="s3">: </span><span class="s1">int</span>
+<span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">transparency </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">[</span><span class="s7">&quot;transparency&quot;</span><span class="s3">]</span>
+    <span class="s2">except </span><span class="s1">KeyError</span><span class="s3">:</span>
+        <span class="s1">transparency </span><span class="s3">= </span><span class="s2">None</span>
+
+    <span class="s2">if </span><span class="s7">&quot;duration&quot; </span><span class="s2">in </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">:</span>
+        <span class="s1">duration </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">[</span><span class="s7">&quot;duration&quot;</span><span class="s3">] / </span><span class="s5">10</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">duration </span><span class="s3">= </span><span class="s5">0</span>
+
+    <span class="s1">disposal </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;disposal&quot;</span><span class="s3">, </span><span class="s5">0</span><span class="s3">))</span>
+
+    <span class="s2">if </span><span class="s1">transparency </span><span class="s2">is not None or </span><span class="s1">duration </span><span class="s3">!= </span><span class="s5">0 </span><span class="s2">or </span><span class="s1">disposal</span><span class="s3">:</span>
+        <span class="s1">packed_flag </span><span class="s3">= </span><span class="s5">1 </span><span class="s2">if </span><span class="s1">transparency </span><span class="s2">is not None else </span><span class="s5">0</span>
+        <span class="s1">packed_flag </span><span class="s3">|= </span><span class="s1">disposal </span><span class="s3">&lt;&lt; </span><span class="s5">2</span>
+
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span>
+            <span class="s6">b&quot;!&quot;</span>
+            <span class="s3">+ </span><span class="s1">o8</span><span class="s3">(</span><span class="s5">249</span><span class="s3">)  </span><span class="s0"># extension intro</span>
+            <span class="s3">+ </span><span class="s1">o8</span><span class="s3">(</span><span class="s5">4</span><span class="s3">)  </span><span class="s0"># length</span>
+            <span class="s3">+ </span><span class="s1">o8</span><span class="s3">(</span><span class="s1">packed_flag</span><span class="s3">)  </span><span class="s0"># packed fields</span>
+            <span class="s3">+ </span><span class="s1">o16</span><span class="s3">(</span><span class="s1">duration</span><span class="s3">)  </span><span class="s0"># duration</span>
+            <span class="s3">+ </span><span class="s1">o8</span><span class="s3">(</span><span class="s1">transparency </span><span class="s2">or </span><span class="s5">0</span><span class="s3">)  </span><span class="s0"># transparency index</span>
+            <span class="s3">+ </span><span class="s1">o8</span><span class="s3">(</span><span class="s5">0</span><span class="s3">)</span>
+        <span class="s3">)</span>
+
+    <span class="s1">include_color_table </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;include_color_table&quot;</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">include_color_table</span><span class="s3">:</span>
+        <span class="s1">palette_bytes </span><span class="s3">= </span><span class="s1">_get_palette_bytes</span><span class="s3">(</span><span class="s1">im</span><span class="s3">)</span>
+        <span class="s1">color_table_size </span><span class="s3">= </span><span class="s1">_get_color_table_size</span><span class="s3">(</span><span class="s1">palette_bytes</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">color_table_size</span><span class="s3">:</span>
+            <span class="s1">flags </span><span class="s3">= </span><span class="s1">flags </span><span class="s3">| </span><span class="s5">128  </span><span class="s0"># local color table flag</span>
+            <span class="s1">flags </span><span class="s3">= </span><span class="s1">flags </span><span class="s3">| </span><span class="s1">color_table_size</span>
+
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span>
+        <span class="s6">b&quot;,&quot;</span>
+        <span class="s3">+ </span><span class="s1">o16</span><span class="s3">(</span><span class="s1">offset</span><span class="s3">[</span><span class="s5">0</span><span class="s3">])  </span><span class="s0"># offset</span>
+        <span class="s3">+ </span><span class="s1">o16</span><span class="s3">(</span><span class="s1">offset</span><span class="s3">[</span><span class="s5">1</span><span class="s3">])</span>
+        <span class="s3">+ </span><span class="s1">o16</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">0</span><span class="s3">])  </span><span class="s0"># size</span>
+        <span class="s3">+ </span><span class="s1">o16</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">1</span><span class="s3">])</span>
+        <span class="s3">+ </span><span class="s1">o8</span><span class="s3">(</span><span class="s1">flags</span><span class="s3">)  </span><span class="s0"># flags</span>
+    <span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">include_color_table </span><span class="s2">and </span><span class="s1">color_table_size</span><span class="s3">:</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">_get_header_palette</span><span class="s3">(</span><span class="s1">palette_bytes</span><span class="s3">))</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">o8</span><span class="s3">(</span><span class="s5">8</span><span class="s3">))  </span><span class="s0"># bits</span>
+
+
+<span class="s2">def </span><span class="s1">_save_netpbm</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s0"># Unused by default.</span>
+    <span class="s0"># To use, uncomment the register_save call at the end of the file.</span>
+    <span class="s0">#</span>
+    <span class="s0"># If you need real GIF compression and/or RGB quantization, you</span>
+    <span class="s0"># can use the external NETPBM/PBMPLUS utilities.  See comments</span>
+    <span class="s0"># below for information on how to enable this.</span>
+    <span class="s1">tempfile </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">_dump</span><span class="s3">()</span>
+
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">with </span><span class="s1">open</span><span class="s3">(</span><span class="s1">filename</span><span class="s3">, </span><span class="s7">&quot;wb&quot;</span><span class="s3">) </span><span class="s2">as </span><span class="s1">f</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">!= </span><span class="s7">&quot;RGB&quot;</span><span class="s3">:</span>
+                <span class="s1">subprocess</span><span class="s3">.</span><span class="s1">check_call</span><span class="s3">(</span>
+                    <span class="s3">[</span><span class="s7">&quot;ppmtogif&quot;</span><span class="s3">, </span><span class="s1">tempfile</span><span class="s3">], </span><span class="s1">stdout</span><span class="s3">=</span><span class="s1">f</span><span class="s3">, </span><span class="s1">stderr</span><span class="s3">=</span><span class="s1">subprocess</span><span class="s3">.</span><span class="s1">DEVNULL</span>
+                <span class="s3">)</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s0"># Pipe ppmquant output into ppmtogif</span>
+                <span class="s0"># &quot;ppmquant 256 %s | ppmtogif &gt; %s&quot; % (tempfile, filename)</span>
+                <span class="s1">quant_cmd </span><span class="s3">= [</span><span class="s7">&quot;ppmquant&quot;</span><span class="s3">, </span><span class="s7">&quot;256&quot;</span><span class="s3">, </span><span class="s1">tempfile</span><span class="s3">]</span>
+                <span class="s1">togif_cmd </span><span class="s3">= [</span><span class="s7">&quot;ppmtogif&quot;</span><span class="s3">]</span>
+                <span class="s1">quant_proc </span><span class="s3">= </span><span class="s1">subprocess</span><span class="s3">.</span><span class="s1">Popen</span><span class="s3">(</span>
+                    <span class="s1">quant_cmd</span><span class="s3">, </span><span class="s1">stdout</span><span class="s3">=</span><span class="s1">subprocess</span><span class="s3">.</span><span class="s1">PIPE</span><span class="s3">, </span><span class="s1">stderr</span><span class="s3">=</span><span class="s1">subprocess</span><span class="s3">.</span><span class="s1">DEVNULL</span>
+                <span class="s3">)</span>
+                <span class="s1">togif_proc </span><span class="s3">= </span><span class="s1">subprocess</span><span class="s3">.</span><span class="s1">Popen</span><span class="s3">(</span>
+                    <span class="s1">togif_cmd</span><span class="s3">,</span>
+                    <span class="s1">stdin</span><span class="s3">=</span><span class="s1">quant_proc</span><span class="s3">.</span><span class="s1">stdout</span><span class="s3">,</span>
+                    <span class="s1">stdout</span><span class="s3">=</span><span class="s1">f</span><span class="s3">,</span>
+                    <span class="s1">stderr</span><span class="s3">=</span><span class="s1">subprocess</span><span class="s3">.</span><span class="s1">DEVNULL</span><span class="s3">,</span>
+                <span class="s3">)</span>
+
+                <span class="s0"># Allow ppmquant to receive SIGPIPE if ppmtogif exits</span>
+                <span class="s2">assert </span><span class="s1">quant_proc</span><span class="s3">.</span><span class="s1">stdout </span><span class="s2">is not None</span>
+                <span class="s1">quant_proc</span><span class="s3">.</span><span class="s1">stdout</span><span class="s3">.</span><span class="s1">close</span><span class="s3">()</span>
+
+                <span class="s1">retcode </span><span class="s3">= </span><span class="s1">quant_proc</span><span class="s3">.</span><span class="s1">wait</span><span class="s3">()</span>
+                <span class="s2">if </span><span class="s1">retcode</span><span class="s3">:</span>
+                    <span class="s2">raise </span><span class="s1">subprocess</span><span class="s3">.</span><span class="s1">CalledProcessError</span><span class="s3">(</span><span class="s1">retcode</span><span class="s3">, </span><span class="s1">quant_cmd</span><span class="s3">)</span>
+
+                <span class="s1">retcode </span><span class="s3">= </span><span class="s1">togif_proc</span><span class="s3">.</span><span class="s1">wait</span><span class="s3">()</span>
+                <span class="s2">if </span><span class="s1">retcode</span><span class="s3">:</span>
+                    <span class="s2">raise </span><span class="s1">subprocess</span><span class="s3">.</span><span class="s1">CalledProcessError</span><span class="s3">(</span><span class="s1">retcode</span><span class="s3">, </span><span class="s1">togif_cmd</span><span class="s3">)</span>
+    <span class="s2">finally</span><span class="s3">:</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">os</span><span class="s3">.</span><span class="s1">unlink</span><span class="s3">(</span><span class="s1">tempfile</span><span class="s3">)</span>
+        <span class="s2">except </span><span class="s1">OSError</span><span class="s3">:</span>
+            <span class="s2">pass</span>
+
+
+<span class="s0"># Force optimization so that we can test performance against</span>
+<span class="s0"># cases where it took lots of memory and time previously.</span>
+<span class="s1">_FORCE_OPTIMIZE </span><span class="s3">= </span><span class="s2">False</span>
+
+
+<span class="s2">def </span><span class="s1">_get_optimize</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">info</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]) </span><span class="s1">-&gt; list</span><span class="s3">[</span><span class="s1">int</span><span class="s3">] | </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Palette optimization is a potentially expensive operation. 
+ 
+    This function determines if the palette should be optimized using 
+    some heuristics, then returns the list of palette entries in use. 
+ 
+    :param im: Image object 
+    :param info: encoderinfo 
+    :returns: list of indexes of palette entries in use, or None 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">in </span><span class="s3">(</span><span class="s7">&quot;P&quot;</span><span class="s3">, </span><span class="s7">&quot;L&quot;</span><span class="s3">) </span><span class="s2">and </span><span class="s1">info </span><span class="s2">and </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;optimize&quot;</span><span class="s3">):</span>
+        <span class="s0"># Potentially expensive operation.</span>
+
+        <span class="s0"># The palette saves 3 bytes per color not used, but palette</span>
+        <span class="s0"># lengths are restricted to 3*(2**N) bytes. Max saving would</span>
+        <span class="s0"># be 768 -&gt; 6 bytes if we went all the way down to 2 colors.</span>
+        <span class="s0"># * If we're over 128 colors, we can't save any space.</span>
+        <span class="s0"># * If there aren't any holes, it's not worth collapsing.</span>
+        <span class="s0"># * If we have a 'large' image, the palette is in the noise.</span>
+
+        <span class="s0"># create the new palette if not every color is used</span>
+        <span class="s1">optimise </span><span class="s3">= </span><span class="s1">_FORCE_OPTIMIZE </span><span class="s2">or </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s7">&quot;L&quot;</span>
+        <span class="s2">if </span><span class="s1">optimise </span><span class="s2">or </span><span class="s1">im</span><span class="s3">.</span><span class="s1">width </span><span class="s3">* </span><span class="s1">im</span><span class="s3">.</span><span class="s1">height </span><span class="s3">&lt; </span><span class="s5">512 </span><span class="s3">* </span><span class="s5">512</span><span class="s3">:</span>
+            <span class="s0"># check which colors are used</span>
+            <span class="s1">used_palette_colors </span><span class="s3">= []</span>
+            <span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">count </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">histogram</span><span class="s3">()):</span>
+                <span class="s2">if </span><span class="s1">count</span><span class="s3">:</span>
+                    <span class="s1">used_palette_colors</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">i</span><span class="s3">)</span>
+
+            <span class="s2">if </span><span class="s1">optimise </span><span class="s2">or </span><span class="s1">max</span><span class="s3">(</span><span class="s1">used_palette_colors</span><span class="s3">) &gt;= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">used_palette_colors</span><span class="s3">):</span>
+                <span class="s2">return </span><span class="s1">used_palette_colors</span>
+
+            <span class="s2">assert </span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette </span><span class="s2">is not None</span>
+            <span class="s1">num_palette_colors </span><span class="s3">= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">) // </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">getmodebands</span><span class="s3">(</span>
+                <span class="s1">im</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">.</span><span class="s1">mode</span>
+            <span class="s3">)</span>
+            <span class="s1">current_palette_size </span><span class="s3">= </span><span class="s5">1 </span><span class="s3">&lt;&lt; (</span><span class="s1">num_palette_colors </span><span class="s3">- </span><span class="s5">1</span><span class="s3">).</span><span class="s1">bit_length</span><span class="s3">()</span>
+            <span class="s2">if </span><span class="s3">(</span>
+                <span class="s0"># check that the palette would become smaller when saved</span>
+                <span class="s1">len</span><span class="s3">(</span><span class="s1">used_palette_colors</span><span class="s3">) &lt;= </span><span class="s1">current_palette_size </span><span class="s3">// </span><span class="s5">2</span>
+                <span class="s0"># check that the palette is not already the smallest possible size</span>
+                <span class="s2">and </span><span class="s1">current_palette_size </span><span class="s3">&gt; </span><span class="s5">2</span>
+            <span class="s3">):</span>
+                <span class="s2">return </span><span class="s1">used_palette_colors</span>
+    <span class="s2">return None</span>
+
+
+<span class="s2">def </span><span class="s1">_get_color_table_size</span><span class="s3">(</span><span class="s1">palette_bytes</span><span class="s3">: </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+    <span class="s0"># calculate the palette size for the header</span>
+    <span class="s2">if not </span><span class="s1">palette_bytes</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s5">0</span>
+    <span class="s2">elif </span><span class="s1">len</span><span class="s3">(</span><span class="s1">palette_bytes</span><span class="s3">) &lt; </span><span class="s5">9</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s5">1</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">math</span><span class="s3">.</span><span class="s1">ceil</span><span class="s3">(</span><span class="s1">math</span><span class="s3">.</span><span class="s1">log</span><span class="s3">(</span><span class="s1">len</span><span class="s3">(</span><span class="s1">palette_bytes</span><span class="s3">) // </span><span class="s5">3</span><span class="s3">, </span><span class="s5">2</span><span class="s3">)) - </span><span class="s5">1</span>
+
+
+<span class="s2">def </span><span class="s1">_get_header_palette</span><span class="s3">(</span><span class="s1">palette_bytes</span><span class="s3">: </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; bytes</span><span class="s3">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Returns the palette, null padded to the next power of 2 (*3) bytes 
+    suitable for direct inclusion in the GIF header 
+ 
+    :param palette_bytes: Unpadded palette bytes, in RGBRGB form 
+    :returns: Null padded palette 
+    &quot;&quot;&quot;</span>
+    <span class="s1">color_table_size </span><span class="s3">= </span><span class="s1">_get_color_table_size</span><span class="s3">(</span><span class="s1">palette_bytes</span><span class="s3">)</span>
+
+    <span class="s0"># add the missing amount of bytes</span>
+    <span class="s0"># the palette has to be 2&lt;&lt;n in size</span>
+    <span class="s1">actual_target_size_diff </span><span class="s3">= (</span><span class="s5">2 </span><span class="s3">&lt;&lt; </span><span class="s1">color_table_size</span><span class="s3">) - </span><span class="s1">len</span><span class="s3">(</span><span class="s1">palette_bytes</span><span class="s3">) // </span><span class="s5">3</span>
+    <span class="s2">if </span><span class="s1">actual_target_size_diff </span><span class="s3">&gt; </span><span class="s5">0</span><span class="s3">:</span>
+        <span class="s1">palette_bytes </span><span class="s3">+= </span><span class="s1">o8</span><span class="s3">(</span><span class="s5">0</span><span class="s3">) * </span><span class="s5">3 </span><span class="s3">* </span><span class="s1">actual_target_size_diff</span>
+    <span class="s2">return </span><span class="s1">palette_bytes</span>
+
+
+<span class="s2">def </span><span class="s1">_get_palette_bytes</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; bytes</span><span class="s3">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Gets the palette for inclusion in the gif header 
+ 
+    :param im: Image object 
+    :returns: Bytes, len&lt;=768 suitable for inclusion in gif header 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if not </span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s6">b&quot;&quot;</span>
+
+    <span class="s1">palette </span><span class="s3">= </span><span class="s1">bytes</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s7">&quot;RGBA&quot;</span><span class="s3">:</span>
+        <span class="s1">palette </span><span class="s3">= </span><span class="s6">b&quot;&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">palette</span><span class="s3">[</span><span class="s1">i </span><span class="s3">* </span><span class="s5">4 </span><span class="s3">: </span><span class="s1">i </span><span class="s3">* </span><span class="s5">4 </span><span class="s3">+ </span><span class="s5">3</span><span class="s3">] </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">len</span><span class="s3">(</span><span class="s1">palette</span><span class="s3">) // </span><span class="s5">3</span><span class="s3">))</span>
+    <span class="s2">return </span><span class="s1">palette</span>
+
+
+<span class="s2">def </span><span class="s1">_get_background</span><span class="s3">(</span>
+    <span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">,</span>
+    <span class="s1">info_background</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">] | </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">] | </span><span class="s2">None</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+    <span class="s1">background </span><span class="s3">= </span><span class="s5">0</span>
+    <span class="s2">if </span><span class="s1">info_background</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">info_background</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">):</span>
+            <span class="s0"># WebPImagePlugin stores an RGBA value in info[&quot;background&quot;]</span>
+            <span class="s0"># So it must be converted to the same format as GifImagePlugin's</span>
+            <span class="s0"># info[&quot;background&quot;] - a global color table index</span>
+            <span class="s2">assert </span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette </span><span class="s2">is not None</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">background </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">.</span><span class="s1">getcolor</span><span class="s3">(</span><span class="s1">info_background</span><span class="s3">, </span><span class="s1">im</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">ValueError </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s1">str</span><span class="s3">(</span><span class="s1">e</span><span class="s3">) </span><span class="s2">not in </span><span class="s3">(</span>
+                    <span class="s0"># If all 256 colors are in use,</span>
+                    <span class="s0"># then there is no need for the background color</span>
+                    <span class="s7">&quot;cannot allocate more than 256 colors&quot;</span><span class="s3">,</span>
+                    <span class="s0"># Ignore non-opaque WebP background</span>
+                    <span class="s7">&quot;cannot add non-opaque RGBA color to RGB palette&quot;</span><span class="s3">,</span>
+                <span class="s3">):</span>
+                    <span class="s2">raise</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">background </span><span class="s3">= </span><span class="s1">info_background</span>
+    <span class="s2">return </span><span class="s1">background</span>
+
+
+<span class="s2">def </span><span class="s1">_get_global_header</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">info</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]) </span><span class="s1">-&gt; list</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">]:</span>
+    <span class="s4">&quot;&quot;&quot;Return a list of strings representing a GIF header&quot;&quot;&quot;</span>
+
+    <span class="s0"># Header Block</span>
+    <span class="s0"># https://www.matthewflickinger.com/lab/whatsinagif/bits_and_bytes.asp</span>
+
+    <span class="s1">version </span><span class="s3">= </span><span class="s6">b&quot;87a&quot;</span>
+    <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;version&quot;</span><span class="s3">) == </span><span class="s6">b&quot;89a&quot; </span><span class="s2">or </span><span class="s3">(</span>
+        <span class="s1">info</span>
+        <span class="s2">and </span><span class="s3">(</span>
+            <span class="s7">&quot;transparency&quot; </span><span class="s2">in </span><span class="s1">info</span>
+            <span class="s2">or </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;loop&quot;</span><span class="s3">) </span><span class="s2">is not None</span>
+            <span class="s2">or </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;duration&quot;</span><span class="s3">)</span>
+            <span class="s2">or </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;comment&quot;</span><span class="s3">)</span>
+        <span class="s3">)</span>
+    <span class="s3">):</span>
+        <span class="s1">version </span><span class="s3">= </span><span class="s6">b&quot;89a&quot;</span>
+
+    <span class="s1">background </span><span class="s3">= </span><span class="s1">_get_background</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;background&quot;</span><span class="s3">))</span>
+
+    <span class="s1">palette_bytes </span><span class="s3">= </span><span class="s1">_get_palette_bytes</span><span class="s3">(</span><span class="s1">im</span><span class="s3">)</span>
+    <span class="s1">color_table_size </span><span class="s3">= </span><span class="s1">_get_color_table_size</span><span class="s3">(</span><span class="s1">palette_bytes</span><span class="s3">)</span>
+
+    <span class="s1">header </span><span class="s3">= [</span>
+        <span class="s6">b&quot;GIF&quot;  </span><span class="s0"># signature</span>
+        <span class="s3">+ </span><span class="s1">version  </span><span class="s0"># version</span>
+        <span class="s3">+ </span><span class="s1">o16</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">0</span><span class="s3">])  </span><span class="s0"># canvas width</span>
+        <span class="s3">+ </span><span class="s1">o16</span><span class="s3">(</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">1</span><span class="s3">]),  </span><span class="s0"># canvas height</span>
+        <span class="s0"># Logical Screen Descriptor</span>
+        <span class="s0"># size of global color table + global color table flag</span>
+        <span class="s1">o8</span><span class="s3">(</span><span class="s1">color_table_size </span><span class="s3">+ </span><span class="s5">128</span><span class="s3">),  </span><span class="s0"># packed fields</span>
+        <span class="s0"># background + reserved/aspect</span>
+        <span class="s1">o8</span><span class="s3">(</span><span class="s1">background</span><span class="s3">) + </span><span class="s1">o8</span><span class="s3">(</span><span class="s5">0</span><span class="s3">),</span>
+        <span class="s0"># Global Color Table</span>
+        <span class="s1">_get_header_palette</span><span class="s3">(</span><span class="s1">palette_bytes</span><span class="s3">),</span>
+    <span class="s3">]</span>
+    <span class="s2">if </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;loop&quot;</span><span class="s3">) </span><span class="s2">is not None</span><span class="s3">:</span>
+        <span class="s1">header</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span>
+            <span class="s6">b&quot;!&quot;</span>
+            <span class="s3">+ </span><span class="s1">o8</span><span class="s3">(</span><span class="s5">255</span><span class="s3">)  </span><span class="s0"># extension intro</span>
+            <span class="s3">+ </span><span class="s1">o8</span><span class="s3">(</span><span class="s5">11</span><span class="s3">)</span>
+            <span class="s3">+ </span><span class="s6">b&quot;NETSCAPE2.0&quot;</span>
+            <span class="s3">+ </span><span class="s1">o8</span><span class="s3">(</span><span class="s5">3</span><span class="s3">)</span>
+            <span class="s3">+ </span><span class="s1">o8</span><span class="s3">(</span><span class="s5">1</span><span class="s3">)</span>
+            <span class="s3">+ </span><span class="s1">o16</span><span class="s3">(</span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;loop&quot;</span><span class="s3">])  </span><span class="s0"># number of loops</span>
+            <span class="s3">+ </span><span class="s1">o8</span><span class="s3">(</span><span class="s5">0</span><span class="s3">)</span>
+        <span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s7">&quot;comment&quot;</span><span class="s3">):</span>
+        <span class="s1">comment_block </span><span class="s3">= </span><span class="s6">b&quot;!&quot; </span><span class="s3">+ </span><span class="s1">o8</span><span class="s3">(</span><span class="s5">254</span><span class="s3">)  </span><span class="s0"># extension intro</span>
+
+        <span class="s1">comment </span><span class="s3">= </span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;comment&quot;</span><span class="s3">]</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">comment</span><span class="s3">, </span><span class="s1">str</span><span class="s3">):</span>
+            <span class="s1">comment </span><span class="s3">= </span><span class="s1">comment</span><span class="s3">.</span><span class="s1">encode</span><span class="s3">()</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s5">0</span><span class="s3">, </span><span class="s1">len</span><span class="s3">(</span><span class="s1">comment</span><span class="s3">), </span><span class="s5">255</span><span class="s3">):</span>
+            <span class="s1">subblock </span><span class="s3">= </span><span class="s1">comment</span><span class="s3">[</span><span class="s1">i </span><span class="s3">: </span><span class="s1">i </span><span class="s3">+ </span><span class="s5">255</span><span class="s3">]</span>
+            <span class="s1">comment_block </span><span class="s3">+= </span><span class="s1">o8</span><span class="s3">(</span><span class="s1">len</span><span class="s3">(</span><span class="s1">subblock</span><span class="s3">)) + </span><span class="s1">subblock</span>
+
+        <span class="s1">comment_block </span><span class="s3">+= </span><span class="s1">o8</span><span class="s3">(</span><span class="s5">0</span><span class="s3">)</span>
+        <span class="s1">header</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">comment_block</span><span class="s3">)</span>
+    <span class="s2">return </span><span class="s1">header</span>
+
+
+<span class="s2">def </span><span class="s1">_write_frame_data</span><span class="s3">(</span>
+    <span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">],</span>
+    <span class="s1">im_frame</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">,</span>
+    <span class="s1">offset</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">],</span>
+    <span class="s1">params</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">],</span>
+<span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">im_frame</span><span class="s3">.</span><span class="s1">encoderinfo </span><span class="s3">= </span><span class="s1">params</span>
+
+        <span class="s0"># local image header</span>
+        <span class="s1">_write_local_header</span><span class="s3">(</span><span class="s1">fp</span><span class="s3">, </span><span class="s1">im_frame</span><span class="s3">, </span><span class="s1">offset</span><span class="s3">, </span><span class="s5">0</span><span class="s3">)</span>
+
+        <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_save</span><span class="s3">(</span>
+            <span class="s1">im_frame</span><span class="s3">,</span>
+            <span class="s1">fp</span><span class="s3">,</span>
+            <span class="s3">[</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s7">&quot;gif&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">im_frame</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s1">RAWMODE</span><span class="s3">[</span><span class="s1">im_frame</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">])],</span>
+        <span class="s3">)</span>
+
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s6">b&quot;</span><span class="s2">\0</span><span class="s6">&quot;</span><span class="s3">)  </span><span class="s0"># end of image data</span>
+    <span class="s2">finally</span><span class="s3">:</span>
+        <span class="s2">del </span><span class="s1">im_frame</span><span class="s3">.</span><span class="s1">encoderinfo</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Legacy GIF utilities</span>
+
+
+<span class="s2">def </span><span class="s1">getheader</span><span class="s3">(</span>
+    <span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">palette</span><span class="s3">: </span><span class="s1">_Palette </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">, </span><span class="s1">info</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+<span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">list</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">list</span><span class="s3">[</span><span class="s1">int</span><span class="s3">] | </span><span class="s2">None</span><span class="s3">]:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Legacy Method to get Gif data from image. 
+ 
+    Warning:: May modify image data. 
+ 
+    :param im: Image object 
+    :param palette: bytes object containing the source palette, or .... 
+    :param info: encoderinfo 
+    :returns: tuple of(list of header items, optimized palette) 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">info </span><span class="s2">is None</span><span class="s3">:</span>
+        <span class="s1">info </span><span class="s3">= {}</span>
+
+    <span class="s1">used_palette_colors </span><span class="s3">= </span><span class="s1">_get_optimize</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">info</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s7">&quot;background&quot; </span><span class="s2">not in </span><span class="s1">info </span><span class="s2">and </span><span class="s7">&quot;background&quot; </span><span class="s2">in </span><span class="s1">im</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+        <span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;background&quot;</span><span class="s3">] = </span><span class="s1">im</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s7">&quot;background&quot;</span><span class="s3">]</span>
+
+    <span class="s1">im_mod </span><span class="s3">= </span><span class="s1">_normalize_palette</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">palette</span><span class="s3">, </span><span class="s1">info</span><span class="s3">)</span>
+    <span class="s1">im</span><span class="s3">.</span><span class="s1">palette </span><span class="s3">= </span><span class="s1">im_mod</span><span class="s3">.</span><span class="s1">palette</span>
+    <span class="s1">im</span><span class="s3">.</span><span class="s1">im </span><span class="s3">= </span><span class="s1">im_mod</span><span class="s3">.</span><span class="s1">im</span>
+    <span class="s1">header </span><span class="s3">= </span><span class="s1">_get_global_header</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">info</span><span class="s3">)</span>
+
+    <span class="s2">return </span><span class="s1">header</span><span class="s3">, </span><span class="s1">used_palette_colors</span>
+
+
+<span class="s2">def </span><span class="s1">getdata</span><span class="s3">(</span>
+    <span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">offset</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">] = (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">), **</span><span class="s1">params</span><span class="s3">: </span><span class="s1">Any</span>
+<span class="s3">) </span><span class="s1">-&gt; list</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">]:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Legacy Method 
+ 
+    Return a list of strings representing this image. 
+    The first string is a local image header, the rest contains 
+    encoded image data. 
+ 
+    To specify duration, add the time in milliseconds, 
+    e.g. ``getdata(im_frame, duration=1000)`` 
+ 
+    :param im: Image object 
+    :param offset: Tuple of (x, y) pixels. Defaults to (0, 0) 
+    :param \\**params: e.g. duration or other encoder info parameters 
+    :returns: List of bytes containing GIF encoded frame data 
+ 
+    &quot;&quot;&quot;</span>
+    <span class="s2">from </span><span class="s1">io </span><span class="s2">import </span><span class="s1">BytesIO</span>
+
+    <span class="s2">class </span><span class="s1">Collector</span><span class="s3">(</span><span class="s1">BytesIO</span><span class="s3">):</span>
+        <span class="s1">data </span><span class="s3">= []</span>
+
+        <span class="s2">def </span><span class="s1">write</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">data</span><span class="s3">: </span><span class="s1">Buffer</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">data</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">data</span><span class="s3">)</span>
+            <span class="s2">return </span><span class="s1">len</span><span class="s3">(</span><span class="s1">data</span><span class="s3">)</span>
+
+    <span class="s1">im</span><span class="s3">.</span><span class="s1">load</span><span class="s3">()  </span><span class="s0"># make sure raster data is available</span>
+
+    <span class="s1">fp </span><span class="s3">= </span><span class="s1">Collector</span><span class="s3">()</span>
+
+    <span class="s1">_write_frame_data</span><span class="s3">(</span><span class="s1">fp</span><span class="s3">, </span><span class="s1">im</span><span class="s3">, </span><span class="s1">offset</span><span class="s3">, </span><span class="s1">params</span><span class="s3">)</span>
+
+    <span class="s2">return </span><span class="s1">fp</span><span class="s3">.</span><span class="s1">data</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Registry</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_open</span><span class="s3">(</span><span class="s1">GifImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">GifImageFile</span><span class="s3">, </span><span class="s1">_accept</span><span class="s3">)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_save</span><span class="s3">(</span><span class="s1">GifImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">_save</span><span class="s3">)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_save_all</span><span class="s3">(</span><span class="s1">GifImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">_save_all</span><span class="s3">)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_extension</span><span class="s3">(</span><span class="s1">GifImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s7">&quot;.gif&quot;</span><span class="s3">)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_mime</span><span class="s3">(</span><span class="s1">GifImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s7">&quot;image/gif&quot;</span><span class="s3">)</span>
+
+<span class="s0">#</span>
+<span class="s0"># Uncomment the following line if you wish to use NETPBM/PBMPLUS</span>
+<span class="s0"># instead of the built-in &quot;uncompressed&quot; GIF encoder</span>
+
+<span class="s0"># Image.register_save(GifImageFile.format, _save_netpbm)</span>
+</pre>
+</body>
+</html>

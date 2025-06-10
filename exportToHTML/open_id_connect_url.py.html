@@ -1,0 +1,105 @@
+<html>
+<head>
+<title>open_id_connect_url.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #5f826b; font-style: italic;}
+.s4 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+open_id_connect_url.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Optional</span>
+
+<span class="s0">from </span><span class="s1">fastapi</span><span class="s2">.</span><span class="s1">openapi</span><span class="s2">.</span><span class="s1">models </span><span class="s0">import </span><span class="s1">OpenIdConnect </span><span class="s0">as </span><span class="s1">OpenIdConnectModel</span>
+<span class="s0">from </span><span class="s1">fastapi</span><span class="s2">.</span><span class="s1">security</span><span class="s2">.</span><span class="s1">base </span><span class="s0">import </span><span class="s1">SecurityBase</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">HTTPException</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">requests </span><span class="s0">import </span><span class="s1">Request</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">status </span><span class="s0">import </span><span class="s1">HTTP_403_FORBIDDEN</span>
+<span class="s0">from </span><span class="s1">typing_extensions </span><span class="s0">import </span><span class="s1">Annotated</span><span class="s2">, </span><span class="s1">Doc</span>
+
+
+<span class="s0">class </span><span class="s1">OpenIdConnect</span><span class="s2">(</span><span class="s1">SecurityBase</span><span class="s2">):</span>
+    <span class="s3">&quot;&quot;&quot; 
+    OpenID Connect authentication class. An instance of it would be used as a 
+    dependency. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s2">*,</span>
+        <span class="s1">openIdConnectUrl</span><span class="s2">: </span><span class="s1">Annotated</span><span class="s2">[</span>
+            <span class="s1">str</span><span class="s2">,</span>
+            <span class="s1">Doc</span><span class="s2">(</span>
+                <span class="s4">&quot;&quot;&quot; 
+            The OpenID Connect URL. 
+            &quot;&quot;&quot;</span>
+            <span class="s2">),</span>
+        <span class="s2">],</span>
+        <span class="s1">scheme_name</span><span class="s2">: </span><span class="s1">Annotated</span><span class="s2">[</span>
+            <span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">],</span>
+            <span class="s1">Doc</span><span class="s2">(</span>
+                <span class="s4">&quot;&quot;&quot; 
+                Security scheme name. 
+ 
+                It will be included in the generated OpenAPI (e.g. visible at `/docs`). 
+                &quot;&quot;&quot;</span>
+            <span class="s2">),</span>
+        <span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">description</span><span class="s2">: </span><span class="s1">Annotated</span><span class="s2">[</span>
+            <span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">],</span>
+            <span class="s1">Doc</span><span class="s2">(</span>
+                <span class="s4">&quot;&quot;&quot; 
+                Security scheme description. 
+ 
+                It will be included in the generated OpenAPI (e.g. visible at `/docs`). 
+                &quot;&quot;&quot;</span>
+            <span class="s2">),</span>
+        <span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">auto_error</span><span class="s2">: </span><span class="s1">Annotated</span><span class="s2">[</span>
+            <span class="s1">bool</span><span class="s2">,</span>
+            <span class="s1">Doc</span><span class="s2">(</span>
+                <span class="s4">&quot;&quot;&quot; 
+                By default, if no HTTP Authorization header is provided, required for 
+                OpenID Connect authentication, it will automatically cancel the request 
+                and send the client an error. 
+ 
+                If `auto_error` is set to `False`, when the HTTP Authorization header 
+                is not available, instead of erroring out, the dependency result will 
+                be `None`. 
+ 
+                This is useful when you want to have optional authentication. 
+ 
+                It is also useful when you want to have authentication that can be 
+                provided in one of multiple optional ways (for example, with OpenID 
+                Connect or in a cookie). 
+                &quot;&quot;&quot;</span>
+            <span class="s2">),</span>
+        <span class="s2">] = </span><span class="s0">True</span><span class="s2">,</span>
+    <span class="s2">):</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">model </span><span class="s2">= </span><span class="s1">OpenIdConnectModel</span><span class="s2">(</span>
+            <span class="s1">openIdConnectUrl</span><span class="s2">=</span><span class="s1">openIdConnectUrl</span><span class="s2">, </span><span class="s1">description</span><span class="s2">=</span><span class="s1">description</span>
+        <span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">scheme_name </span><span class="s2">= </span><span class="s1">scheme_name </span><span class="s0">or </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">.</span><span class="s1">__name__</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">auto_error </span><span class="s2">= </span><span class="s1">auto_error</span>
+
+    <span class="s0">async def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">request</span><span class="s2">: </span><span class="s1">Request</span><span class="s2">) </span><span class="s1">-&gt; Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+        <span class="s1">authorization </span><span class="s2">= </span><span class="s1">request</span><span class="s2">.</span><span class="s1">headers</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;Authorization&quot;</span><span class="s2">)</span>
+        <span class="s0">if not </span><span class="s1">authorization</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">auto_error</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">HTTPException</span><span class="s2">(</span>
+                    <span class="s1">status_code</span><span class="s2">=</span><span class="s1">HTTP_403_FORBIDDEN</span><span class="s2">, </span><span class="s1">detail</span><span class="s2">=</span><span class="s4">&quot;Not authenticated&quot;</span>
+                <span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s0">return None</span>
+        <span class="s0">return </span><span class="s1">authorization</span>
+</pre>
+</body>
+</html>

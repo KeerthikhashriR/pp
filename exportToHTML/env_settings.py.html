@@ -1,0 +1,373 @@
+<html>
+<head>
+<title>env_settings.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #7a7e85;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+env_settings.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">os</span>
+<span class="s0">import </span><span class="s1">warnings</span>
+<span class="s0">from </span><span class="s1">pathlib </span><span class="s0">import </span><span class="s1">Path</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">AbstractSet</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Callable</span><span class="s2">, </span><span class="s1">ClassVar</span><span class="s2">, </span><span class="s1">Dict</span><span class="s2">, </span><span class="s1">List</span><span class="s2">, </span><span class="s1">Mapping</span><span class="s2">, </span><span class="s1">Optional</span><span class="s2">, </span><span class="s1">Tuple</span><span class="s2">, </span><span class="s1">Type</span><span class="s2">, </span><span class="s1">Union</span>
+
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">config </span><span class="s0">import </span><span class="s1">BaseConfig</span><span class="s2">, </span><span class="s1">Extra</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">fields </span><span class="s0">import </span><span class="s1">ModelField</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">main </span><span class="s0">import </span><span class="s1">BaseModel</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">JsonWrapper</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">typing </span><span class="s0">import </span><span class="s1">StrPath</span><span class="s2">, </span><span class="s1">display_as_type</span><span class="s2">, </span><span class="s1">get_origin</span><span class="s2">, </span><span class="s1">is_union</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">utils </span><span class="s0">import </span><span class="s1">deep_update</span><span class="s2">, </span><span class="s1">lenient_issubclass</span><span class="s2">, </span><span class="s1">path_type</span><span class="s2">, </span><span class="s1">sequence_like</span>
+
+<span class="s1">env_file_sentinel </span><span class="s2">= </span><span class="s1">str</span><span class="s2">(</span><span class="s1">object</span><span class="s2">())</span>
+
+<span class="s1">SettingsSourceCallable </span><span class="s2">= </span><span class="s1">Callable</span><span class="s2">[[</span><span class="s3">'BaseSettings'</span><span class="s2">], </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]]</span>
+<span class="s1">DotenvType </span><span class="s2">= </span><span class="s1">Union</span><span class="s2">[</span><span class="s1">StrPath</span><span class="s2">, </span><span class="s1">List</span><span class="s2">[</span><span class="s1">StrPath</span><span class="s2">], </span><span class="s1">Tuple</span><span class="s2">[</span><span class="s1">StrPath</span><span class="s2">, ...]]</span>
+
+
+<span class="s0">class </span><span class="s1">SettingsError</span><span class="s2">(</span><span class="s1">ValueError</span><span class="s2">):</span>
+    <span class="s0">pass</span>
+
+
+<span class="s0">class </span><span class="s1">BaseSettings</span><span class="s2">(</span><span class="s1">BaseModel</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Base class for settings, allowing values to be overridden by environment variables. 
+ 
+    This is useful in production for secrets you do not wish to save in code, it plays nicely with docker(-compose), 
+    Heroku and any 12 factor app design. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">__pydantic_self__</span><span class="s2">,</span>
+        <span class="s1">_env_file</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">DotenvType</span><span class="s2">] = </span><span class="s1">env_file_sentinel</span><span class="s2">,</span>
+        <span class="s1">_env_file_encoding</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">_env_nested_delimiter</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">_secrets_dir</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">StrPath</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s2">**</span><span class="s1">values</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5"># Uses something other than `self` the first arg to allow &quot;self&quot; as a settable attribute</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(</span>
+            <span class="s2">**</span><span class="s1">__pydantic_self__</span><span class="s2">.</span><span class="s1">_build_values</span><span class="s2">(</span>
+                <span class="s1">values</span><span class="s2">,</span>
+                <span class="s1">_env_file</span><span class="s2">=</span><span class="s1">_env_file</span><span class="s2">,</span>
+                <span class="s1">_env_file_encoding</span><span class="s2">=</span><span class="s1">_env_file_encoding</span><span class="s2">,</span>
+                <span class="s1">_env_nested_delimiter</span><span class="s2">=</span><span class="s1">_env_nested_delimiter</span><span class="s2">,</span>
+                <span class="s1">_secrets_dir</span><span class="s2">=</span><span class="s1">_secrets_dir</span><span class="s2">,</span>
+            <span class="s2">)</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_build_values</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">init_kwargs</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">],</span>
+        <span class="s1">_env_file</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">DotenvType</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">_env_file_encoding</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">_env_nested_delimiter</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">_secrets_dir</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">StrPath</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]:</span>
+        <span class="s5"># Configure built-in sources</span>
+        <span class="s1">init_settings </span><span class="s2">= </span><span class="s1">InitSettingsSource</span><span class="s2">(</span><span class="s1">init_kwargs</span><span class="s2">=</span><span class="s1">init_kwargs</span><span class="s2">)</span>
+        <span class="s1">env_settings </span><span class="s2">= </span><span class="s1">EnvSettingsSource</span><span class="s2">(</span>
+            <span class="s1">env_file</span><span class="s2">=(</span><span class="s1">_env_file </span><span class="s0">if </span><span class="s1">_env_file </span><span class="s2">!= </span><span class="s1">env_file_sentinel </span><span class="s0">else </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">env_file</span><span class="s2">),</span>
+            <span class="s1">env_file_encoding</span><span class="s2">=(</span>
+                <span class="s1">_env_file_encoding </span><span class="s0">if </span><span class="s1">_env_file_encoding </span><span class="s0">is not None else </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">env_file_encoding</span>
+            <span class="s2">),</span>
+            <span class="s1">env_nested_delimiter</span><span class="s2">=(</span>
+                <span class="s1">_env_nested_delimiter </span><span class="s0">if </span><span class="s1">_env_nested_delimiter </span><span class="s0">is not None else </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">env_nested_delimiter</span>
+            <span class="s2">),</span>
+            <span class="s1">env_prefix_len</span><span class="s2">=</span><span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">env_prefix</span><span class="s2">),</span>
+        <span class="s2">)</span>
+        <span class="s1">file_secret_settings </span><span class="s2">= </span><span class="s1">SecretsSettingsSource</span><span class="s2">(</span><span class="s1">secrets_dir</span><span class="s2">=</span><span class="s1">_secrets_dir </span><span class="s0">or </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">secrets_dir</span><span class="s2">)</span>
+        <span class="s5"># Provide a hook to set built-in sources priority and add / remove sources</span>
+        <span class="s1">sources </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">customise_sources</span><span class="s2">(</span>
+            <span class="s1">init_settings</span><span class="s2">=</span><span class="s1">init_settings</span><span class="s2">, </span><span class="s1">env_settings</span><span class="s2">=</span><span class="s1">env_settings</span><span class="s2">, </span><span class="s1">file_secret_settings</span><span class="s2">=</span><span class="s1">file_secret_settings</span>
+        <span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">sources</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">deep_update</span><span class="s2">(*</span><span class="s1">reversed</span><span class="s2">([</span><span class="s1">source</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s0">for </span><span class="s1">source </span><span class="s0">in </span><span class="s1">sources</span><span class="s2">]))</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s5"># no one should mean to do this, but I think returning an empty dict is marginally preferable</span>
+            <span class="s5"># to an informative error and much better than a confusing error</span>
+            <span class="s0">return </span><span class="s2">{}</span>
+
+    <span class="s0">class </span><span class="s1">Config</span><span class="s2">(</span><span class="s1">BaseConfig</span><span class="s2">):</span>
+        <span class="s1">env_prefix</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s3">''</span>
+        <span class="s1">env_file</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">DotenvType</span><span class="s2">] = </span><span class="s0">None</span>
+        <span class="s1">env_file_encoding</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = </span><span class="s0">None</span>
+        <span class="s1">env_nested_delimiter</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = </span><span class="s0">None</span>
+        <span class="s1">secrets_dir</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">StrPath</span><span class="s2">] = </span><span class="s0">None</span>
+        <span class="s1">validate_all</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span>
+        <span class="s1">extra</span><span class="s2">: </span><span class="s1">Extra </span><span class="s2">= </span><span class="s1">Extra</span><span class="s2">.</span><span class="s1">forbid</span>
+        <span class="s1">arbitrary_types_allowed</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span>
+        <span class="s1">case_sensitive</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span>
+
+        <span class="s2">@</span><span class="s1">classmethod</span>
+        <span class="s0">def </span><span class="s1">prepare_field</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, </span><span class="s1">field</span><span class="s2">: </span><span class="s1">ModelField</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s1">env_names</span><span class="s2">: </span><span class="s1">Union</span><span class="s2">[</span><span class="s1">List</span><span class="s2">[</span><span class="s1">str</span><span class="s2">], </span><span class="s1">AbstractSet</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]]</span>
+            <span class="s1">field_info_from_config </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">get_field_info</span><span class="s2">(</span><span class="s1">field</span><span class="s2">.</span><span class="s1">name</span><span class="s2">)</span>
+
+            <span class="s1">env </span><span class="s2">= </span><span class="s1">field_info_from_config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'env'</span><span class="s2">) </span><span class="s0">or </span><span class="s1">field</span><span class="s2">.</span><span class="s1">field_info</span><span class="s2">.</span><span class="s1">extra</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">'env'</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">env </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s0">if </span><span class="s1">field</span><span class="s2">.</span><span class="s1">has_alias</span><span class="s2">:</span>
+                    <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+                        <span class="s3">'aliases are no longer used by BaseSettings to define which environment variables to read. '</span>
+                        <span class="s3">'Instead use the &quot;env&quot; field setting. '</span>
+                        <span class="s3">'See https://pydantic-docs.helpmanual.io/usage/settings/#environment-variable-names'</span><span class="s2">,</span>
+                        <span class="s1">FutureWarning</span><span class="s2">,</span>
+                    <span class="s2">)</span>
+                <span class="s1">env_names </span><span class="s2">= {</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">env_prefix </span><span class="s2">+ </span><span class="s1">field</span><span class="s2">.</span><span class="s1">name</span><span class="s2">}</span>
+            <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">env</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+                <span class="s1">env_names </span><span class="s2">= {</span><span class="s1">env</span><span class="s2">}</span>
+            <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">env</span><span class="s2">, (</span><span class="s1">set</span><span class="s2">, </span><span class="s1">frozenset</span><span class="s2">)):</span>
+                <span class="s1">env_names </span><span class="s2">= </span><span class="s1">env</span>
+            <span class="s0">elif </span><span class="s1">sequence_like</span><span class="s2">(</span><span class="s1">env</span><span class="s2">):</span>
+                <span class="s1">env_names </span><span class="s2">= </span><span class="s1">list</span><span class="s2">(</span><span class="s1">env</span><span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span><span class="s3">f'invalid field env: </span><span class="s0">{</span><span class="s1">env</span><span class="s0">!r} </span><span class="s3">(</span><span class="s0">{</span><span class="s1">display_as_type</span><span class="s2">(</span><span class="s1">env</span><span class="s2">)</span><span class="s0">}</span><span class="s3">); should be string, list or set'</span><span class="s2">)</span>
+
+            <span class="s0">if not </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">case_sensitive</span><span class="s2">:</span>
+                <span class="s1">env_names </span><span class="s2">= </span><span class="s1">env_names</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">(</span><span class="s1">n</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">() </span><span class="s0">for </span><span class="s1">n </span><span class="s0">in </span><span class="s1">env_names</span><span class="s2">)</span>
+            <span class="s1">field</span><span class="s2">.</span><span class="s1">field_info</span><span class="s2">.</span><span class="s1">extra</span><span class="s2">[</span><span class="s3">'env_names'</span><span class="s2">] = </span><span class="s1">env_names</span>
+
+        <span class="s2">@</span><span class="s1">classmethod</span>
+        <span class="s0">def </span><span class="s1">customise_sources</span><span class="s2">(</span>
+            <span class="s1">cls</span><span class="s2">,</span>
+            <span class="s1">init_settings</span><span class="s2">: </span><span class="s1">SettingsSourceCallable</span><span class="s2">,</span>
+            <span class="s1">env_settings</span><span class="s2">: </span><span class="s1">SettingsSourceCallable</span><span class="s2">,</span>
+            <span class="s1">file_secret_settings</span><span class="s2">: </span><span class="s1">SettingsSourceCallable</span><span class="s2">,</span>
+        <span class="s2">) </span><span class="s1">-&gt; Tuple</span><span class="s2">[</span><span class="s1">SettingsSourceCallable</span><span class="s2">, ...]:</span>
+            <span class="s0">return </span><span class="s1">init_settings</span><span class="s2">, </span><span class="s1">env_settings</span><span class="s2">, </span><span class="s1">file_secret_settings</span>
+
+        <span class="s2">@</span><span class="s1">classmethod</span>
+        <span class="s0">def </span><span class="s1">parse_env_var</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, </span><span class="s1">field_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">raw_val</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">json_loads</span><span class="s2">(</span><span class="s1">raw_val</span><span class="s2">)</span>
+
+    <span class="s5"># populated by the metaclass using the Config class defined above, annotated here to help IDEs only</span>
+    <span class="s1">__config__</span><span class="s2">: </span><span class="s1">ClassVar</span><span class="s2">[</span><span class="s1">Type</span><span class="s2">[</span><span class="s1">Config</span><span class="s2">]]</span>
+
+
+<span class="s0">class </span><span class="s1">InitSettingsSource</span><span class="s2">:</span>
+    <span class="s1">__slots__ </span><span class="s2">= (</span><span class="s3">'init_kwargs'</span><span class="s2">,)</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">init_kwargs</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]):</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">init_kwargs </span><span class="s2">= </span><span class="s1">init_kwargs</span>
+
+    <span class="s0">def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">settings</span><span class="s2">: </span><span class="s1">BaseSettings</span><span class="s2">) </span><span class="s1">-&gt; Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">init_kwargs</span>
+
+    <span class="s0">def </span><span class="s1">__repr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s3">f'InitSettingsSource(init_kwargs=</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">init_kwargs</span><span class="s0">!r}</span><span class="s3">)'</span>
+
+
+<span class="s0">class </span><span class="s1">EnvSettingsSource</span><span class="s2">:</span>
+    <span class="s1">__slots__ </span><span class="s2">= (</span><span class="s3">'env_file'</span><span class="s2">, </span><span class="s3">'env_file_encoding'</span><span class="s2">, </span><span class="s3">'env_nested_delimiter'</span><span class="s2">, </span><span class="s3">'env_prefix_len'</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">env_file</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">DotenvType</span><span class="s2">],</span>
+        <span class="s1">env_file_encoding</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">],</span>
+        <span class="s1">env_nested_delimiter</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">env_prefix_len</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s6">0</span><span class="s2">,</span>
+    <span class="s2">):</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">env_file</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">DotenvType</span><span class="s2">] = </span><span class="s1">env_file</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">env_file_encoding</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = </span><span class="s1">env_file_encoding</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">env_nested_delimiter</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = </span><span class="s1">env_nested_delimiter</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">env_prefix_len</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s1">env_prefix_len</span>
+
+    <span class="s0">def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">settings</span><span class="s2">: </span><span class="s1">BaseSettings</span><span class="s2">) </span><span class="s1">-&gt; Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]:  </span><span class="s5"># noqa C901</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Build environment variables suitable for passing to the Model. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">d</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] = {}</span>
+
+        <span class="s0">if </span><span class="s1">settings</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">case_sensitive</span><span class="s2">:</span>
+            <span class="s1">env_vars</span><span class="s2">: </span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]] = </span><span class="s1">os</span><span class="s2">.</span><span class="s1">environ</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">env_vars </span><span class="s2">= {</span><span class="s1">k</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">(): </span><span class="s1">v </span><span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">os</span><span class="s2">.</span><span class="s1">environ</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()}</span>
+
+        <span class="s1">dotenv_vars </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_read_env_files</span><span class="s2">(</span><span class="s1">settings</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">case_sensitive</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">dotenv_vars</span><span class="s2">:</span>
+            <span class="s1">env_vars </span><span class="s2">= {**</span><span class="s1">dotenv_vars</span><span class="s2">, **</span><span class="s1">env_vars</span><span class="s2">}</span>
+
+        <span class="s0">for </span><span class="s1">field </span><span class="s0">in </span><span class="s1">settings</span><span class="s2">.</span><span class="s1">__fields__</span><span class="s2">.</span><span class="s1">values</span><span class="s2">():</span>
+            <span class="s1">env_val</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = </span><span class="s0">None</span>
+            <span class="s0">for </span><span class="s1">env_name </span><span class="s0">in </span><span class="s1">field</span><span class="s2">.</span><span class="s1">field_info</span><span class="s2">.</span><span class="s1">extra</span><span class="s2">[</span><span class="s3">'env_names'</span><span class="s2">]:</span>
+                <span class="s1">env_val </span><span class="s2">= </span><span class="s1">env_vars</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">env_name</span><span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">env_val </span><span class="s0">is not None</span><span class="s2">:</span>
+                    <span class="s0">break</span>
+
+            <span class="s1">is_complex</span><span class="s2">, </span><span class="s1">allow_parse_failure </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">field_is_complex</span><span class="s2">(</span><span class="s1">field</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">is_complex</span><span class="s2">:</span>
+                <span class="s0">if </span><span class="s1">env_val </span><span class="s0">is None</span><span class="s2">:</span>
+                    <span class="s5"># field is complex but no value found so far, try explode_env_vars</span>
+                    <span class="s1">env_val_built </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">explode_env_vars</span><span class="s2">(</span><span class="s1">field</span><span class="s2">, </span><span class="s1">env_vars</span><span class="s2">)</span>
+                    <span class="s0">if </span><span class="s1">env_val_built</span><span class="s2">:</span>
+                        <span class="s1">d</span><span class="s2">[</span><span class="s1">field</span><span class="s2">.</span><span class="s1">alias</span><span class="s2">] = </span><span class="s1">env_val_built</span>
+                <span class="s0">else</span><span class="s2">:</span>
+                    <span class="s5"># field is complex and there's a value, decode that as JSON, then add explode_env_vars</span>
+                    <span class="s0">try</span><span class="s2">:</span>
+                        <span class="s1">env_val </span><span class="s2">= </span><span class="s1">settings</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">parse_env_var</span><span class="s2">(</span><span class="s1">field</span><span class="s2">.</span><span class="s1">name</span><span class="s2">, </span><span class="s1">env_val</span><span class="s2">)</span>
+                    <span class="s0">except </span><span class="s1">ValueError </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+                        <span class="s0">if not </span><span class="s1">allow_parse_failure</span><span class="s2">:</span>
+                            <span class="s0">raise </span><span class="s1">SettingsError</span><span class="s2">(</span><span class="s3">f'error parsing env var &quot;</span><span class="s0">{</span><span class="s1">env_name</span><span class="s0">}</span><span class="s3">&quot;'</span><span class="s2">) </span><span class="s0">from </span><span class="s1">e</span>
+
+                    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">env_val</span><span class="s2">, </span><span class="s1">dict</span><span class="s2">):</span>
+                        <span class="s1">d</span><span class="s2">[</span><span class="s1">field</span><span class="s2">.</span><span class="s1">alias</span><span class="s2">] = </span><span class="s1">deep_update</span><span class="s2">(</span><span class="s1">env_val</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">explode_env_vars</span><span class="s2">(</span><span class="s1">field</span><span class="s2">, </span><span class="s1">env_vars</span><span class="s2">))</span>
+                    <span class="s0">else</span><span class="s2">:</span>
+                        <span class="s1">d</span><span class="s2">[</span><span class="s1">field</span><span class="s2">.</span><span class="s1">alias</span><span class="s2">] = </span><span class="s1">env_val</span>
+            <span class="s0">elif </span><span class="s1">env_val </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s5"># simplest case, field is not complex, we only need to add the value if it was found</span>
+                <span class="s1">d</span><span class="s2">[</span><span class="s1">field</span><span class="s2">.</span><span class="s1">alias</span><span class="s2">] = </span><span class="s1">env_val</span>
+
+        <span class="s0">return </span><span class="s1">d</span>
+
+    <span class="s0">def </span><span class="s1">_read_env_files</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">case_sensitive</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">) </span><span class="s1">-&gt; Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]]:</span>
+        <span class="s1">env_files </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">env_file</span>
+        <span class="s0">if </span><span class="s1">env_files </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s2">{}</span>
+
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">env_files</span><span class="s2">, (</span><span class="s1">str</span><span class="s2">, </span><span class="s1">os</span><span class="s2">.</span><span class="s1">PathLike</span><span class="s2">)):</span>
+            <span class="s1">env_files </span><span class="s2">= [</span><span class="s1">env_files</span><span class="s2">]</span>
+
+        <span class="s1">dotenv_vars </span><span class="s2">= {}</span>
+        <span class="s0">for </span><span class="s1">env_file </span><span class="s0">in </span><span class="s1">env_files</span><span class="s2">:</span>
+            <span class="s1">env_path </span><span class="s2">= </span><span class="s1">Path</span><span class="s2">(</span><span class="s1">env_file</span><span class="s2">).</span><span class="s1">expanduser</span><span class="s2">()</span>
+            <span class="s0">if </span><span class="s1">env_path</span><span class="s2">.</span><span class="s1">is_file</span><span class="s2">():</span>
+                <span class="s1">dotenv_vars</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span>
+                    <span class="s1">read_env_file</span><span class="s2">(</span><span class="s1">env_path</span><span class="s2">, </span><span class="s1">encoding</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">env_file_encoding</span><span class="s2">, </span><span class="s1">case_sensitive</span><span class="s2">=</span><span class="s1">case_sensitive</span><span class="s2">)</span>
+                <span class="s2">)</span>
+
+        <span class="s0">return </span><span class="s1">dotenv_vars</span>
+
+    <span class="s0">def </span><span class="s1">field_is_complex</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">field</span><span class="s2">: </span><span class="s1">ModelField</span><span class="s2">) </span><span class="s1">-&gt; Tuple</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">, </span><span class="s1">bool</span><span class="s2">]:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Find out if a field is complex, and if so whether JSON errors should be ignored 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">lenient_issubclass</span><span class="s2">(</span><span class="s1">field</span><span class="s2">.</span><span class="s1">annotation</span><span class="s2">, </span><span class="s1">JsonWrapper</span><span class="s2">):</span>
+            <span class="s0">return False</span><span class="s2">, </span><span class="s0">False</span>
+
+        <span class="s0">if </span><span class="s1">field</span><span class="s2">.</span><span class="s1">is_complex</span><span class="s2">():</span>
+            <span class="s1">allow_parse_failure </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s0">elif </span><span class="s1">is_union</span><span class="s2">(</span><span class="s1">get_origin</span><span class="s2">(</span><span class="s1">field</span><span class="s2">.</span><span class="s1">type_</span><span class="s2">)) </span><span class="s0">and </span><span class="s1">field</span><span class="s2">.</span><span class="s1">sub_fields </span><span class="s0">and </span><span class="s1">any</span><span class="s2">(</span><span class="s1">f</span><span class="s2">.</span><span class="s1">is_complex</span><span class="s2">() </span><span class="s0">for </span><span class="s1">f </span><span class="s0">in </span><span class="s1">field</span><span class="s2">.</span><span class="s1">sub_fields</span><span class="s2">):</span>
+            <span class="s1">allow_parse_failure </span><span class="s2">= </span><span class="s0">True</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">return False</span><span class="s2">, </span><span class="s0">False</span>
+
+        <span class="s0">return True</span><span class="s2">, </span><span class="s1">allow_parse_failure</span>
+
+    <span class="s0">def </span><span class="s1">explode_env_vars</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">field</span><span class="s2">: </span><span class="s1">ModelField</span><span class="s2">, </span><span class="s1">env_vars</span><span class="s2">: </span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]]) </span><span class="s1">-&gt; Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Process env_vars and extract the values of keys containing env_nested_delimiter into nested dictionaries. 
+ 
+        This is applied to a single field, hence filtering by env_var prefix. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">prefixes </span><span class="s2">= [</span><span class="s3">f'</span><span class="s0">{</span><span class="s1">env_name</span><span class="s0">}{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">env_nested_delimiter</span><span class="s0">}</span><span class="s3">' </span><span class="s0">for </span><span class="s1">env_name </span><span class="s0">in </span><span class="s1">field</span><span class="s2">.</span><span class="s1">field_info</span><span class="s2">.</span><span class="s1">extra</span><span class="s2">[</span><span class="s3">'env_names'</span><span class="s2">]]</span>
+        <span class="s1">result</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] = {}</span>
+        <span class="s0">for </span><span class="s1">env_name</span><span class="s2">, </span><span class="s1">env_val </span><span class="s0">in </span><span class="s1">env_vars</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+            <span class="s0">if not </span><span class="s1">any</span><span class="s2">(</span><span class="s1">env_name</span><span class="s2">.</span><span class="s1">startswith</span><span class="s2">(</span><span class="s1">prefix</span><span class="s2">) </span><span class="s0">for </span><span class="s1">prefix </span><span class="s0">in </span><span class="s1">prefixes</span><span class="s2">):</span>
+                <span class="s0">continue</span>
+            <span class="s5"># we remove the prefix before splitting in case the prefix has characters in common with the delimiter</span>
+            <span class="s1">env_name_without_prefix </span><span class="s2">= </span><span class="s1">env_name</span><span class="s2">[</span><span class="s1">self</span><span class="s2">.</span><span class="s1">env_prefix_len </span><span class="s2">:]</span>
+            <span class="s1">_</span><span class="s2">, *</span><span class="s1">keys</span><span class="s2">, </span><span class="s1">last_key </span><span class="s2">= </span><span class="s1">env_name_without_prefix</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">env_nested_delimiter</span><span class="s2">)</span>
+            <span class="s1">env_var </span><span class="s2">= </span><span class="s1">result</span>
+            <span class="s0">for </span><span class="s1">key </span><span class="s0">in </span><span class="s1">keys</span><span class="s2">:</span>
+                <span class="s1">env_var </span><span class="s2">= </span><span class="s1">env_var</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s1">key</span><span class="s2">, {})</span>
+            <span class="s1">env_var</span><span class="s2">[</span><span class="s1">last_key</span><span class="s2">] = </span><span class="s1">env_val</span>
+
+        <span class="s0">return </span><span class="s1">result</span>
+
+    <span class="s0">def </span><span class="s1">__repr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s2">(</span>
+            <span class="s3">f'EnvSettingsSource(env_file=</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">env_file</span><span class="s0">!r}</span><span class="s3">, env_file_encoding=</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">env_file_encoding</span><span class="s0">!r}</span><span class="s3">, '</span>
+            <span class="s3">f'env_nested_delimiter=</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">env_nested_delimiter</span><span class="s0">!r}</span><span class="s3">)'</span>
+        <span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">SecretsSettingsSource</span><span class="s2">:</span>
+    <span class="s1">__slots__ </span><span class="s2">= (</span><span class="s3">'secrets_dir'</span><span class="s2">,)</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">secrets_dir</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">StrPath</span><span class="s2">]):</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">secrets_dir</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">StrPath</span><span class="s2">] = </span><span class="s1">secrets_dir</span>
+
+    <span class="s0">def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">settings</span><span class="s2">: </span><span class="s1">BaseSettings</span><span class="s2">) </span><span class="s1">-&gt; Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]:</span>
+        <span class="s4">&quot;&quot;&quot; 
+        Build fields from &quot;secrets&quot; files. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">secrets</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]] = {}</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">secrets_dir </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">secrets</span>
+
+        <span class="s1">secrets_path </span><span class="s2">= </span><span class="s1">Path</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">secrets_dir</span><span class="s2">).</span><span class="s1">expanduser</span><span class="s2">()</span>
+
+        <span class="s0">if not </span><span class="s1">secrets_path</span><span class="s2">.</span><span class="s1">exists</span><span class="s2">():</span>
+            <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span><span class="s3">f'directory &quot;</span><span class="s0">{</span><span class="s1">secrets_path</span><span class="s0">}</span><span class="s3">&quot; does not exist'</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">secrets</span>
+
+        <span class="s0">if not </span><span class="s1">secrets_path</span><span class="s2">.</span><span class="s1">is_dir</span><span class="s2">():</span>
+            <span class="s0">raise </span><span class="s1">SettingsError</span><span class="s2">(</span><span class="s3">f'secrets_dir must reference a directory, not a </span><span class="s0">{</span><span class="s1">path_type</span><span class="s2">(</span><span class="s1">secrets_path</span><span class="s2">)</span><span class="s0">}</span><span class="s3">'</span><span class="s2">)</span>
+
+        <span class="s0">for </span><span class="s1">field </span><span class="s0">in </span><span class="s1">settings</span><span class="s2">.</span><span class="s1">__fields__</span><span class="s2">.</span><span class="s1">values</span><span class="s2">():</span>
+            <span class="s0">for </span><span class="s1">env_name </span><span class="s0">in </span><span class="s1">field</span><span class="s2">.</span><span class="s1">field_info</span><span class="s2">.</span><span class="s1">extra</span><span class="s2">[</span><span class="s3">'env_names'</span><span class="s2">]:</span>
+                <span class="s1">path </span><span class="s2">= </span><span class="s1">find_case_path</span><span class="s2">(</span><span class="s1">secrets_path</span><span class="s2">, </span><span class="s1">env_name</span><span class="s2">, </span><span class="s1">settings</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">case_sensitive</span><span class="s2">)</span>
+                <span class="s0">if not </span><span class="s1">path</span><span class="s2">:</span>
+                    <span class="s5"># path does not exist, we currently don't return a warning for this</span>
+                    <span class="s0">continue</span>
+
+                <span class="s0">if </span><span class="s1">path</span><span class="s2">.</span><span class="s1">is_file</span><span class="s2">():</span>
+                    <span class="s1">secret_value </span><span class="s2">= </span><span class="s1">path</span><span class="s2">.</span><span class="s1">read_text</span><span class="s2">().</span><span class="s1">strip</span><span class="s2">()</span>
+                    <span class="s0">if </span><span class="s1">field</span><span class="s2">.</span><span class="s1">is_complex</span><span class="s2">():</span>
+                        <span class="s0">try</span><span class="s2">:</span>
+                            <span class="s1">secret_value </span><span class="s2">= </span><span class="s1">settings</span><span class="s2">.</span><span class="s1">__config__</span><span class="s2">.</span><span class="s1">parse_env_var</span><span class="s2">(</span><span class="s1">field</span><span class="s2">.</span><span class="s1">name</span><span class="s2">, </span><span class="s1">secret_value</span><span class="s2">)</span>
+                        <span class="s0">except </span><span class="s1">ValueError </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+                            <span class="s0">raise </span><span class="s1">SettingsError</span><span class="s2">(</span><span class="s3">f'error parsing env var &quot;</span><span class="s0">{</span><span class="s1">env_name</span><span class="s0">}</span><span class="s3">&quot;'</span><span class="s2">) </span><span class="s0">from </span><span class="s1">e</span>
+
+                    <span class="s1">secrets</span><span class="s2">[</span><span class="s1">field</span><span class="s2">.</span><span class="s1">alias</span><span class="s2">] = </span><span class="s1">secret_value</span>
+                <span class="s0">else</span><span class="s2">:</span>
+                    <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+                        <span class="s3">f'attempted to load secret file &quot;</span><span class="s0">{</span><span class="s1">path</span><span class="s0">}</span><span class="s3">&quot; but found a </span><span class="s0">{</span><span class="s1">path_type</span><span class="s2">(</span><span class="s1">path</span><span class="s2">)</span><span class="s0">} </span><span class="s3">instead.'</span><span class="s2">,</span>
+                        <span class="s1">stacklevel</span><span class="s2">=</span><span class="s6">4</span><span class="s2">,</span>
+                    <span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">secrets</span>
+
+    <span class="s0">def </span><span class="s1">__repr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s3">f'SecretsSettingsSource(secrets_dir=</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">secrets_dir</span><span class="s0">!r}</span><span class="s3">)'</span>
+
+
+<span class="s0">def </span><span class="s1">read_env_file</span><span class="s2">(</span>
+    <span class="s1">file_path</span><span class="s2">: </span><span class="s1">StrPath</span><span class="s2">, *, </span><span class="s1">encoding</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s0">None</span><span class="s2">, </span><span class="s1">case_sensitive</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span>
+<span class="s2">) </span><span class="s1">-&gt; Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]]:</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">from </span><span class="s1">dotenv </span><span class="s0">import </span><span class="s1">dotenv_values</span>
+    <span class="s0">except </span><span class="s1">ImportError </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">ImportError</span><span class="s2">(</span><span class="s3">'python-dotenv is not installed, run `pip install pydantic[dotenv]`'</span><span class="s2">) </span><span class="s0">from </span><span class="s1">e</span>
+
+    <span class="s1">file_vars</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]] = </span><span class="s1">dotenv_values</span><span class="s2">(</span><span class="s1">file_path</span><span class="s2">, </span><span class="s1">encoding</span><span class="s2">=</span><span class="s1">encoding </span><span class="s0">or </span><span class="s3">'utf8'</span><span class="s2">)</span>
+    <span class="s0">if not </span><span class="s1">case_sensitive</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s2">{</span><span class="s1">k</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">(): </span><span class="s1">v </span><span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">file_vars</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()}</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">file_vars</span>
+
+
+<span class="s0">def </span><span class="s1">find_case_path</span><span class="s2">(</span><span class="s1">dir_path</span><span class="s2">: </span><span class="s1">Path</span><span class="s2">, </span><span class="s1">file_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">case_sensitive</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">) </span><span class="s1">-&gt; Optional</span><span class="s2">[</span><span class="s1">Path</span><span class="s2">]:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Find a file within path's directory matching filename, optionally ignoring case. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">for </span><span class="s1">f </span><span class="s0">in </span><span class="s1">dir_path</span><span class="s2">.</span><span class="s1">iterdir</span><span class="s2">():</span>
+        <span class="s0">if </span><span class="s1">f</span><span class="s2">.</span><span class="s1">name </span><span class="s2">== </span><span class="s1">file_name</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">f</span>
+        <span class="s0">elif not </span><span class="s1">case_sensitive </span><span class="s0">and </span><span class="s1">f</span><span class="s2">.</span><span class="s1">name</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">() == </span><span class="s1">file_name</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">():</span>
+            <span class="s0">return </span><span class="s1">f</span>
+    <span class="s0">return None</span>
+</pre>
+</body>
+</html>

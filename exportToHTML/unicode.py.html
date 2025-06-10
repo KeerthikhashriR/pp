@@ -1,0 +1,384 @@
+<html>
+<head>
+<title>unicode.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #2aacb8;}
+.s6 { color: #5f826b; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+unicode.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># unicode.py</span>
+
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">from </span><span class="s1">itertools </span><span class="s2">import </span><span class="s1">filterfalse</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">List</span><span class="s3">, </span><span class="s1">Tuple</span><span class="s3">, </span><span class="s1">Union</span>
+
+
+<span class="s2">class </span><span class="s1">_lazyclassproperty</span><span class="s3">:</span>
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">fn</span><span class="s3">):</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">fn </span><span class="s3">= </span><span class="s1">fn</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__doc__ </span><span class="s3">= </span><span class="s1">fn</span><span class="s3">.</span><span class="s1">__doc__</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__name__ </span><span class="s3">= </span><span class="s1">fn</span><span class="s3">.</span><span class="s1">__name__</span>
+
+    <span class="s2">def </span><span class="s1">__get__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">obj</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">):</span>
+        <span class="s2">if </span><span class="s1">cls </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s1">cls </span><span class="s3">= </span><span class="s1">type</span><span class="s3">(</span><span class="s1">obj</span><span class="s3">)</span>
+        <span class="s2">if not </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s4">&quot;_intern&quot;</span><span class="s3">) </span><span class="s2">or </span><span class="s1">any</span><span class="s3">(</span>
+            <span class="s1">cls</span><span class="s3">.</span><span class="s1">_intern </span><span class="s2">is </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">superclass</span><span class="s3">, </span><span class="s4">&quot;_intern&quot;</span><span class="s3">, [])</span>
+            <span class="s2">for </span><span class="s1">superclass </span><span class="s2">in </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__mro__</span><span class="s3">[</span><span class="s5">1</span><span class="s3">:]</span>
+        <span class="s3">):</span>
+            <span class="s1">cls</span><span class="s3">.</span><span class="s1">_intern </span><span class="s3">= {}</span>
+        <span class="s1">attrname </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fn</span><span class="s3">.</span><span class="s1">__name__</span>
+        <span class="s2">if </span><span class="s1">attrname </span><span class="s2">not in </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">_intern</span><span class="s3">:</span>
+            <span class="s1">cls</span><span class="s3">.</span><span class="s1">_intern</span><span class="s3">[</span><span class="s1">attrname</span><span class="s3">] = </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fn</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">_intern</span><span class="s3">[</span><span class="s1">attrname</span><span class="s3">]</span>
+
+
+<span class="s1">UnicodeRangeList </span><span class="s3">= </span><span class="s1">List</span><span class="s3">[</span><span class="s1">Union</span><span class="s3">[</span><span class="s1">Tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">], </span><span class="s1">Tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">]]]</span>
+
+
+<span class="s2">class </span><span class="s1">unicode_set</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    A set of Unicode characters, for language-specific strings for 
+    ``alphas``, ``nums``, ``alphanums``, and ``printables``. 
+    A unicode_set is defined by a list of ranges in the Unicode character 
+    set, in a class attribute ``_ranges``. Ranges can be specified using 
+    2-tuples or a 1-tuple, such as:: 
+ 
+        _ranges = [ 
+            (0x0020, 0x007e), 
+            (0x00a0, 0x00ff), 
+            (0x0100,), 
+            ] 
+ 
+    Ranges are left- and right-inclusive. A 1-tuple of (x,) is treated as (x, x). 
+ 
+    A unicode set can also be defined using multiple inheritance of other unicode sets:: 
+ 
+        class CJK(Chinese, Japanese, Korean): 
+            pass 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">_ranges</span><span class="s3">: </span><span class="s1">UnicodeRangeList </span><span class="s3">= []</span>
+
+    <span class="s3">@</span><span class="s1">_lazyclassproperty</span>
+    <span class="s2">def </span><span class="s1">_chars_for_ranges</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">):</span>
+        <span class="s1">ret </span><span class="s3">= []</span>
+        <span class="s2">for </span><span class="s1">cc </span><span class="s2">in </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__mro__</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">cc </span><span class="s2">is </span><span class="s1">unicode_set</span><span class="s3">:</span>
+                <span class="s2">break</span>
+            <span class="s2">for </span><span class="s1">rr </span><span class="s2">in </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">cc</span><span class="s3">, </span><span class="s4">&quot;_ranges&quot;</span><span class="s3">, ()):</span>
+                <span class="s1">ret</span><span class="s3">.</span><span class="s1">extend</span><span class="s3">(</span><span class="s1">range</span><span class="s3">(</span><span class="s1">rr</span><span class="s3">[</span><span class="s5">0</span><span class="s3">], </span><span class="s1">rr</span><span class="s3">[-</span><span class="s5">1</span><span class="s3">] + </span><span class="s5">1</span><span class="s3">))</span>
+        <span class="s2">return </span><span class="s3">[</span><span class="s1">chr</span><span class="s3">(</span><span class="s1">c</span><span class="s3">) </span><span class="s2">for </span><span class="s1">c </span><span class="s2">in </span><span class="s1">sorted</span><span class="s3">(</span><span class="s1">set</span><span class="s3">(</span><span class="s1">ret</span><span class="s3">))]</span>
+
+    <span class="s3">@</span><span class="s1">_lazyclassproperty</span>
+    <span class="s2">def </span><span class="s1">printables</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;all non-whitespace characters in this range&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s4">&quot;&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">filterfalse</span><span class="s3">(</span><span class="s1">str</span><span class="s3">.</span><span class="s1">isspace</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">_chars_for_ranges</span><span class="s3">))</span>
+
+    <span class="s3">@</span><span class="s1">_lazyclassproperty</span>
+    <span class="s2">def </span><span class="s1">alphas</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;all alphabetic characters in this range&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s4">&quot;&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">filter</span><span class="s3">(</span><span class="s1">str</span><span class="s3">.</span><span class="s1">isalpha</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">_chars_for_ranges</span><span class="s3">))</span>
+
+    <span class="s3">@</span><span class="s1">_lazyclassproperty</span>
+    <span class="s2">def </span><span class="s1">nums</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;all numeric digit characters in this range&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s4">&quot;&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">filter</span><span class="s3">(</span><span class="s1">str</span><span class="s3">.</span><span class="s1">isdigit</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">_chars_for_ranges</span><span class="s3">))</span>
+
+    <span class="s3">@</span><span class="s1">_lazyclassproperty</span>
+    <span class="s2">def </span><span class="s1">alphanums</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;all alphanumeric characters in this range&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">alphas </span><span class="s3">+ </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">nums</span>
+
+    <span class="s3">@</span><span class="s1">_lazyclassproperty</span>
+    <span class="s2">def </span><span class="s1">identchars</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;all characters in this range that are valid identifier characters, plus underscore '_'&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s4">&quot;&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span>
+            <span class="s1">sorted</span><span class="s3">(</span>
+                <span class="s1">set</span><span class="s3">(</span>
+                    <span class="s4">&quot;&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">filter</span><span class="s3">(</span><span class="s1">str</span><span class="s3">.</span><span class="s1">isidentifier</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">_chars_for_ranges</span><span class="s3">))</span>
+                    <span class="s3">+ </span><span class="s4">&quot;ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzªµº&quot;</span>
+                    <span class="s3">+ </span><span class="s4">&quot;ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõöøùúûüýþÿ&quot;</span>
+                    <span class="s3">+ </span><span class="s4">&quot;_&quot;</span>
+                <span class="s3">)</span>
+            <span class="s3">)</span>
+        <span class="s3">)</span>
+
+    <span class="s3">@</span><span class="s1">_lazyclassproperty</span>
+    <span class="s2">def </span><span class="s1">identbodychars</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot; 
+        all characters in this range that are valid identifier body characters, 
+        plus the digits 0-9, and · (Unicode MIDDLE DOT) 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s4">&quot;&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span>
+            <span class="s1">sorted</span><span class="s3">(</span>
+                <span class="s1">set</span><span class="s3">(</span>
+                    <span class="s1">cls</span><span class="s3">.</span><span class="s1">identchars</span>
+                    <span class="s3">+ </span><span class="s4">&quot;0123456789·&quot;</span>
+                    <span class="s3">+ </span><span class="s4">&quot;&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span>
+                        <span class="s3">[</span><span class="s1">c </span><span class="s2">for </span><span class="s1">c </span><span class="s2">in </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">_chars_for_ranges </span><span class="s2">if </span><span class="s3">(</span><span class="s4">&quot;_&quot; </span><span class="s3">+ </span><span class="s1">c</span><span class="s3">).</span><span class="s1">isidentifier</span><span class="s3">()]</span>
+                    <span class="s3">)</span>
+                <span class="s3">)</span>
+            <span class="s3">)</span>
+        <span class="s3">)</span>
+
+    <span class="s3">@</span><span class="s1">_lazyclassproperty</span>
+    <span class="s2">def </span><span class="s1">identifier</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot; 
+        a pyparsing Word expression for an identifier using this range's definitions for 
+        identchars and identbodychars 
+        &quot;&quot;&quot;</span>
+        <span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pyparsing </span><span class="s2">import </span><span class="s1">Word</span>
+
+        <span class="s2">return </span><span class="s1">Word</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">.</span><span class="s1">identchars</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">identbodychars</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">pyparsing_unicode</span><span class="s3">(</span><span class="s1">unicode_set</span><span class="s3">):</span>
+    <span class="s6">&quot;&quot;&quot; 
+    A namespace class for defining common language unicode_sets. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0"># fmt: off</span>
+
+    <span class="s0"># define ranges in language character sets</span>
+    <span class="s1">_ranges</span><span class="s3">: </span><span class="s1">UnicodeRangeList </span><span class="s3">= [</span>
+        <span class="s3">(</span><span class="s5">0x0020</span><span class="s3">, </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">maxunicode</span><span class="s3">),</span>
+    <span class="s3">]</span>
+
+    <span class="s2">class </span><span class="s1">BasicMultilingualPlane</span><span class="s3">(</span><span class="s1">unicode_set</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;Unicode set for the Basic Multilingual Plane&quot;&quot;&quot;</span>
+        <span class="s1">_ranges</span><span class="s3">: </span><span class="s1">UnicodeRangeList </span><span class="s3">= [</span>
+            <span class="s3">(</span><span class="s5">0x0020</span><span class="s3">, </span><span class="s5">0xFFFF</span><span class="s3">),</span>
+        <span class="s3">]</span>
+
+    <span class="s2">class </span><span class="s1">Latin1</span><span class="s3">(</span><span class="s1">unicode_set</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;Unicode set for Latin-1 Unicode Character Range&quot;&quot;&quot;</span>
+        <span class="s1">_ranges</span><span class="s3">: </span><span class="s1">UnicodeRangeList </span><span class="s3">= [</span>
+            <span class="s3">(</span><span class="s5">0x0020</span><span class="s3">, </span><span class="s5">0x007E</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x00A0</span><span class="s3">, </span><span class="s5">0x00FF</span><span class="s3">),</span>
+        <span class="s3">]</span>
+
+    <span class="s2">class </span><span class="s1">LatinA</span><span class="s3">(</span><span class="s1">unicode_set</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;Unicode set for Latin-A Unicode Character Range&quot;&quot;&quot;</span>
+        <span class="s1">_ranges</span><span class="s3">: </span><span class="s1">UnicodeRangeList </span><span class="s3">= [</span>
+            <span class="s3">(</span><span class="s5">0x0100</span><span class="s3">, </span><span class="s5">0x017F</span><span class="s3">),</span>
+        <span class="s3">]</span>
+
+    <span class="s2">class </span><span class="s1">LatinB</span><span class="s3">(</span><span class="s1">unicode_set</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;Unicode set for Latin-B Unicode Character Range&quot;&quot;&quot;</span>
+        <span class="s1">_ranges</span><span class="s3">: </span><span class="s1">UnicodeRangeList </span><span class="s3">= [</span>
+            <span class="s3">(</span><span class="s5">0x0180</span><span class="s3">, </span><span class="s5">0x024F</span><span class="s3">),</span>
+        <span class="s3">]</span>
+
+    <span class="s2">class </span><span class="s1">Greek</span><span class="s3">(</span><span class="s1">unicode_set</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;Unicode set for Greek Unicode Character Ranges&quot;&quot;&quot;</span>
+        <span class="s1">_ranges</span><span class="s3">: </span><span class="s1">UnicodeRangeList </span><span class="s3">= [</span>
+            <span class="s3">(</span><span class="s5">0x0342</span><span class="s3">, </span><span class="s5">0x0345</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x0370</span><span class="s3">, </span><span class="s5">0x0377</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x037A</span><span class="s3">, </span><span class="s5">0x037F</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x0384</span><span class="s3">, </span><span class="s5">0x038A</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x038C</span><span class="s3">,),</span>
+            <span class="s3">(</span><span class="s5">0x038E</span><span class="s3">, </span><span class="s5">0x03A1</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x03A3</span><span class="s3">, </span><span class="s5">0x03E1</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x03F0</span><span class="s3">, </span><span class="s5">0x03FF</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1D26</span><span class="s3">, </span><span class="s5">0x1D2A</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1D5E</span><span class="s3">,),</span>
+            <span class="s3">(</span><span class="s5">0x1D60</span><span class="s3">,),</span>
+            <span class="s3">(</span><span class="s5">0x1D66</span><span class="s3">, </span><span class="s5">0x1D6A</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1F00</span><span class="s3">, </span><span class="s5">0x1F15</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1F18</span><span class="s3">, </span><span class="s5">0x1F1D</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1F20</span><span class="s3">, </span><span class="s5">0x1F45</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1F48</span><span class="s3">, </span><span class="s5">0x1F4D</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1F50</span><span class="s3">, </span><span class="s5">0x1F57</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1F59</span><span class="s3">,),</span>
+            <span class="s3">(</span><span class="s5">0x1F5B</span><span class="s3">,),</span>
+            <span class="s3">(</span><span class="s5">0x1F5D</span><span class="s3">,),</span>
+            <span class="s3">(</span><span class="s5">0x1F5F</span><span class="s3">, </span><span class="s5">0x1F7D</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1F80</span><span class="s3">, </span><span class="s5">0x1FB4</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1FB6</span><span class="s3">, </span><span class="s5">0x1FC4</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1FC6</span><span class="s3">, </span><span class="s5">0x1FD3</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1FD6</span><span class="s3">, </span><span class="s5">0x1FDB</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1FDD</span><span class="s3">, </span><span class="s5">0x1FEF</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1FF2</span><span class="s3">, </span><span class="s5">0x1FF4</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1FF6</span><span class="s3">, </span><span class="s5">0x1FFE</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x2129</span><span class="s3">,),</span>
+            <span class="s3">(</span><span class="s5">0x2719</span><span class="s3">, </span><span class="s5">0x271A</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xAB65</span><span class="s3">,),</span>
+            <span class="s3">(</span><span class="s5">0x10140</span><span class="s3">, </span><span class="s5">0x1018D</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x101A0</span><span class="s3">,),</span>
+            <span class="s3">(</span><span class="s5">0x1D200</span><span class="s3">, </span><span class="s5">0x1D245</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1F7A1</span><span class="s3">, </span><span class="s5">0x1F7A7</span><span class="s3">),</span>
+        <span class="s3">]</span>
+
+    <span class="s2">class </span><span class="s1">Cyrillic</span><span class="s3">(</span><span class="s1">unicode_set</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;Unicode set for Cyrillic Unicode Character Range&quot;&quot;&quot;</span>
+        <span class="s1">_ranges</span><span class="s3">: </span><span class="s1">UnicodeRangeList </span><span class="s3">= [</span>
+            <span class="s3">(</span><span class="s5">0x0400</span><span class="s3">, </span><span class="s5">0x052F</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1C80</span><span class="s3">, </span><span class="s5">0x1C88</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1D2B</span><span class="s3">,),</span>
+            <span class="s3">(</span><span class="s5">0x1D78</span><span class="s3">,),</span>
+            <span class="s3">(</span><span class="s5">0x2DE0</span><span class="s3">, </span><span class="s5">0x2DFF</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xA640</span><span class="s3">, </span><span class="s5">0xA672</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xA674</span><span class="s3">, </span><span class="s5">0xA69F</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xFE2E</span><span class="s3">, </span><span class="s5">0xFE2F</span><span class="s3">),</span>
+        <span class="s3">]</span>
+
+    <span class="s2">class </span><span class="s1">Chinese</span><span class="s3">(</span><span class="s1">unicode_set</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;Unicode set for Chinese Unicode Character Range&quot;&quot;&quot;</span>
+        <span class="s1">_ranges</span><span class="s3">: </span><span class="s1">UnicodeRangeList </span><span class="s3">= [</span>
+            <span class="s3">(</span><span class="s5">0x2E80</span><span class="s3">, </span><span class="s5">0x2E99</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x2E9B</span><span class="s3">, </span><span class="s5">0x2EF3</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x31C0</span><span class="s3">, </span><span class="s5">0x31E3</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x3400</span><span class="s3">, </span><span class="s5">0x4DB5</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x4E00</span><span class="s3">, </span><span class="s5">0x9FEF</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xA700</span><span class="s3">, </span><span class="s5">0xA707</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xF900</span><span class="s3">, </span><span class="s5">0xFA6D</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xFA70</span><span class="s3">, </span><span class="s5">0xFAD9</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x16FE2</span><span class="s3">, </span><span class="s5">0x16FE3</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1F210</span><span class="s3">, </span><span class="s5">0x1F212</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1F214</span><span class="s3">, </span><span class="s5">0x1F23B</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x1F240</span><span class="s3">, </span><span class="s5">0x1F248</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x20000</span><span class="s3">, </span><span class="s5">0x2A6D6</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x2A700</span><span class="s3">, </span><span class="s5">0x2B734</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x2B740</span><span class="s3">, </span><span class="s5">0x2B81D</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x2B820</span><span class="s3">, </span><span class="s5">0x2CEA1</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x2CEB0</span><span class="s3">, </span><span class="s5">0x2EBE0</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x2F800</span><span class="s3">, </span><span class="s5">0x2FA1D</span><span class="s3">),</span>
+        <span class="s3">]</span>
+
+    <span class="s2">class </span><span class="s1">Japanese</span><span class="s3">(</span><span class="s1">unicode_set</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;Unicode set for Japanese Unicode Character Range, combining Kanji, Hiragana, and Katakana ranges&quot;&quot;&quot;</span>
+
+        <span class="s2">class </span><span class="s1">Kanji</span><span class="s3">(</span><span class="s1">unicode_set</span><span class="s3">):</span>
+            <span class="s6">&quot;Unicode set for Kanji Unicode Character Range&quot;</span>
+            <span class="s1">_ranges</span><span class="s3">: </span><span class="s1">UnicodeRangeList </span><span class="s3">= [</span>
+                <span class="s3">(</span><span class="s5">0x4E00</span><span class="s3">, </span><span class="s5">0x9FBF</span><span class="s3">),</span>
+                <span class="s3">(</span><span class="s5">0x3000</span><span class="s3">, </span><span class="s5">0x303F</span><span class="s3">),</span>
+            <span class="s3">]</span>
+
+        <span class="s2">class </span><span class="s1">Hiragana</span><span class="s3">(</span><span class="s1">unicode_set</span><span class="s3">):</span>
+            <span class="s6">&quot;&quot;&quot;Unicode set for Hiragana Unicode Character Range&quot;&quot;&quot;</span>
+            <span class="s1">_ranges</span><span class="s3">: </span><span class="s1">UnicodeRangeList </span><span class="s3">= [</span>
+                <span class="s3">(</span><span class="s5">0x3041</span><span class="s3">, </span><span class="s5">0x3096</span><span class="s3">),</span>
+                <span class="s3">(</span><span class="s5">0x3099</span><span class="s3">, </span><span class="s5">0x30A0</span><span class="s3">),</span>
+                <span class="s3">(</span><span class="s5">0x30FC</span><span class="s3">,),</span>
+                <span class="s3">(</span><span class="s5">0xFF70</span><span class="s3">,),</span>
+                <span class="s3">(</span><span class="s5">0x1B001</span><span class="s3">,),</span>
+                <span class="s3">(</span><span class="s5">0x1B150</span><span class="s3">, </span><span class="s5">0x1B152</span><span class="s3">),</span>
+                <span class="s3">(</span><span class="s5">0x1F200</span><span class="s3">,),</span>
+            <span class="s3">]</span>
+
+        <span class="s2">class </span><span class="s1">Katakana</span><span class="s3">(</span><span class="s1">unicode_set</span><span class="s3">):</span>
+            <span class="s6">&quot;&quot;&quot;Unicode set for Katakana  Unicode Character Range&quot;&quot;&quot;</span>
+            <span class="s1">_ranges</span><span class="s3">: </span><span class="s1">UnicodeRangeList </span><span class="s3">= [</span>
+                <span class="s3">(</span><span class="s5">0x3099</span><span class="s3">, </span><span class="s5">0x309C</span><span class="s3">),</span>
+                <span class="s3">(</span><span class="s5">0x30A0</span><span class="s3">, </span><span class="s5">0x30FF</span><span class="s3">),</span>
+                <span class="s3">(</span><span class="s5">0x31F0</span><span class="s3">, </span><span class="s5">0x31FF</span><span class="s3">),</span>
+                <span class="s3">(</span><span class="s5">0x32D0</span><span class="s3">, </span><span class="s5">0x32FE</span><span class="s3">),</span>
+                <span class="s3">(</span><span class="s5">0xFF65</span><span class="s3">, </span><span class="s5">0xFF9F</span><span class="s3">),</span>
+                <span class="s3">(</span><span class="s5">0x1B000</span><span class="s3">,),</span>
+                <span class="s3">(</span><span class="s5">0x1B164</span><span class="s3">, </span><span class="s5">0x1B167</span><span class="s3">),</span>
+                <span class="s3">(</span><span class="s5">0x1F201</span><span class="s3">, </span><span class="s5">0x1F202</span><span class="s3">),</span>
+                <span class="s3">(</span><span class="s5">0x1F213</span><span class="s3">,),</span>
+            <span class="s3">]</span>
+
+        <span class="s1">漢字 </span><span class="s3">= </span><span class="s1">Kanji</span>
+        <span class="s1">カタカナ </span><span class="s3">= </span><span class="s1">Katakana</span>
+        <span class="s1">ひらがな </span><span class="s3">= </span><span class="s1">Hiragana</span>
+
+        <span class="s1">_ranges </span><span class="s3">= (</span>
+            <span class="s1">Kanji</span><span class="s3">.</span><span class="s1">_ranges</span>
+            <span class="s3">+ </span><span class="s1">Hiragana</span><span class="s3">.</span><span class="s1">_ranges</span>
+            <span class="s3">+ </span><span class="s1">Katakana</span><span class="s3">.</span><span class="s1">_ranges</span>
+        <span class="s3">)</span>
+
+    <span class="s2">class </span><span class="s1">Hangul</span><span class="s3">(</span><span class="s1">unicode_set</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;Unicode set for Hangul (Korean) Unicode Character Range&quot;&quot;&quot;</span>
+        <span class="s1">_ranges</span><span class="s3">: </span><span class="s1">UnicodeRangeList </span><span class="s3">= [</span>
+            <span class="s3">(</span><span class="s5">0x1100</span><span class="s3">, </span><span class="s5">0x11FF</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x302E</span><span class="s3">, </span><span class="s5">0x302F</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x3131</span><span class="s3">, </span><span class="s5">0x318E</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x3200</span><span class="s3">, </span><span class="s5">0x321C</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x3260</span><span class="s3">, </span><span class="s5">0x327B</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x327E</span><span class="s3">,),</span>
+            <span class="s3">(</span><span class="s5">0xA960</span><span class="s3">, </span><span class="s5">0xA97C</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xAC00</span><span class="s3">, </span><span class="s5">0xD7A3</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xD7B0</span><span class="s3">, </span><span class="s5">0xD7C6</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xD7CB</span><span class="s3">, </span><span class="s5">0xD7FB</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xFFA0</span><span class="s3">, </span><span class="s5">0xFFBE</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xFFC2</span><span class="s3">, </span><span class="s5">0xFFC7</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xFFCA</span><span class="s3">, </span><span class="s5">0xFFCF</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xFFD2</span><span class="s3">, </span><span class="s5">0xFFD7</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xFFDA</span><span class="s3">, </span><span class="s5">0xFFDC</span><span class="s3">),</span>
+        <span class="s3">]</span>
+
+    <span class="s1">Korean </span><span class="s3">= </span><span class="s1">Hangul</span>
+
+    <span class="s2">class </span><span class="s1">CJK</span><span class="s3">(</span><span class="s1">Chinese</span><span class="s3">, </span><span class="s1">Japanese</span><span class="s3">, </span><span class="s1">Hangul</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;Unicode set for combined Chinese, Japanese, and Korean (CJK) Unicode Character Range&quot;&quot;&quot;</span>
+
+    <span class="s2">class </span><span class="s1">Thai</span><span class="s3">(</span><span class="s1">unicode_set</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;Unicode set for Thai Unicode Character Range&quot;&quot;&quot;</span>
+        <span class="s1">_ranges</span><span class="s3">: </span><span class="s1">UnicodeRangeList </span><span class="s3">= [</span>
+            <span class="s3">(</span><span class="s5">0x0E01</span><span class="s3">, </span><span class="s5">0x0E3A</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x0E3F</span><span class="s3">, </span><span class="s5">0x0E5B</span><span class="s3">)</span>
+        <span class="s3">]</span>
+
+    <span class="s2">class </span><span class="s1">Arabic</span><span class="s3">(</span><span class="s1">unicode_set</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;Unicode set for Arabic Unicode Character Range&quot;&quot;&quot;</span>
+        <span class="s1">_ranges</span><span class="s3">: </span><span class="s1">UnicodeRangeList </span><span class="s3">= [</span>
+            <span class="s3">(</span><span class="s5">0x0600</span><span class="s3">, </span><span class="s5">0x061B</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x061E</span><span class="s3">, </span><span class="s5">0x06FF</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x0700</span><span class="s3">, </span><span class="s5">0x077F</span><span class="s3">),</span>
+        <span class="s3">]</span>
+
+    <span class="s2">class </span><span class="s1">Hebrew</span><span class="s3">(</span><span class="s1">unicode_set</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;Unicode set for Hebrew Unicode Character Range&quot;&quot;&quot;</span>
+        <span class="s1">_ranges</span><span class="s3">: </span><span class="s1">UnicodeRangeList </span><span class="s3">= [</span>
+            <span class="s3">(</span><span class="s5">0x0591</span><span class="s3">, </span><span class="s5">0x05C7</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x05D0</span><span class="s3">, </span><span class="s5">0x05EA</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0x05EF</span><span class="s3">, </span><span class="s5">0x05F4</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xFB1D</span><span class="s3">, </span><span class="s5">0xFB36</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xFB38</span><span class="s3">, </span><span class="s5">0xFB3C</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xFB3E</span><span class="s3">,),</span>
+            <span class="s3">(</span><span class="s5">0xFB40</span><span class="s3">, </span><span class="s5">0xFB41</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xFB43</span><span class="s3">, </span><span class="s5">0xFB44</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xFB46</span><span class="s3">, </span><span class="s5">0xFB4F</span><span class="s3">),</span>
+        <span class="s3">]</span>
+
+    <span class="s2">class </span><span class="s1">Devanagari</span><span class="s3">(</span><span class="s1">unicode_set</span><span class="s3">):</span>
+        <span class="s6">&quot;&quot;&quot;Unicode set for Devanagari Unicode Character Range&quot;&quot;&quot;</span>
+        <span class="s1">_ranges</span><span class="s3">: </span><span class="s1">UnicodeRangeList </span><span class="s3">= [</span>
+            <span class="s3">(</span><span class="s5">0x0900</span><span class="s3">, </span><span class="s5">0x097F</span><span class="s3">),</span>
+            <span class="s3">(</span><span class="s5">0xA8E0</span><span class="s3">, </span><span class="s5">0xA8FF</span><span class="s3">)</span>
+        <span class="s3">]</span>
+
+    <span class="s1">BMP </span><span class="s3">= </span><span class="s1">BasicMultilingualPlane</span>
+
+    <span class="s0"># add language identifiers using language Unicode</span>
+    <span class="s1">العربية </span><span class="s3">= </span><span class="s1">Arabic</span>
+    <span class="s1">中文 </span><span class="s3">= </span><span class="s1">Chinese</span>
+    <span class="s1">кириллица </span><span class="s3">= </span><span class="s1">Cyrillic</span>
+    <span class="s1">Ελληνικά </span><span class="s3">= </span><span class="s1">Greek</span>
+    <span class="s1">עִברִית </span><span class="s3">= </span><span class="s1">Hebrew</span>
+    <span class="s1">日本語 </span><span class="s3">= </span><span class="s1">Japanese</span>
+    <span class="s1">한국어 </span><span class="s3">= </span><span class="s1">Korean</span>
+    <span class="s1">ไทย </span><span class="s3">= </span><span class="s1">Thai</span>
+    <span class="s1">देवनागरी </span><span class="s3">= </span><span class="s1">Devanagari</span>
+
+    <span class="s0"># fmt: on</span>
+</pre>
+</body>
+</html>

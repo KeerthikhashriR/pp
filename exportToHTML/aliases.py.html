@@ -1,0 +1,157 @@
+<html>
+<head>
+<title>aliases.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+aliases.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;Support for alias configurations.&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">dataclasses</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Callable</span><span class="s3">, </span><span class="s1">Literal</span>
+
+<span class="s2">from </span><span class="s1">pydantic_core </span><span class="s2">import </span><span class="s1">PydanticUndefined</span>
+
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_internal </span><span class="s2">import </span><span class="s1">_internal_dataclass</span>
+
+<span class="s1">__all__ </span><span class="s3">= (</span><span class="s4">'AliasGenerator'</span><span class="s3">, </span><span class="s4">'AliasPath'</span><span class="s3">, </span><span class="s4">'AliasChoices'</span><span class="s3">)</span>
+
+
+<span class="s3">@</span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">_internal_dataclass</span><span class="s3">.</span><span class="s1">slots_true</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">AliasPath</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;!!! abstract &quot;Usage Documentation&quot; 
+        [`AliasPath` and `AliasChoices`](../concepts/alias.md#aliaspath-and-aliaschoices) 
+ 
+    A data class used by `validation_alias` as a convenience to create aliases. 
+ 
+    Attributes: 
+        path: A list of string or integer aliases. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">path</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">int </span><span class="s3">| </span><span class="s1">str</span><span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">first_arg</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">path </span><span class="s3">= [</span><span class="s1">first_arg</span><span class="s3">] + </span><span class="s1">list</span><span class="s3">(</span><span class="s1">args</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">convert_to_aliases</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; list</span><span class="s3">[</span><span class="s1">str </span><span class="s3">| </span><span class="s1">int</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Converts arguments to a list of string or integer aliases. 
+ 
+        Returns: 
+            The list of aliases. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">path</span>
+
+    <span class="s2">def </span><span class="s1">search_dict_for_path</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">d</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+        <span class="s0">&quot;&quot;&quot;Searches a dictionary for the path specified by the alias. 
+ 
+        Returns: 
+            The value at the specified path, or `PydanticUndefined` if the path is not found. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">v </span><span class="s3">= </span><span class="s1">d</span>
+        <span class="s2">for </span><span class="s1">k </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">path</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">v</span><span class="s3">, </span><span class="s1">str</span><span class="s3">):</span>
+                <span class="s5"># disallow indexing into a str, like for AliasPath('x', 0) and x='abc'</span>
+                <span class="s2">return </span><span class="s1">PydanticUndefined</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">v </span><span class="s3">= </span><span class="s1">v</span><span class="s3">[</span><span class="s1">k</span><span class="s3">]</span>
+            <span class="s2">except </span><span class="s3">(</span><span class="s1">KeyError</span><span class="s3">, </span><span class="s1">IndexError</span><span class="s3">, </span><span class="s1">TypeError</span><span class="s3">):</span>
+                <span class="s2">return </span><span class="s1">PydanticUndefined</span>
+        <span class="s2">return </span><span class="s1">v</span>
+
+
+<span class="s3">@</span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">_internal_dataclass</span><span class="s3">.</span><span class="s1">slots_true</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">AliasChoices</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;!!! abstract &quot;Usage Documentation&quot; 
+        [`AliasPath` and `AliasChoices`](../concepts/alias.md#aliaspath-and-aliaschoices) 
+ 
+    A data class used by `validation_alias` as a convenience to create aliases. 
+ 
+    Attributes: 
+        choices: A list containing a string or `AliasPath`. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">choices</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">str </span><span class="s3">| </span><span class="s1">AliasPath</span><span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">first_choice</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">AliasPath</span><span class="s3">, *</span><span class="s1">choices</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">AliasPath</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">choices </span><span class="s3">= [</span><span class="s1">first_choice</span><span class="s3">] + </span><span class="s1">list</span><span class="s3">(</span><span class="s1">choices</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">convert_to_aliases</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; list</span><span class="s3">[</span><span class="s1">list</span><span class="s3">[</span><span class="s1">str </span><span class="s3">| </span><span class="s1">int</span><span class="s3">]]:</span>
+        <span class="s0">&quot;&quot;&quot;Converts arguments to a list of lists containing string or integer aliases. 
+ 
+        Returns: 
+            The list of aliases. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">aliases</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">list</span><span class="s3">[</span><span class="s1">str </span><span class="s3">| </span><span class="s1">int</span><span class="s3">]] = []</span>
+        <span class="s2">for </span><span class="s1">c </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">choices</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">c</span><span class="s3">, </span><span class="s1">AliasPath</span><span class="s3">):</span>
+                <span class="s1">aliases</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">c</span><span class="s3">.</span><span class="s1">convert_to_aliases</span><span class="s3">())</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">aliases</span><span class="s3">.</span><span class="s1">append</span><span class="s3">([</span><span class="s1">c</span><span class="s3">])</span>
+        <span class="s2">return </span><span class="s1">aliases</span>
+
+
+<span class="s3">@</span><span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">_internal_dataclass</span><span class="s3">.</span><span class="s1">slots_true</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">AliasGenerator</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;!!! abstract &quot;Usage Documentation&quot; 
+        [Using an `AliasGenerator`](../concepts/alias.md#using-an-aliasgenerator) 
+ 
+    A data class used by `alias_generator` as a convenience to create various aliases. 
+ 
+    Attributes: 
+        alias: A callable that takes a field name and returns an alias for it. 
+        validation_alias: A callable that takes a field name and returns a validation alias for it. 
+        serialization_alias: A callable that takes a field name and returns a serialization alias for it. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">alias</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">str</span><span class="s3">], </span><span class="s1">str</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s1">validation_alias</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">str</span><span class="s3">], </span><span class="s1">str </span><span class="s3">| </span><span class="s1">AliasPath </span><span class="s3">| </span><span class="s1">AliasChoices</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s1">serialization_alias</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">str</span><span class="s3">], </span><span class="s1">str</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+
+    <span class="s2">def </span><span class="s1">_generate_alias</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">alias_kind</span><span class="s3">: </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'alias'</span><span class="s3">, </span><span class="s4">'validation_alias'</span><span class="s3">, </span><span class="s4">'serialization_alias'</span><span class="s3">],</span>
+        <span class="s1">allowed_types</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">type</span><span class="s3">[</span><span class="s1">str</span><span class="s3">] | </span><span class="s1">type</span><span class="s3">[</span><span class="s1">AliasPath</span><span class="s3">] | </span><span class="s1">type</span><span class="s3">[</span><span class="s1">AliasChoices</span><span class="s3">], ...],</span>
+        <span class="s1">field_name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; str </span><span class="s3">| </span><span class="s1">AliasPath </span><span class="s3">| </span><span class="s1">AliasChoices </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s0">&quot;&quot;&quot;Generate an alias of the specified kind. Returns None if the alias generator is None. 
+ 
+        Raises: 
+            TypeError: If the alias generator produces an invalid type. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">alias </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s2">if </span><span class="s1">alias_generator </span><span class="s3">:= </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">alias_kind</span><span class="s3">):</span>
+            <span class="s1">alias </span><span class="s3">= </span><span class="s1">alias_generator</span><span class="s3">(</span><span class="s1">field_name</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">alias </span><span class="s2">and not </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">alias</span><span class="s3">, </span><span class="s1">allowed_types</span><span class="s3">):</span>
+                <span class="s2">raise </span><span class="s1">TypeError</span><span class="s3">(</span>
+                    <span class="s4">f'Invalid `</span><span class="s2">{</span><span class="s1">alias_kind</span><span class="s2">}</span><span class="s4">` type. `</span><span class="s2">{</span><span class="s1">alias_kind</span><span class="s2">}</span><span class="s4">` generator must produce one of `</span><span class="s2">{</span><span class="s1">allowed_types</span><span class="s2">}</span><span class="s4">`'</span>
+                <span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">alias</span>
+
+    <span class="s2">def </span><span class="s1">generate_aliases</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">field_name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">str </span><span class="s3">| </span><span class="s2">None</span><span class="s3">, </span><span class="s1">str </span><span class="s3">| </span><span class="s1">AliasPath </span><span class="s3">| </span><span class="s1">AliasChoices </span><span class="s3">| </span><span class="s2">None</span><span class="s3">, </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Generate `alias`, `validation_alias`, and `serialization_alias` for a field. 
+ 
+        Returns: 
+            A tuple of three aliases - validation, alias, and serialization. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">alias </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_generate_alias</span><span class="s3">(</span><span class="s4">'alias'</span><span class="s3">, (</span><span class="s1">str</span><span class="s3">,), </span><span class="s1">field_name</span><span class="s3">)</span>
+        <span class="s1">validation_alias </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_generate_alias</span><span class="s3">(</span><span class="s4">'validation_alias'</span><span class="s3">, (</span><span class="s1">str</span><span class="s3">, </span><span class="s1">AliasChoices</span><span class="s3">, </span><span class="s1">AliasPath</span><span class="s3">), </span><span class="s1">field_name</span><span class="s3">)</span>
+        <span class="s1">serialization_alias </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_generate_alias</span><span class="s3">(</span><span class="s4">'serialization_alias'</span><span class="s3">, (</span><span class="s1">str</span><span class="s3">,), </span><span class="s1">field_name</span><span class="s3">)</span>
+
+        <span class="s2">return </span><span class="s1">alias</span><span class="s3">, </span><span class="s1">validation_alias</span><span class="s3">, </span><span class="s1">serialization_alias  </span><span class="s5"># type: ignore</span>
+</pre>
+</body>
+</html>

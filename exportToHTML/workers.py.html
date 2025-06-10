@@ -1,0 +1,136 @@
+<html>
+<head>
+<title>workers.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+workers.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">asyncio</span>
+<span class="s0">import </span><span class="s1">logging</span>
+<span class="s0">import </span><span class="s1">signal</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">import </span><span class="s1">warnings</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span>
+
+<span class="s0">from </span><span class="s1">gunicorn</span><span class="s2">.</span><span class="s1">arbiter </span><span class="s0">import </span><span class="s1">Arbiter</span>
+<span class="s0">from </span><span class="s1">gunicorn</span><span class="s2">.</span><span class="s1">workers</span><span class="s2">.</span><span class="s1">base </span><span class="s0">import </span><span class="s1">Worker</span>
+
+<span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">config </span><span class="s0">import </span><span class="s1">Config</span>
+<span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">server </span><span class="s0">import </span><span class="s1">Server</span>
+
+<span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+    <span class="s3">&quot;The `uvicorn.workers` module is deprecated. Please use `uvicorn-worker` package instead.</span><span class="s0">\n</span><span class="s3">&quot;</span>
+    <span class="s3">&quot;For more details, see https://github.com/Kludex/uvicorn-worker.&quot;</span><span class="s2">,</span>
+    <span class="s1">DeprecationWarning</span><span class="s2">,</span>
+<span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">UvicornWorker</span><span class="s2">(</span><span class="s1">Worker</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    A worker class for Gunicorn that interfaces with an ASGI consumer callable, 
+    rather than a WSGI callable. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">CONFIG_KWARGS</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] = {</span><span class="s3">&quot;loop&quot;</span><span class="s2">: </span><span class="s3">&quot;auto&quot;</span><span class="s2">, </span><span class="s3">&quot;http&quot;</span><span class="s2">: </span><span class="s3">&quot;auto&quot;</span><span class="s2">}</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(*</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+
+        <span class="s1">logger </span><span class="s2">= </span><span class="s1">logging</span><span class="s2">.</span><span class="s1">getLogger</span><span class="s2">(</span><span class="s3">&quot;uvicorn.error&quot;</span><span class="s2">)</span>
+        <span class="s1">logger</span><span class="s2">.</span><span class="s1">handlers </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">log</span><span class="s2">.</span><span class="s1">error_log</span><span class="s2">.</span><span class="s1">handlers</span>
+        <span class="s1">logger</span><span class="s2">.</span><span class="s1">setLevel</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">log</span><span class="s2">.</span><span class="s1">error_log</span><span class="s2">.</span><span class="s1">level</span><span class="s2">)</span>
+        <span class="s1">logger</span><span class="s2">.</span><span class="s1">propagate </span><span class="s2">= </span><span class="s0">False</span>
+
+        <span class="s1">logger </span><span class="s2">= </span><span class="s1">logging</span><span class="s2">.</span><span class="s1">getLogger</span><span class="s2">(</span><span class="s3">&quot;uvicorn.access&quot;</span><span class="s2">)</span>
+        <span class="s1">logger</span><span class="s2">.</span><span class="s1">handlers </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">log</span><span class="s2">.</span><span class="s1">access_log</span><span class="s2">.</span><span class="s1">handlers</span>
+        <span class="s1">logger</span><span class="s2">.</span><span class="s1">setLevel</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">log</span><span class="s2">.</span><span class="s1">access_log</span><span class="s2">.</span><span class="s1">level</span><span class="s2">)</span>
+        <span class="s1">logger</span><span class="s2">.</span><span class="s1">propagate </span><span class="s2">= </span><span class="s0">False</span>
+
+        <span class="s1">config_kwargs</span><span class="s2">: </span><span class="s1">dict </span><span class="s2">= {</span>
+            <span class="s3">&quot;app&quot;</span><span class="s2">: </span><span class="s0">None</span><span class="s2">,</span>
+            <span class="s3">&quot;log_config&quot;</span><span class="s2">: </span><span class="s0">None</span><span class="s2">,</span>
+            <span class="s3">&quot;timeout_keep_alive&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cfg</span><span class="s2">.</span><span class="s1">keepalive</span><span class="s2">,</span>
+            <span class="s3">&quot;timeout_notify&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">timeout</span><span class="s2">,</span>
+            <span class="s3">&quot;callback_notify&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">callback_notify</span><span class="s2">,</span>
+            <span class="s3">&quot;limit_max_requests&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">max_requests</span><span class="s2">,</span>
+            <span class="s3">&quot;forwarded_allow_ips&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cfg</span><span class="s2">.</span><span class="s1">forwarded_allow_ips</span><span class="s2">,</span>
+        <span class="s2">}</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cfg</span><span class="s2">.</span><span class="s1">is_ssl</span><span class="s2">:</span>
+            <span class="s1">ssl_kwargs </span><span class="s2">= {</span>
+                <span class="s3">&quot;ssl_keyfile&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cfg</span><span class="s2">.</span><span class="s1">ssl_options</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;keyfile&quot;</span><span class="s2">),</span>
+                <span class="s3">&quot;ssl_certfile&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cfg</span><span class="s2">.</span><span class="s1">ssl_options</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;certfile&quot;</span><span class="s2">),</span>
+                <span class="s3">&quot;ssl_keyfile_password&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cfg</span><span class="s2">.</span><span class="s1">ssl_options</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;password&quot;</span><span class="s2">),</span>
+                <span class="s3">&quot;ssl_version&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cfg</span><span class="s2">.</span><span class="s1">ssl_options</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;ssl_version&quot;</span><span class="s2">),</span>
+                <span class="s3">&quot;ssl_cert_reqs&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cfg</span><span class="s2">.</span><span class="s1">ssl_options</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;cert_reqs&quot;</span><span class="s2">),</span>
+                <span class="s3">&quot;ssl_ca_certs&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cfg</span><span class="s2">.</span><span class="s1">ssl_options</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;ca_certs&quot;</span><span class="s2">),</span>
+                <span class="s3">&quot;ssl_ciphers&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cfg</span><span class="s2">.</span><span class="s1">ssl_options</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;ciphers&quot;</span><span class="s2">),</span>
+            <span class="s2">}</span>
+            <span class="s1">config_kwargs</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">ssl_kwargs</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cfg</span><span class="s2">.</span><span class="s1">settings</span><span class="s2">[</span><span class="s3">&quot;backlog&quot;</span><span class="s2">].</span><span class="s1">value</span><span class="s2">:</span>
+            <span class="s1">config_kwargs</span><span class="s2">[</span><span class="s3">&quot;backlog&quot;</span><span class="s2">] = </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cfg</span><span class="s2">.</span><span class="s1">settings</span><span class="s2">[</span><span class="s3">&quot;backlog&quot;</span><span class="s2">].</span><span class="s1">value</span>
+
+        <span class="s1">config_kwargs</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">CONFIG_KWARGS</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">config </span><span class="s2">= </span><span class="s1">Config</span><span class="s2">(**</span><span class="s1">config_kwargs</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">init_process</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">.</span><span class="s1">setup_event_loop</span><span class="s2">()</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">init_process</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">init_signals</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5"># Reset signals so Gunicorn doesn't swallow subprocess return codes</span>
+        <span class="s5"># other signals are set up by Server.install_signal_handlers()</span>
+        <span class="s5"># See: https://github.com/encode/uvicorn/issues/894</span>
+        <span class="s0">for </span><span class="s1">s </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">SIGNALS</span><span class="s2">:</span>
+            <span class="s1">signal</span><span class="s2">.</span><span class="s1">signal</span><span class="s2">(</span><span class="s1">s</span><span class="s2">, </span><span class="s1">signal</span><span class="s2">.</span><span class="s1">SIG_DFL</span><span class="s2">)</span>
+
+        <span class="s1">signal</span><span class="s2">.</span><span class="s1">signal</span><span class="s2">(</span><span class="s1">signal</span><span class="s2">.</span><span class="s1">SIGUSR1</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">handle_usr1</span><span class="s2">)</span>
+        <span class="s5"># Don't let SIGUSR1 disturb active requests by interrupting system calls</span>
+        <span class="s1">signal</span><span class="s2">.</span><span class="s1">siginterrupt</span><span class="s2">(</span><span class="s1">signal</span><span class="s2">.</span><span class="s1">SIGUSR1</span><span class="s2">, </span><span class="s0">False</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_install_sigquit_handler</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Install a SIGQUIT handler on workers. 
+ 
+        - https://github.com/encode/uvicorn/issues/1116 
+        - https://github.com/benoitc/gunicorn/issues/2604 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">loop </span><span class="s2">= </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">get_running_loop</span><span class="s2">()</span>
+        <span class="s1">loop</span><span class="s2">.</span><span class="s1">add_signal_handler</span><span class="s2">(</span><span class="s1">signal</span><span class="s2">.</span><span class="s1">SIGQUIT</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">handle_exit</span><span class="s2">, </span><span class="s1">signal</span><span class="s2">.</span><span class="s1">SIGQUIT</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+
+    <span class="s0">async def </span><span class="s1">_serve</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">.</span><span class="s1">app </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">wsgi</span>
+        <span class="s1">server </span><span class="s2">= </span><span class="s1">Server</span><span class="s2">(</span><span class="s1">config</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_install_sigquit_handler</span><span class="s2">()</span>
+        <span class="s0">await </span><span class="s1">server</span><span class="s2">.</span><span class="s1">serve</span><span class="s2">(</span><span class="s1">sockets</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">sockets</span><span class="s2">)</span>
+        <span class="s0">if not </span><span class="s1">server</span><span class="s2">.</span><span class="s1">started</span><span class="s2">:</span>
+            <span class="s1">sys</span><span class="s2">.</span><span class="s1">exit</span><span class="s2">(</span><span class="s1">Arbiter</span><span class="s2">.</span><span class="s1">WORKER_BOOT_ERROR</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">run</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">run</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_serve</span><span class="s2">())</span>
+
+    <span class="s0">async def </span><span class="s1">callback_notify</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">notify</span><span class="s2">()</span>
+
+
+<span class="s0">class </span><span class="s1">UvicornH11Worker</span><span class="s2">(</span><span class="s1">UvicornWorker</span><span class="s2">):</span>
+    <span class="s1">CONFIG_KWARGS </span><span class="s2">= {</span><span class="s3">&quot;loop&quot;</span><span class="s2">: </span><span class="s3">&quot;asyncio&quot;</span><span class="s2">, </span><span class="s3">&quot;http&quot;</span><span class="s2">: </span><span class="s3">&quot;h11&quot;</span><span class="s2">}</span>
+</pre>
+</body>
+</html>

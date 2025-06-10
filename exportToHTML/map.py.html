@@ -1,0 +1,974 @@
+<html>
+<head>
+<title>map.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #5f826b; font-style: italic;}
+.s4 { color: #7a7e85;}
+.s5 { color: #6aab73;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+map.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+<span class="s0">import </span><span class="s1">warnings</span>
+<span class="s0">from </span><span class="s1">pprint </span><span class="s0">import </span><span class="s1">pformat</span>
+<span class="s0">from </span><span class="s1">threading </span><span class="s0">import </span><span class="s1">Lock</span>
+<span class="s0">from </span><span class="s1">urllib</span><span class="s2">.</span><span class="s1">parse </span><span class="s0">import </span><span class="s1">quote</span>
+<span class="s0">from </span><span class="s1">urllib</span><span class="s2">.</span><span class="s1">parse </span><span class="s0">import </span><span class="s1">urljoin</span>
+<span class="s0">from </span><span class="s1">urllib</span><span class="s2">.</span><span class="s1">parse </span><span class="s0">import </span><span class="s1">urlunsplit</span>
+
+<span class="s0">from </span><span class="s2">..</span><span class="s1">_internal </span><span class="s0">import </span><span class="s1">_get_environ</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">_internal </span><span class="s0">import </span><span class="s1">_wsgi_decoding_dance</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">datastructures </span><span class="s0">import </span><span class="s1">ImmutableDict</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">datastructures </span><span class="s0">import </span><span class="s1">MultiDict</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">BadHost</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">HTTPException</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">MethodNotAllowed</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">NotFound</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">urls </span><span class="s0">import </span><span class="s1">_urlencode</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">wsgi </span><span class="s0">import </span><span class="s1">get_host</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">converters </span><span class="s0">import </span><span class="s1">DEFAULT_CONVERTERS</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">BuildError</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">NoMatch</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">RequestAliasRedirect</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">RequestPath</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">RequestRedirect</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">WebsocketMismatch</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">matcher </span><span class="s0">import </span><span class="s1">StateMachineMatcher</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">rules </span><span class="s0">import </span><span class="s1">_simple_rule_re</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">rules </span><span class="s0">import </span><span class="s1">Rule</span>
+
+<span class="s0">if </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+    <span class="s0">from </span><span class="s1">_typeshed</span><span class="s2">.</span><span class="s1">wsgi </span><span class="s0">import </span><span class="s1">WSGIApplication</span>
+    <span class="s0">from </span><span class="s1">_typeshed</span><span class="s2">.</span><span class="s1">wsgi </span><span class="s0">import </span><span class="s1">WSGIEnvironment</span>
+
+    <span class="s0">from </span><span class="s2">..</span><span class="s1">wrappers</span><span class="s2">.</span><span class="s1">request </span><span class="s0">import </span><span class="s1">Request</span>
+    <span class="s0">from </span><span class="s2">.</span><span class="s1">converters </span><span class="s0">import </span><span class="s1">BaseConverter</span>
+    <span class="s0">from </span><span class="s2">.</span><span class="s1">rules </span><span class="s0">import </span><span class="s1">RuleFactory</span>
+
+
+<span class="s0">class </span><span class="s1">Map</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;The map class stores all the URL rules and some configuration 
+    parameters.  Some of the configuration values are only stored on the 
+    `Map` instance since those affect all rules, others are just defaults 
+    and can be overridden for each rule.  Note that you have to specify all 
+    arguments besides the `rules` as keyword arguments! 
+ 
+    :param rules: sequence of url rules for this map. 
+    :param default_subdomain: The default subdomain for rules without a 
+                              subdomain defined. 
+    :param strict_slashes: If a rule ends with a slash but the matched 
+        URL does not, redirect to the URL with a trailing slash. 
+    :param merge_slashes: Merge consecutive slashes when matching or 
+        building URLs. Matches will redirect to the normalized URL. 
+        Slashes in variable parts are not merged. 
+    :param redirect_defaults: This will redirect to the default rule if it 
+                              wasn't visited that way. This helps creating 
+                              unique URLs. 
+    :param converters: A dict of converters that adds additional converters 
+                       to the list of converters. If you redefine one 
+                       converter this will override the original one. 
+    :param sort_parameters: If set to `True` the url parameters are sorted. 
+                            See `url_encode` for more details. 
+    :param sort_key: The sort key function for `url_encode`. 
+    :param host_matching: if set to `True` it enables the host matching 
+                          feature and disables the subdomain one.  If 
+                          enabled the `host` parameter to rules is used 
+                          instead of the `subdomain` one. 
+ 
+    .. versionchanged:: 3.0 
+        The ``charset`` and ``encoding_errors`` parameters were removed. 
+ 
+    .. versionchanged:: 1.0 
+        If ``url_scheme`` is ``ws`` or ``wss``, only WebSocket rules will match. 
+ 
+    .. versionchanged:: 1.0 
+        The ``merge_slashes`` parameter was added. 
+ 
+    .. versionchanged:: 0.7 
+        The ``encoding_errors`` and ``host_matching`` parameters were added. 
+ 
+    .. versionchanged:: 0.5 
+        The ``sort_parameters`` and ``sort_key``  paramters were added. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s4">#: A dict of default converters to be used.</span>
+    <span class="s1">default_converters </span><span class="s2">= </span><span class="s1">ImmutableDict</span><span class="s2">(</span><span class="s1">DEFAULT_CONVERTERS</span><span class="s2">)</span>
+
+    <span class="s4">#: The type of lock to use when updating.</span>
+    <span class="s4">#:</span>
+    <span class="s4">#: .. versionadded:: 1.0</span>
+    <span class="s1">lock_class </span><span class="s2">= </span><span class="s1">Lock</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">rules</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">RuleFactory</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">default_subdomain</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s5">&quot;&quot;</span><span class="s2">,</span>
+        <span class="s1">strict_slashes</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">,</span>
+        <span class="s1">merge_slashes</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">,</span>
+        <span class="s1">redirect_defaults</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">,</span>
+        <span class="s1">converters</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">type</span><span class="s2">[</span><span class="s1">BaseConverter</span><span class="s2">]] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">sort_parameters</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">sort_key</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">host_matching</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_matcher </span><span class="s2">= </span><span class="s1">StateMachineMatcher</span><span class="s2">(</span><span class="s1">merge_slashes</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_rules_by_endpoint</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, </span><span class="s1">list</span><span class="s2">[</span><span class="s1">Rule</span><span class="s2">]] = {}</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_remap </span><span class="s2">= </span><span class="s0">True</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_remap_lock </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">lock_class</span><span class="s2">()</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">default_subdomain </span><span class="s2">= </span><span class="s1">default_subdomain</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">strict_slashes </span><span class="s2">= </span><span class="s1">strict_slashes</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">redirect_defaults </span><span class="s2">= </span><span class="s1">redirect_defaults</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">host_matching </span><span class="s2">= </span><span class="s1">host_matching</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">converters </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">default_converters</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">()</span>
+        <span class="s0">if </span><span class="s1">converters</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">converters</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">converters</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">sort_parameters </span><span class="s2">= </span><span class="s1">sort_parameters</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">sort_key </span><span class="s2">= </span><span class="s1">sort_key</span>
+
+        <span class="s0">for </span><span class="s1">rulefactory </span><span class="s0">in </span><span class="s1">rules </span><span class="s0">or </span><span class="s2">():</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">rulefactory</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">merge_slashes</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_matcher</span><span class="s2">.</span><span class="s1">merge_slashes</span>
+
+    <span class="s2">@</span><span class="s1">merge_slashes</span><span class="s2">.</span><span class="s1">setter</span>
+    <span class="s0">def </span><span class="s1">merge_slashes</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_matcher</span><span class="s2">.</span><span class="s1">merge_slashes </span><span class="s2">= </span><span class="s1">value</span>
+
+    <span class="s0">def </span><span class="s1">is_endpoint_expecting</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">endpoint</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, *</span><span class="s1">arguments</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Iterate over all rules and check if the endpoint expects 
+        the arguments provided.  This is for example useful if you have 
+        some URLs that expect a language code and others that do not and 
+        you want to wrap the builder a bit so that the current language 
+        code is automatically added if not provided but endpoints expect 
+        it. 
+ 
+        :param endpoint: the endpoint to check. 
+        :param arguments: this function accepts one or more arguments 
+                          as positional arguments.  Each one of them is 
+                          checked. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">update</span><span class="s2">()</span>
+        <span class="s1">arguments_set </span><span class="s2">= </span><span class="s1">set</span><span class="s2">(</span><span class="s1">arguments</span><span class="s2">)</span>
+        <span class="s0">for </span><span class="s1">rule </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_rules_by_endpoint</span><span class="s2">[</span><span class="s1">endpoint</span><span class="s2">]:</span>
+            <span class="s0">if </span><span class="s1">arguments_set</span><span class="s2">.</span><span class="s1">issubset</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">.</span><span class="s1">arguments</span><span class="s2">):</span>
+                <span class="s0">return True</span>
+        <span class="s0">return False</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">_rules</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">Rule</span><span class="s2">]:</span>
+        <span class="s0">return </span><span class="s2">[</span><span class="s1">rule </span><span class="s0">for </span><span class="s1">rules </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_rules_by_endpoint</span><span class="s2">.</span><span class="s1">values</span><span class="s2">() </span><span class="s0">for </span><span class="s1">rule </span><span class="s0">in </span><span class="s1">rules</span><span class="s2">]</span>
+
+    <span class="s0">def </span><span class="s1">iter_rules</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">endpoint</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">Rule</span><span class="s2">]:</span>
+        <span class="s3">&quot;&quot;&quot;Iterate over all rules or the rules of an endpoint. 
+ 
+        :param endpoint: if provided only the rules for that endpoint 
+                         are returned. 
+        :return: an iterator 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">update</span><span class="s2">()</span>
+        <span class="s0">if </span><span class="s1">endpoint </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">iter</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_rules_by_endpoint</span><span class="s2">[</span><span class="s1">endpoint</span><span class="s2">])</span>
+        <span class="s0">return </span><span class="s1">iter</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_rules</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">add</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">rulefactory</span><span class="s2">: </span><span class="s1">RuleFactory</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Add a new rule or factory to the map and bind it.  Requires that the 
+        rule is not bound to another map. 
+ 
+        :param rulefactory: a :class:`Rule` or :class:`RuleFactory` 
+        &quot;&quot;&quot;</span>
+        <span class="s0">for </span><span class="s1">rule </span><span class="s0">in </span><span class="s1">rulefactory</span><span class="s2">.</span><span class="s1">get_rules</span><span class="s2">(</span><span class="s1">self</span><span class="s2">):</span>
+            <span class="s1">rule</span><span class="s2">.</span><span class="s1">bind</span><span class="s2">(</span><span class="s1">self</span><span class="s2">)</span>
+            <span class="s0">if not </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">build_only</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_matcher</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_rules_by_endpoint</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">.</span><span class="s1">endpoint</span><span class="s2">, []).</span><span class="s1">append</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_remap </span><span class="s2">= </span><span class="s0">True</span>
+
+    <span class="s0">def </span><span class="s1">bind</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">server_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">script_name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">subdomain</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">url_scheme</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s5">&quot;http&quot;</span><span class="s2">,</span>
+        <span class="s1">default_method</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s5">&quot;GET&quot;</span><span class="s2">,</span>
+        <span class="s1">path_info</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">query_args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; MapAdapter</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Return a new :class:`MapAdapter` with the details specified to the 
+        call.  Note that `script_name` will default to ``'/'`` if not further 
+        specified or `None`.  The `server_name` at least is a requirement 
+        because the HTTP RFC requires absolute URLs for redirects and so all 
+        redirect exceptions raised by Werkzeug will contain the full canonical 
+        URL. 
+ 
+        If no path_info is passed to :meth:`match` it will use the default path 
+        info passed to bind.  While this doesn't really make sense for 
+        manual bind calls, it's useful if you bind a map to a WSGI 
+        environment which already contains the path info. 
+ 
+        `subdomain` will default to the `default_subdomain` for this map if 
+        no defined. If there is no `default_subdomain` you cannot use the 
+        subdomain feature. 
+ 
+        .. versionchanged:: 1.0 
+            If ``url_scheme`` is ``ws`` or ``wss``, only WebSocket rules 
+            will match. 
+ 
+        .. versionchanged:: 0.15 
+            ``path_info`` defaults to ``'/'`` if ``None``. 
+ 
+        .. versionchanged:: 0.8 
+            ``query_args`` can be a string. 
+ 
+        .. versionchanged:: 0.7 
+            Added ``query_args``. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">server_name </span><span class="s2">= </span><span class="s1">server_name</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">()</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">host_matching</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">subdomain </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s5">&quot;host matching enabled and a subdomain was provided&quot;</span><span class="s2">)</span>
+        <span class="s0">elif </span><span class="s1">subdomain </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">subdomain </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">default_subdomain</span>
+        <span class="s0">if </span><span class="s1">script_name </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">script_name </span><span class="s2">= </span><span class="s5">&quot;/&quot;</span>
+        <span class="s0">if </span><span class="s1">path_info </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">path_info </span><span class="s2">= </span><span class="s5">&quot;/&quot;</span>
+
+        <span class="s4"># Port isn't part of IDNA, and might push a name over the 63 octet limit.</span>
+        <span class="s1">server_name</span><span class="s2">, </span><span class="s1">port_sep</span><span class="s2">, </span><span class="s1">port </span><span class="s2">= </span><span class="s1">server_name</span><span class="s2">.</span><span class="s1">partition</span><span class="s2">(</span><span class="s5">&quot;:&quot;</span><span class="s2">)</span>
+
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">server_name </span><span class="s2">= </span><span class="s1">server_name</span><span class="s2">.</span><span class="s1">encode</span><span class="s2">(</span><span class="s5">&quot;idna&quot;</span><span class="s2">).</span><span class="s1">decode</span><span class="s2">(</span><span class="s5">&quot;ascii&quot;</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">UnicodeError </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">BadHost</span><span class="s2">() </span><span class="s0">from </span><span class="s1">e</span>
+
+        <span class="s0">return </span><span class="s1">MapAdapter</span><span class="s2">(</span>
+            <span class="s1">self</span><span class="s2">,</span>
+            <span class="s5">f&quot;</span><span class="s0">{</span><span class="s1">server_name</span><span class="s0">}{</span><span class="s1">port_sep</span><span class="s0">}{</span><span class="s1">port</span><span class="s0">}</span><span class="s5">&quot;</span><span class="s2">,</span>
+            <span class="s1">script_name</span><span class="s2">,</span>
+            <span class="s1">subdomain</span><span class="s2">,</span>
+            <span class="s1">url_scheme</span><span class="s2">,</span>
+            <span class="s1">path_info</span><span class="s2">,</span>
+            <span class="s1">default_method</span><span class="s2">,</span>
+            <span class="s1">query_args</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">bind_to_environ</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">environ</span><span class="s2">: </span><span class="s1">WSGIEnvironment </span><span class="s2">| </span><span class="s1">Request</span><span class="s2">,</span>
+        <span class="s1">server_name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">subdomain</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; MapAdapter</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Like :meth:`bind` but you can pass it an WSGI environment and it 
+        will fetch the information from that dictionary.  Note that because of 
+        limitations in the protocol there is no way to get the current 
+        subdomain and real `server_name` from the environment.  If you don't 
+        provide it, Werkzeug will use `SERVER_NAME` and `SERVER_PORT` (or 
+        `HTTP_HOST` if provided) as used `server_name` with disabled subdomain 
+        feature. 
+ 
+        If `subdomain` is `None` but an environment and a server name is 
+        provided it will calculate the current subdomain automatically. 
+        Example: `server_name` is ``'example.com'`` and the `SERVER_NAME` 
+        in the wsgi `environ` is ``'staging.dev.example.com'`` the calculated 
+        subdomain will be ``'staging.dev'``. 
+ 
+        If the object passed as environ has an environ attribute, the value of 
+        this attribute is used instead.  This allows you to pass request 
+        objects.  Additionally `PATH_INFO` added as a default of the 
+        :class:`MapAdapter` so that you don't have to pass the path info to 
+        the match method. 
+ 
+        .. versionchanged:: 1.0.0 
+            If the passed server name specifies port 443, it will match 
+            if the incoming scheme is ``https`` without a port. 
+ 
+        .. versionchanged:: 1.0.0 
+            A warning is shown when the passed server name does not 
+            match the incoming WSGI server name. 
+ 
+        .. versionchanged:: 0.8 
+           This will no longer raise a ValueError when an unexpected server 
+           name was passed. 
+ 
+        .. versionchanged:: 0.5 
+            previously this method accepted a bogus `calculate_subdomain` 
+            parameter that did not have any effect.  It was removed because 
+            of that. 
+ 
+        :param environ: a WSGI environment. 
+        :param server_name: an optional server name hint (see above). 
+        :param subdomain: optionally the current subdomain (see above). 
+        &quot;&quot;&quot;</span>
+        <span class="s1">env </span><span class="s2">= </span><span class="s1">_get_environ</span><span class="s2">(</span><span class="s1">environ</span><span class="s2">)</span>
+        <span class="s1">wsgi_server_name </span><span class="s2">= </span><span class="s1">get_host</span><span class="s2">(</span><span class="s1">env</span><span class="s2">).</span><span class="s1">lower</span><span class="s2">()</span>
+        <span class="s1">scheme </span><span class="s2">= </span><span class="s1">env</span><span class="s2">[</span><span class="s5">&quot;wsgi.url_scheme&quot;</span><span class="s2">]</span>
+        <span class="s1">upgrade </span><span class="s2">= </span><span class="s1">any</span><span class="s2">(</span>
+            <span class="s1">v</span><span class="s2">.</span><span class="s1">strip</span><span class="s2">() == </span><span class="s5">&quot;upgrade&quot;</span>
+            <span class="s0">for </span><span class="s1">v </span><span class="s0">in </span><span class="s1">env</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;HTTP_CONNECTION&quot;</span><span class="s2">, </span><span class="s5">&quot;&quot;</span><span class="s2">).</span><span class="s1">lower</span><span class="s2">().</span><span class="s1">split</span><span class="s2">(</span><span class="s5">&quot;,&quot;</span><span class="s2">)</span>
+        <span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">upgrade </span><span class="s0">and </span><span class="s1">env</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;HTTP_UPGRADE&quot;</span><span class="s2">, </span><span class="s5">&quot;&quot;</span><span class="s2">).</span><span class="s1">lower</span><span class="s2">() == </span><span class="s5">&quot;websocket&quot;</span><span class="s2">:</span>
+            <span class="s1">scheme </span><span class="s2">= </span><span class="s5">&quot;wss&quot; </span><span class="s0">if </span><span class="s1">scheme </span><span class="s2">== </span><span class="s5">&quot;https&quot; </span><span class="s0">else </span><span class="s5">&quot;ws&quot;</span>
+
+        <span class="s0">if </span><span class="s1">server_name </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">server_name </span><span class="s2">= </span><span class="s1">wsgi_server_name</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">server_name </span><span class="s2">= </span><span class="s1">server_name</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">()</span>
+
+            <span class="s4"># strip standard port to match get_host()</span>
+            <span class="s0">if </span><span class="s1">scheme </span><span class="s0">in </span><span class="s2">{</span><span class="s5">&quot;http&quot;</span><span class="s2">, </span><span class="s5">&quot;ws&quot;</span><span class="s2">} </span><span class="s0">and </span><span class="s1">server_name</span><span class="s2">.</span><span class="s1">endswith</span><span class="s2">(</span><span class="s5">&quot;:80&quot;</span><span class="s2">):</span>
+                <span class="s1">server_name </span><span class="s2">= </span><span class="s1">server_name</span><span class="s2">[:-</span><span class="s6">3</span><span class="s2">]</span>
+            <span class="s0">elif </span><span class="s1">scheme </span><span class="s0">in </span><span class="s2">{</span><span class="s5">&quot;https&quot;</span><span class="s2">, </span><span class="s5">&quot;wss&quot;</span><span class="s2">} </span><span class="s0">and </span><span class="s1">server_name</span><span class="s2">.</span><span class="s1">endswith</span><span class="s2">(</span><span class="s5">&quot;:443&quot;</span><span class="s2">):</span>
+                <span class="s1">server_name </span><span class="s2">= </span><span class="s1">server_name</span><span class="s2">[:-</span><span class="s6">4</span><span class="s2">]</span>
+
+        <span class="s0">if </span><span class="s1">subdomain </span><span class="s0">is None and not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">host_matching</span><span class="s2">:</span>
+            <span class="s1">cur_server_name </span><span class="s2">= </span><span class="s1">wsgi_server_name</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s5">&quot;.&quot;</span><span class="s2">)</span>
+            <span class="s1">real_server_name </span><span class="s2">= </span><span class="s1">server_name</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s5">&quot;.&quot;</span><span class="s2">)</span>
+            <span class="s1">offset </span><span class="s2">= -</span><span class="s1">len</span><span class="s2">(</span><span class="s1">real_server_name</span><span class="s2">)</span>
+
+            <span class="s0">if </span><span class="s1">cur_server_name</span><span class="s2">[</span><span class="s1">offset</span><span class="s2">:] != </span><span class="s1">real_server_name</span><span class="s2">:</span>
+                <span class="s4"># This can happen even with valid configs if the server was</span>
+                <span class="s4"># accessed directly by IP address under some situations.</span>
+                <span class="s4"># Instead of raising an exception like in Werkzeug 0.7 or</span>
+                <span class="s4"># earlier we go by an invalid subdomain which will result</span>
+                <span class="s4"># in a 404 error on matching.</span>
+                <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+                    <span class="s5">f&quot;Current server name </span><span class="s0">{</span><span class="s1">wsgi_server_name</span><span class="s0">!r} </span><span class="s5">doesn't match configured&quot;</span>
+                    <span class="s5">f&quot; server name </span><span class="s0">{</span><span class="s1">server_name</span><span class="s0">!r}</span><span class="s5">&quot;</span><span class="s2">,</span>
+                    <span class="s1">stacklevel</span><span class="s2">=</span><span class="s6">2</span><span class="s2">,</span>
+                <span class="s2">)</span>
+                <span class="s1">subdomain </span><span class="s2">= </span><span class="s5">&quot;&lt;invalid&gt;&quot;</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">subdomain </span><span class="s2">= </span><span class="s5">&quot;.&quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">filter</span><span class="s2">(</span><span class="s0">None</span><span class="s2">, </span><span class="s1">cur_server_name</span><span class="s2">[:</span><span class="s1">offset</span><span class="s2">]))</span>
+
+        <span class="s0">def </span><span class="s1">_get_wsgi_string</span><span class="s2">(</span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s1">val </span><span class="s2">= </span><span class="s1">env</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">name</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">val </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">_wsgi_decoding_dance</span><span class="s2">(</span><span class="s1">val</span><span class="s2">)</span>
+            <span class="s0">return None</span>
+
+        <span class="s1">script_name </span><span class="s2">= </span><span class="s1">_get_wsgi_string</span><span class="s2">(</span><span class="s5">&quot;SCRIPT_NAME&quot;</span><span class="s2">)</span>
+        <span class="s1">path_info </span><span class="s2">= </span><span class="s1">_get_wsgi_string</span><span class="s2">(</span><span class="s5">&quot;PATH_INFO&quot;</span><span class="s2">)</span>
+        <span class="s1">query_args </span><span class="s2">= </span><span class="s1">_get_wsgi_string</span><span class="s2">(</span><span class="s5">&quot;QUERY_STRING&quot;</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">Map</span><span class="s2">.</span><span class="s1">bind</span><span class="s2">(</span>
+            <span class="s1">self</span><span class="s2">,</span>
+            <span class="s1">server_name</span><span class="s2">,</span>
+            <span class="s1">script_name</span><span class="s2">,</span>
+            <span class="s1">subdomain</span><span class="s2">,</span>
+            <span class="s1">scheme</span><span class="s2">,</span>
+            <span class="s1">env</span><span class="s2">[</span><span class="s5">&quot;REQUEST_METHOD&quot;</span><span class="s2">],</span>
+            <span class="s1">path_info</span><span class="s2">,</span>
+            <span class="s1">query_args</span><span class="s2">=</span><span class="s1">query_args</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">update</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Called before matching and building to keep the compiled rules 
+        in the correct order after things changed. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_remap</span><span class="s2">:</span>
+            <span class="s0">return</span>
+
+        <span class="s0">with </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_remap_lock</span><span class="s2">:</span>
+            <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_remap</span><span class="s2">:</span>
+                <span class="s0">return</span>
+
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_matcher</span><span class="s2">.</span><span class="s1">update</span><span class="s2">()</span>
+            <span class="s0">for </span><span class="s1">rules </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_rules_by_endpoint</span><span class="s2">.</span><span class="s1">values</span><span class="s2">():</span>
+                <span class="s1">rules</span><span class="s2">.</span><span class="s1">sort</span><span class="s2">(</span><span class="s1">key</span><span class="s2">=</span><span class="s0">lambda </span><span class="s1">x</span><span class="s2">: </span><span class="s1">x</span><span class="s2">.</span><span class="s1">build_compare_key</span><span class="s2">())</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_remap </span><span class="s2">= </span><span class="s0">False</span>
+
+    <span class="s0">def </span><span class="s1">__repr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s1">rules </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">iter_rules</span><span class="s2">()</span>
+        <span class="s0">return </span><span class="s5">f&quot;</span><span class="s0">{</span><span class="s1">type</span><span class="s2">(</span><span class="s1">self</span><span class="s2">).</span><span class="s1">__name__</span><span class="s0">}</span><span class="s5">(</span><span class="s0">{</span><span class="s1">pformat</span><span class="s2">(</span><span class="s1">list</span><span class="s2">(</span><span class="s1">rules</span><span class="s2">))</span><span class="s0">}</span><span class="s5">)&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">MapAdapter</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;Returned by :meth:`Map.bind` or :meth:`Map.bind_to_environ` and does 
+    the URL matching and building based on runtime information. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">map</span><span class="s2">: </span><span class="s1">Map</span><span class="s2">,</span>
+        <span class="s1">server_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">script_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">subdomain</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">url_scheme</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">path_info</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">default_method</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">query_args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">):</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">map </span><span class="s2">= </span><span class="s1">map</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">server_name </span><span class="s2">= </span><span class="s1">server_name</span>
+
+        <span class="s0">if not </span><span class="s1">script_name</span><span class="s2">.</span><span class="s1">endswith</span><span class="s2">(</span><span class="s5">&quot;/&quot;</span><span class="s2">):</span>
+            <span class="s1">script_name </span><span class="s2">+= </span><span class="s5">&quot;/&quot;</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">script_name </span><span class="s2">= </span><span class="s1">script_name</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain </span><span class="s2">= </span><span class="s1">subdomain</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">url_scheme </span><span class="s2">= </span><span class="s1">url_scheme</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">path_info </span><span class="s2">= </span><span class="s1">path_info</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">default_method </span><span class="s2">= </span><span class="s1">default_method</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">query_args </span><span class="s2">= </span><span class="s1">query_args</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">websocket </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">url_scheme </span><span class="s0">in </span><span class="s2">{</span><span class="s5">&quot;ws&quot;</span><span class="s2">, </span><span class="s5">&quot;wss&quot;</span><span class="s2">}</span>
+
+    <span class="s0">def </span><span class="s1">dispatch</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">view_func</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]], </span><span class="s1">WSGIApplication</span><span class="s2">],</span>
+        <span class="s1">path_info</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">method</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">catch_http_exceptions</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; WSGIApplication</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Does the complete dispatching process.  `view_func` is called with 
+        the endpoint and a dict with the values for the view.  It should 
+        look up the view function, call it, and return a response object 
+        or WSGI application.  http exceptions are not caught by default 
+        so that applications can display nicer error messages by just 
+        catching them by hand.  If you want to stick with the default 
+        error messages you can pass it ``catch_http_exceptions=True`` and 
+        it will catch the http exceptions. 
+ 
+        Here a small example for the dispatch usage:: 
+ 
+            from werkzeug.wrappers import Request, Response 
+            from werkzeug.wsgi import responder 
+            from werkzeug.routing import Map, Rule 
+ 
+            def on_index(request): 
+                return Response('Hello from the index') 
+ 
+            url_map = Map([Rule('/', endpoint='index')]) 
+            views = {'index': on_index} 
+ 
+            @responder 
+            def application(environ, start_response): 
+                request = Request(environ) 
+                urls = url_map.bind_to_environ(environ) 
+                return urls.dispatch(lambda e, v: views[e](request, **v), 
+                                     catch_http_exceptions=True) 
+ 
+        Keep in mind that this method might return exception objects, too, so 
+        use :class:`Response.force_type` to get a response object. 
+ 
+        :param view_func: a function that is called with the endpoint as 
+                          first argument and the value dict as second.  Has 
+                          to dispatch to the actual view function with this 
+                          information.  (see above) 
+        :param path_info: the path info to use for matching.  Overrides the 
+                          path info specified on binding. 
+        :param method: the HTTP method used for matching.  Overrides the 
+                       method specified on binding. 
+        :param catch_http_exceptions: set to `True` to catch any of the 
+                                      werkzeug :class:`HTTPException`\\s. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">endpoint</span><span class="s2">, </span><span class="s1">args </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">match</span><span class="s2">(</span><span class="s1">path_info</span><span class="s2">, </span><span class="s1">method</span><span class="s2">)</span>
+            <span class="s0">except </span><span class="s1">RequestRedirect </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">e</span>
+            <span class="s0">return </span><span class="s1">view_func</span><span class="s2">(</span><span class="s1">endpoint</span><span class="s2">, </span><span class="s1">args</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">HTTPException </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">catch_http_exceptions</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">e</span>
+            <span class="s0">raise</span>
+
+    <span class="s2">@</span><span class="s1">t</span><span class="s2">.</span><span class="s1">overload</span>
+    <span class="s0">def </span><span class="s1">match</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">path_info</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">method</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">return_rule</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Literal</span><span class="s2">[</span><span class="s0">False</span><span class="s2">] = </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">query_args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">websocket</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; tuple</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]]: ...</span>
+
+    <span class="s2">@</span><span class="s1">t</span><span class="s2">.</span><span class="s1">overload</span>
+    <span class="s0">def </span><span class="s1">match</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">path_info</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">method</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">return_rule</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Literal</span><span class="s2">[</span><span class="s0">True</span><span class="s2">] = </span><span class="s0">True</span><span class="s2">,</span>
+        <span class="s1">query_args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">websocket</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; tuple</span><span class="s2">[</span><span class="s1">Rule</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]]: ...</span>
+
+    <span class="s0">def </span><span class="s1">match</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">path_info</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">method</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">return_rule</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">query_args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">websocket</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; tuple</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any </span><span class="s2">| </span><span class="s1">Rule</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]]:</span>
+        <span class="s3">&quot;&quot;&quot;The usage is simple: you just pass the match method the current 
+        path info as well as the method (which defaults to `GET`).  The 
+        following things can then happen: 
+ 
+        - you receive a `NotFound` exception that indicates that no URL is 
+          matching.  A `NotFound` exception is also a WSGI application you 
+          can call to get a default page not found page (happens to be the 
+          same object as `werkzeug.exceptions.NotFound`) 
+ 
+        - you receive a `MethodNotAllowed` exception that indicates that there 
+          is a match for this URL but not for the current request method. 
+          This is useful for RESTful applications. 
+ 
+        - you receive a `RequestRedirect` exception with a `new_url` 
+          attribute.  This exception is used to notify you about a request 
+          Werkzeug requests from your WSGI application.  This is for example the 
+          case if you request ``/foo`` although the correct URL is ``/foo/`` 
+          You can use the `RequestRedirect` instance as response-like object 
+          similar to all other subclasses of `HTTPException`. 
+ 
+        - you receive a ``WebsocketMismatch`` exception if the only 
+          match is a WebSocket rule but the bind is an HTTP request, or 
+          if the match is an HTTP rule but the bind is a WebSocket 
+          request. 
+ 
+        - you get a tuple in the form ``(endpoint, arguments)`` if there is 
+          a match (unless `return_rule` is True, in which case you get a tuple 
+          in the form ``(rule, arguments)``) 
+ 
+        If the path info is not passed to the match method the default path 
+        info of the map is used (defaults to the root URL if not defined 
+        explicitly). 
+ 
+        All of the exceptions raised are subclasses of `HTTPException` so they 
+        can be used as WSGI responses. They will all render generic error or 
+        redirect pages. 
+ 
+        Here is a small example for matching: 
+ 
+        &gt;&gt;&gt; m = Map([ 
+        ...     Rule('/', endpoint='index'), 
+        ...     Rule('/downloads/', endpoint='downloads/index'), 
+        ...     Rule('/downloads/&lt;int:id&gt;', endpoint='downloads/show') 
+        ... ]) 
+        &gt;&gt;&gt; urls = m.bind(&quot;example.com&quot;, &quot;/&quot;) 
+        &gt;&gt;&gt; urls.match(&quot;/&quot;, &quot;GET&quot;) 
+        ('index', {}) 
+        &gt;&gt;&gt; urls.match(&quot;/downloads/42&quot;) 
+        ('downloads/show', {'id': 42}) 
+ 
+        And here is what happens on redirect and missing URLs: 
+ 
+        &gt;&gt;&gt; urls.match(&quot;/downloads&quot;) 
+        Traceback (most recent call last): 
+          ... 
+        RequestRedirect: http://example.com/downloads/ 
+        &gt;&gt;&gt; urls.match(&quot;/missing&quot;) 
+        Traceback (most recent call last): 
+          ... 
+        NotFound: 404 Not Found 
+ 
+        :param path_info: the path info to use for matching.  Overrides the 
+                          path info specified on binding. 
+        :param method: the HTTP method used for matching.  Overrides the 
+                       method specified on binding. 
+        :param return_rule: return the rule that matched instead of just the 
+                            endpoint (defaults to `False`). 
+        :param query_args: optional query arguments that are used for 
+                           automatic redirects as string or dictionary.  It's 
+                           currently not possible to use the query arguments 
+                           for URL matching. 
+        :param websocket: Match WebSocket instead of HTTP requests. A 
+            websocket request has a ``ws`` or ``wss`` 
+            :attr:`url_scheme`. This overrides that detection. 
+ 
+        .. versionadded:: 1.0 
+            Added ``websocket``. 
+ 
+        .. versionchanged:: 0.8 
+            ``query_args`` can be a string. 
+ 
+        .. versionadded:: 0.7 
+            Added ``query_args``. 
+ 
+        .. versionadded:: 0.6 
+            Added ``return_rule``. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">update</span><span class="s2">()</span>
+        <span class="s0">if </span><span class="s1">path_info </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">path_info </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">path_info</span>
+        <span class="s0">if </span><span class="s1">query_args </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">query_args </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">query_args </span><span class="s0">or </span><span class="s2">{}</span>
+        <span class="s1">method </span><span class="s2">= (</span><span class="s1">method </span><span class="s0">or </span><span class="s1">self</span><span class="s2">.</span><span class="s1">default_method</span><span class="s2">).</span><span class="s1">upper</span><span class="s2">()</span>
+
+        <span class="s0">if </span><span class="s1">websocket </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">websocket </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">websocket</span>
+
+        <span class="s1">domain_part </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_name</span>
+
+        <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">host_matching </span><span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">domain_part </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain</span>
+
+        <span class="s1">path_part </span><span class="s2">= </span><span class="s5">f&quot;/</span><span class="s0">{</span><span class="s1">path_info</span><span class="s2">.</span><span class="s1">lstrip</span><span class="s2">(</span><span class="s5">'/'</span><span class="s2">)</span><span class="s0">}</span><span class="s5">&quot; </span><span class="s0">if </span><span class="s1">path_info </span><span class="s0">else </span><span class="s5">&quot;&quot;</span>
+
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">result </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">_matcher</span><span class="s2">.</span><span class="s1">match</span><span class="s2">(</span><span class="s1">domain_part</span><span class="s2">, </span><span class="s1">path_part</span><span class="s2">, </span><span class="s1">method</span><span class="s2">, </span><span class="s1">websocket</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">RequestPath </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+            <span class="s4"># safe = https://url.spec.whatwg.org/#url-path-segment-string</span>
+            <span class="s1">new_path </span><span class="s2">= </span><span class="s1">quote</span><span class="s2">(</span><span class="s1">e</span><span class="s2">.</span><span class="s1">path_info</span><span class="s2">, </span><span class="s1">safe</span><span class="s2">=</span><span class="s5">&quot;!$&amp;'()*+,/:;=@&quot;</span><span class="s2">)</span>
+            <span class="s0">raise </span><span class="s1">RequestRedirect</span><span class="s2">(</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">make_redirect_url</span><span class="s2">(</span><span class="s1">new_path</span><span class="s2">, </span><span class="s1">query_args</span><span class="s2">)</span>
+            <span class="s2">) </span><span class="s0">from None</span>
+        <span class="s0">except </span><span class="s1">RequestAliasRedirect </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RequestRedirect</span><span class="s2">(</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">make_alias_redirect_url</span><span class="s2">(</span>
+                    <span class="s5">f&quot;</span><span class="s0">{</span><span class="s1">domain_part</span><span class="s0">}</span><span class="s5">|</span><span class="s0">{</span><span class="s1">path_part</span><span class="s0">}</span><span class="s5">&quot;</span><span class="s2">,</span>
+                    <span class="s1">e</span><span class="s2">.</span><span class="s1">endpoint</span><span class="s2">,</span>
+                    <span class="s1">e</span><span class="s2">.</span><span class="s1">matched_values</span><span class="s2">,</span>
+                    <span class="s1">method</span><span class="s2">,</span>
+                    <span class="s1">query_args</span><span class="s2">,</span>
+                <span class="s2">)</span>
+            <span class="s2">) </span><span class="s0">from None</span>
+        <span class="s0">except </span><span class="s1">NoMatch </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">e</span><span class="s2">.</span><span class="s1">have_match_for</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">MethodNotAllowed</span><span class="s2">(</span><span class="s1">valid_methods</span><span class="s2">=</span><span class="s1">list</span><span class="s2">(</span><span class="s1">e</span><span class="s2">.</span><span class="s1">have_match_for</span><span class="s2">)) </span><span class="s0">from None</span>
+
+            <span class="s0">if </span><span class="s1">e</span><span class="s2">.</span><span class="s1">websocket_mismatch</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">WebsocketMismatch</span><span class="s2">() </span><span class="s0">from None</span>
+
+            <span class="s0">raise </span><span class="s1">NotFound</span><span class="s2">() </span><span class="s0">from None</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">rule</span><span class="s2">, </span><span class="s1">rv </span><span class="s2">= </span><span class="s1">result</span>
+
+            <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">redirect_defaults</span><span class="s2">:</span>
+                <span class="s1">redirect_url </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">get_default_redirect</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">, </span><span class="s1">method</span><span class="s2">, </span><span class="s1">rv</span><span class="s2">, </span><span class="s1">query_args</span><span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">redirect_url </span><span class="s0">is not None</span><span class="s2">:</span>
+                    <span class="s0">raise </span><span class="s1">RequestRedirect</span><span class="s2">(</span><span class="s1">redirect_url</span><span class="s2">)</span>
+
+            <span class="s0">if </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">redirect_to </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">.</span><span class="s1">redirect_to</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+
+                    <span class="s0">def </span><span class="s1">_handle_match</span><span class="s2">(</span><span class="s1">match</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Match</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+                        <span class="s1">value </span><span class="s2">= </span><span class="s1">rv</span><span class="s2">[</span><span class="s1">match</span><span class="s2">.</span><span class="s1">group</span><span class="s2">(</span><span class="s6">1</span><span class="s2">)]</span>
+                        <span class="s0">return </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">_converters</span><span class="s2">[</span><span class="s1">match</span><span class="s2">.</span><span class="s1">group</span><span class="s2">(</span><span class="s6">1</span><span class="s2">)].</span><span class="s1">to_url</span><span class="s2">(</span><span class="s1">value</span><span class="s2">)</span>
+
+                    <span class="s1">redirect_url </span><span class="s2">= </span><span class="s1">_simple_rule_re</span><span class="s2">.</span><span class="s1">sub</span><span class="s2">(</span><span class="s1">_handle_match</span><span class="s2">, </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">redirect_to</span><span class="s2">)</span>
+                <span class="s0">else</span><span class="s2">:</span>
+                    <span class="s1">redirect_url </span><span class="s2">= </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">redirect_to</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, **</span><span class="s1">rv</span><span class="s2">)</span>
+
+                <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain</span><span class="s2">:</span>
+                    <span class="s1">netloc </span><span class="s2">= </span><span class="s5">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain</span><span class="s0">}</span><span class="s5">.</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_name</span><span class="s0">}</span><span class="s5">&quot;</span>
+                <span class="s0">else</span><span class="s2">:</span>
+                    <span class="s1">netloc </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_name</span>
+
+                <span class="s0">raise </span><span class="s1">RequestRedirect</span><span class="s2">(</span>
+                    <span class="s1">urljoin</span><span class="s2">(</span>
+                        <span class="s5">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">url_scheme </span><span class="s0">or </span><span class="s5">'http'</span><span class="s0">}</span><span class="s5">://</span><span class="s0">{</span><span class="s1">netloc</span><span class="s0">}{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">script_name</span><span class="s0">}</span><span class="s5">&quot;</span><span class="s2">,</span>
+                        <span class="s1">redirect_url</span><span class="s2">,</span>
+                    <span class="s2">)</span>
+                <span class="s2">)</span>
+
+            <span class="s0">if </span><span class="s1">return_rule</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">rule</span><span class="s2">, </span><span class="s1">rv</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">endpoint</span><span class="s2">, </span><span class="s1">rv</span>
+
+    <span class="s0">def </span><span class="s1">test</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">path_info</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">, </span><span class="s1">method</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Test if a rule would match.  Works like `match` but returns `True` 
+        if the URL matches, or `False` if it does not exist. 
+ 
+        :param path_info: the path info to use for matching.  Overrides the 
+                          path info specified on binding. 
+        :param method: the HTTP method used for matching.  Overrides the 
+                       method specified on binding. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">match</span><span class="s2">(</span><span class="s1">path_info</span><span class="s2">, </span><span class="s1">method</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">RequestRedirect</span><span class="s2">:</span>
+            <span class="s0">pass</span>
+        <span class="s0">except </span><span class="s1">HTTPException</span><span class="s2">:</span>
+            <span class="s0">return False</span>
+        <span class="s0">return True</span>
+
+    <span class="s0">def </span><span class="s1">allowed_methods</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">path_info</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+        <span class="s3">&quot;&quot;&quot;Returns the valid methods that match for a given path. 
+ 
+        .. versionadded:: 0.7 
+        &quot;&quot;&quot;</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">match</span><span class="s2">(</span><span class="s1">path_info</span><span class="s2">, </span><span class="s1">method</span><span class="s2">=</span><span class="s5">&quot;--&quot;</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">MethodNotAllowed </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">e</span><span class="s2">.</span><span class="s1">valid_methods  </span><span class="s4"># type: ignore</span>
+        <span class="s0">except </span><span class="s1">HTTPException</span><span class="s2">:</span>
+            <span class="s0">pass</span>
+        <span class="s0">return </span><span class="s2">[]</span>
+
+    <span class="s0">def </span><span class="s1">get_host</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">domain_part</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Figures out the full host name for the given domain part.  The 
+        domain part is a subdomain in case host matching is disabled or 
+        a full host name. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">host_matching</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">domain_part </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_name</span>
+
+            <span class="s0">return </span><span class="s1">domain_part</span>
+
+        <span class="s0">if </span><span class="s1">domain_part </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">subdomain </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">subdomain </span><span class="s2">= </span><span class="s1">domain_part</span>
+
+        <span class="s0">if </span><span class="s1">subdomain</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s5">f&quot;</span><span class="s0">{</span><span class="s1">subdomain</span><span class="s0">}</span><span class="s5">.</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_name</span><span class="s0">}</span><span class="s5">&quot;</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_name</span>
+
+    <span class="s0">def </span><span class="s1">get_default_redirect</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">rule</span><span class="s2">: </span><span class="s1">Rule</span><span class="s2">,</span>
+        <span class="s1">method</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">values</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">MutableMapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">],</span>
+        <span class="s1">query_args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;A helper that returns the URL to redirect to if it finds one. 
+        This is used for default redirecting only. 
+ 
+        :internal: 
+        &quot;&quot;&quot;</span>
+        <span class="s0">assert </span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">redirect_defaults</span>
+        <span class="s0">for </span><span class="s1">r </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">_rules_by_endpoint</span><span class="s2">[</span><span class="s1">rule</span><span class="s2">.</span><span class="s1">endpoint</span><span class="s2">]:</span>
+            <span class="s4"># every rule that comes after this one, including ourself</span>
+            <span class="s4"># has a lower priority for the defaults.  We order the ones</span>
+            <span class="s4"># with the highest priority up for building.</span>
+            <span class="s0">if </span><span class="s1">r </span><span class="s0">is </span><span class="s1">rule</span><span class="s2">:</span>
+                <span class="s0">break</span>
+            <span class="s0">if </span><span class="s1">r</span><span class="s2">.</span><span class="s1">provides_defaults_for</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">) </span><span class="s0">and </span><span class="s1">r</span><span class="s2">.</span><span class="s1">suitable_for</span><span class="s2">(</span><span class="s1">values</span><span class="s2">, </span><span class="s1">method</span><span class="s2">):</span>
+                <span class="s1">values</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">r</span><span class="s2">.</span><span class="s1">defaults</span><span class="s2">)  </span><span class="s4"># type: ignore</span>
+                <span class="s1">domain_part</span><span class="s2">, </span><span class="s1">path </span><span class="s2">= </span><span class="s1">r</span><span class="s2">.</span><span class="s1">build</span><span class="s2">(</span><span class="s1">values</span><span class="s2">)  </span><span class="s4"># type: ignore</span>
+                <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">make_redirect_url</span><span class="s2">(</span><span class="s1">path</span><span class="s2">, </span><span class="s1">query_args</span><span class="s2">, </span><span class="s1">domain_part</span><span class="s2">=</span><span class="s1">domain_part</span><span class="s2">)</span>
+        <span class="s0">return None</span>
+
+    <span class="s0">def </span><span class="s1">encode_query_args</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">query_args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">query_args</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">_urlencode</span><span class="s2">(</span><span class="s1">query_args</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">query_args</span>
+
+    <span class="s0">def </span><span class="s1">make_redirect_url</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">path_info</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">query_args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">domain_part</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Creates a redirect URL. 
+ 
+        :internal: 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">query_args </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">query_args </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">query_args</span>
+
+        <span class="s0">if </span><span class="s1">query_args</span><span class="s2">:</span>
+            <span class="s1">query_str </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">encode_query_args</span><span class="s2">(</span><span class="s1">query_args</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">query_str </span><span class="s2">= </span><span class="s0">None</span>
+
+        <span class="s1">scheme </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">url_scheme </span><span class="s0">or </span><span class="s5">&quot;http&quot;</span>
+        <span class="s1">host </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">get_host</span><span class="s2">(</span><span class="s1">domain_part</span><span class="s2">)</span>
+        <span class="s1">path </span><span class="s2">= </span><span class="s5">&quot;/&quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">((</span><span class="s1">self</span><span class="s2">.</span><span class="s1">script_name</span><span class="s2">.</span><span class="s1">strip</span><span class="s2">(</span><span class="s5">&quot;/&quot;</span><span class="s2">), </span><span class="s1">path_info</span><span class="s2">.</span><span class="s1">lstrip</span><span class="s2">(</span><span class="s5">&quot;/&quot;</span><span class="s2">)))</span>
+        <span class="s0">return </span><span class="s1">urlunsplit</span><span class="s2">((</span><span class="s1">scheme</span><span class="s2">, </span><span class="s1">host</span><span class="s2">, </span><span class="s1">path</span><span class="s2">, </span><span class="s1">query_str</span><span class="s2">, </span><span class="s0">None</span><span class="s2">))</span>
+
+    <span class="s0">def </span><span class="s1">make_alias_redirect_url</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">path</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">endpoint</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">,</span>
+        <span class="s1">values</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">],</span>
+        <span class="s1">method</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">query_args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Internally called to make an alias redirect URL.&quot;&quot;&quot;</span>
+        <span class="s1">url </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">build</span><span class="s2">(</span>
+            <span class="s1">endpoint</span><span class="s2">, </span><span class="s1">values</span><span class="s2">, </span><span class="s1">method</span><span class="s2">, </span><span class="s1">append_unknown</span><span class="s2">=</span><span class="s0">False</span><span class="s2">, </span><span class="s1">force_external</span><span class="s2">=</span><span class="s0">True</span>
+        <span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">query_args</span><span class="s2">:</span>
+            <span class="s1">url </span><span class="s2">+= </span><span class="s5">f&quot;?</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">encode_query_args</span><span class="s2">(</span><span class="s1">query_args</span><span class="s2">)</span><span class="s0">}</span><span class="s5">&quot;</span>
+        <span class="s0">assert </span><span class="s1">url </span><span class="s2">!= </span><span class="s1">path</span><span class="s2">, </span><span class="s5">&quot;detected invalid alias setting. No canonical URL found&quot;</span>
+        <span class="s0">return </span><span class="s1">url</span>
+
+    <span class="s0">def </span><span class="s1">_partial_build</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">endpoint</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">,</span>
+        <span class="s1">values</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">],</span>
+        <span class="s1">method</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">append_unknown</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">, </span><span class="s1">bool</span><span class="s2">] | </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Helper for :meth:`build`.  Returns subdomain and path for the 
+        rule that accepts this endpoint, values and method. 
+ 
+        :internal: 
+        &quot;&quot;&quot;</span>
+        <span class="s4"># in case the method is none, try with the default method first</span>
+        <span class="s0">if </span><span class="s1">method </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">rv </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_partial_build</span><span class="s2">(</span>
+                <span class="s1">endpoint</span><span class="s2">, </span><span class="s1">values</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">default_method</span><span class="s2">, </span><span class="s1">append_unknown</span>
+            <span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">rv </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">rv</span>
+
+        <span class="s4"># Default method did not match or a specific method is passed.</span>
+        <span class="s4"># Check all for first match with matching host. If no matching</span>
+        <span class="s4"># host is found, go with first result.</span>
+        <span class="s1">first_match </span><span class="s2">= </span><span class="s0">None</span>
+
+        <span class="s0">for </span><span class="s1">rule </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">_rules_by_endpoint</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">endpoint</span><span class="s2">, ()):</span>
+            <span class="s0">if </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">suitable_for</span><span class="s2">(</span><span class="s1">values</span><span class="s2">, </span><span class="s1">method</span><span class="s2">):</span>
+                <span class="s1">build_rv </span><span class="s2">= </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">build</span><span class="s2">(</span><span class="s1">values</span><span class="s2">, </span><span class="s1">append_unknown</span><span class="s2">)</span>
+
+                <span class="s0">if </span><span class="s1">build_rv </span><span class="s0">is not None</span><span class="s2">:</span>
+                    <span class="s1">rv </span><span class="s2">= (</span><span class="s1">build_rv</span><span class="s2">[</span><span class="s6">0</span><span class="s2">], </span><span class="s1">build_rv</span><span class="s2">[</span><span class="s6">1</span><span class="s2">], </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">websocket</span><span class="s2">)</span>
+                    <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">host_matching</span><span class="s2">:</span>
+                        <span class="s0">if </span><span class="s1">rv</span><span class="s2">[</span><span class="s6">0</span><span class="s2">] == </span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_name</span><span class="s2">:</span>
+                            <span class="s0">return </span><span class="s1">rv</span>
+                        <span class="s0">elif </span><span class="s1">first_match </span><span class="s0">is None</span><span class="s2">:</span>
+                            <span class="s1">first_match </span><span class="s2">= </span><span class="s1">rv</span>
+                    <span class="s0">else</span><span class="s2">:</span>
+                        <span class="s0">return </span><span class="s1">rv</span>
+
+        <span class="s0">return </span><span class="s1">first_match</span>
+
+    <span class="s0">def </span><span class="s1">build</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">endpoint</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">,</span>
+        <span class="s1">values</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">method</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">force_external</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">append_unknown</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">,</span>
+        <span class="s1">url_scheme</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Building URLs works pretty much the other way round.  Instead of 
+        `match` you call `build` and pass it the endpoint and a dict of 
+        arguments for the placeholders. 
+ 
+        The `build` function also accepts an argument called `force_external` 
+        which, if you set it to `True` will force external URLs. Per default 
+        external URLs (include the server name) will only be used if the 
+        target URL is on a different subdomain. 
+ 
+        &gt;&gt;&gt; m = Map([ 
+        ...     Rule('/', endpoint='index'), 
+        ...     Rule('/downloads/', endpoint='downloads/index'), 
+        ...     Rule('/downloads/&lt;int:id&gt;', endpoint='downloads/show') 
+        ... ]) 
+        &gt;&gt;&gt; urls = m.bind(&quot;example.com&quot;, &quot;/&quot;) 
+        &gt;&gt;&gt; urls.build(&quot;index&quot;, {}) 
+        '/' 
+        &gt;&gt;&gt; urls.build(&quot;downloads/show&quot;, {'id': 42}) 
+        '/downloads/42' 
+        &gt;&gt;&gt; urls.build(&quot;downloads/show&quot;, {'id': 42}, force_external=True) 
+        'http://example.com/downloads/42' 
+ 
+        Because URLs cannot contain non ASCII data you will always get 
+        bytes back.  Non ASCII characters are urlencoded with the 
+        charset defined on the map instance. 
+ 
+        Additional values are converted to strings and appended to the URL as 
+        URL querystring parameters: 
+ 
+        &gt;&gt;&gt; urls.build(&quot;index&quot;, {'q': 'My Searchstring'}) 
+        '/?q=My+Searchstring' 
+ 
+        When processing those additional values, lists are furthermore 
+        interpreted as multiple values (as per 
+        :py:class:`werkzeug.datastructures.MultiDict`): 
+ 
+        &gt;&gt;&gt; urls.build(&quot;index&quot;, {'q': ['a', 'b', 'c']}) 
+        '/?q=a&amp;q=b&amp;q=c' 
+ 
+        Passing a ``MultiDict`` will also add multiple values: 
+ 
+        &gt;&gt;&gt; urls.build(&quot;index&quot;, MultiDict((('p', 'z'), ('q', 'a'), ('q', 'b')))) 
+        '/?p=z&amp;q=a&amp;q=b' 
+ 
+        If a rule does not exist when building a `BuildError` exception is 
+        raised. 
+ 
+        The build method accepts an argument called `method` which allows you 
+        to specify the method you want to have an URL built for if you have 
+        different methods for the same endpoint specified. 
+ 
+        :param endpoint: the endpoint of the URL to build. 
+        :param values: the values for the URL to build.  Unhandled values are 
+                       appended to the URL as query parameters. 
+        :param method: the HTTP method for the rule if there are different 
+                       URLs for different methods on the same endpoint. 
+        :param force_external: enforce full canonical external URLs. If the URL 
+                               scheme is not provided, this will generate 
+                               a protocol-relative URL. 
+        :param append_unknown: unknown parameters are appended to the generated 
+                               URL as query string argument.  Disable this 
+                               if you want the builder to ignore those. 
+        :param url_scheme: Scheme to use in place of the bound 
+            :attr:`url_scheme`. 
+ 
+        .. versionchanged:: 2.0 
+            Added the ``url_scheme`` parameter. 
+ 
+        .. versionadded:: 0.6 
+           Added the ``append_unknown`` parameter. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">update</span><span class="s2">()</span>
+
+        <span class="s0">if </span><span class="s1">values</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">values</span><span class="s2">, </span><span class="s1">MultiDict</span><span class="s2">):</span>
+                <span class="s1">values </span><span class="s2">= {</span>
+                    <span class="s1">k</span><span class="s2">: (</span><span class="s1">v</span><span class="s2">[</span><span class="s6">0</span><span class="s2">] </span><span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">v</span><span class="s2">) == </span><span class="s6">1 </span><span class="s0">else </span><span class="s1">v</span><span class="s2">)</span>
+                    <span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">dict</span><span class="s2">.</span><span class="s1">items</span><span class="s2">(</span><span class="s1">values</span><span class="s2">)</span>
+                    <span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">v</span><span class="s2">) != </span><span class="s6">0</span>
+                <span class="s2">}</span>
+            <span class="s0">else</span><span class="s2">:  </span><span class="s4"># plain dict</span>
+                <span class="s1">values </span><span class="s2">= {</span><span class="s1">k</span><span class="s2">: </span><span class="s1">v </span><span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">values</span><span class="s2">.</span><span class="s1">items</span><span class="s2">() </span><span class="s0">if </span><span class="s1">v </span><span class="s0">is not None</span><span class="s2">}</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">values </span><span class="s2">= {}</span>
+
+        <span class="s1">rv </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_partial_build</span><span class="s2">(</span><span class="s1">endpoint</span><span class="s2">, </span><span class="s1">values</span><span class="s2">, </span><span class="s1">method</span><span class="s2">, </span><span class="s1">append_unknown</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">rv </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">BuildError</span><span class="s2">(</span><span class="s1">endpoint</span><span class="s2">, </span><span class="s1">values</span><span class="s2">, </span><span class="s1">method</span><span class="s2">, </span><span class="s1">self</span><span class="s2">)</span>
+
+        <span class="s1">domain_part</span><span class="s2">, </span><span class="s1">path</span><span class="s2">, </span><span class="s1">websocket </span><span class="s2">= </span><span class="s1">rv</span>
+        <span class="s1">host </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">get_host</span><span class="s2">(</span><span class="s1">domain_part</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">url_scheme </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">url_scheme </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">url_scheme</span>
+
+        <span class="s4"># Always build WebSocket routes with the scheme (browsers</span>
+        <span class="s4"># require full URLs). If bound to a WebSocket, ensure that HTTP</span>
+        <span class="s4"># routes are built with an HTTP scheme.</span>
+        <span class="s1">secure </span><span class="s2">= </span><span class="s1">url_scheme </span><span class="s0">in </span><span class="s2">{</span><span class="s5">&quot;https&quot;</span><span class="s2">, </span><span class="s5">&quot;wss&quot;</span><span class="s2">}</span>
+
+        <span class="s0">if </span><span class="s1">websocket</span><span class="s2">:</span>
+            <span class="s1">force_external </span><span class="s2">= </span><span class="s0">True</span>
+            <span class="s1">url_scheme </span><span class="s2">= </span><span class="s5">&quot;wss&quot; </span><span class="s0">if </span><span class="s1">secure </span><span class="s0">else </span><span class="s5">&quot;ws&quot;</span>
+        <span class="s0">elif </span><span class="s1">url_scheme</span><span class="s2">:</span>
+            <span class="s1">url_scheme </span><span class="s2">= </span><span class="s5">&quot;https&quot; </span><span class="s0">if </span><span class="s1">secure </span><span class="s0">else </span><span class="s5">&quot;http&quot;</span>
+
+        <span class="s4"># shortcut this.</span>
+        <span class="s0">if not </span><span class="s1">force_external </span><span class="s0">and </span><span class="s2">(</span>
+            <span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">host_matching </span><span class="s0">and </span><span class="s1">host </span><span class="s2">== </span><span class="s1">self</span><span class="s2">.</span><span class="s1">server_name</span><span class="s2">)</span>
+            <span class="s0">or </span><span class="s2">(</span><span class="s0">not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">host_matching </span><span class="s0">and </span><span class="s1">domain_part </span><span class="s2">== </span><span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain</span><span class="s2">)</span>
+        <span class="s2">):</span>
+            <span class="s0">return </span><span class="s5">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">script_name</span><span class="s2">.</span><span class="s1">rstrip</span><span class="s2">(</span><span class="s5">'/'</span><span class="s2">)</span><span class="s0">}</span><span class="s5">/</span><span class="s0">{</span><span class="s1">path</span><span class="s2">.</span><span class="s1">lstrip</span><span class="s2">(</span><span class="s5">'/'</span><span class="s2">)</span><span class="s0">}</span><span class="s5">&quot;</span>
+
+        <span class="s1">scheme </span><span class="s2">= </span><span class="s5">f&quot;</span><span class="s0">{</span><span class="s1">url_scheme</span><span class="s0">}</span><span class="s5">:&quot; </span><span class="s0">if </span><span class="s1">url_scheme </span><span class="s0">else </span><span class="s5">&quot;&quot;</span>
+        <span class="s0">return </span><span class="s5">f&quot;</span><span class="s0">{</span><span class="s1">scheme</span><span class="s0">}</span><span class="s5">//</span><span class="s0">{</span><span class="s1">host</span><span class="s0">}{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">script_name</span><span class="s2">[:-</span><span class="s6">1</span><span class="s2">]</span><span class="s0">}</span><span class="s5">/</span><span class="s0">{</span><span class="s1">path</span><span class="s2">.</span><span class="s1">lstrip</span><span class="s2">(</span><span class="s5">'/'</span><span class="s2">)</span><span class="s0">}</span><span class="s5">&quot;</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,313 @@
+<html>
+<head>
+<title>ImageTk.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #5f826b; font-style: italic;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageTk.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># a Tk display interface</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 96-04-08 fl   Created</span>
+<span class="s0"># 96-09-06 fl   Added getimage method</span>
+<span class="s0"># 96-11-01 fl   Rewritten, removed image attribute and crop method</span>
+<span class="s0"># 97-05-09 fl   Use PyImagingPaste method instead of image type</span>
+<span class="s0"># 97-05-12 fl   Minor tweaks to match the IFUNC95 interface</span>
+<span class="s0"># 97-05-17 fl   Support the &quot;pilbitmap&quot; booster patch</span>
+<span class="s0"># 97-06-05 fl   Added file= and data= argument to image constructors</span>
+<span class="s0"># 98-03-09 fl   Added width and height methods to Image classes</span>
+<span class="s0"># 98-07-02 fl   Use default mode for &quot;P&quot; images without palette attribute</span>
+<span class="s0"># 98-07-02 fl   Explicitly destroy Tkinter image objects</span>
+<span class="s0"># 99-07-24 fl   Support multiple Tk interpreters (from Greg Couch)</span>
+<span class="s0"># 99-07-26 fl   Automatically hook into Tkinter (if possible)</span>
+<span class="s0"># 99-08-15 fl   Hook uses _imagingtk instead of _imaging</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-1999 by Secret Labs AB</span>
+<span class="s0"># Copyright (c) 1996-1997 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">tkinter</span>
+<span class="s2">from </span><span class="s1">io </span><span class="s2">import </span><span class="s1">BytesIO</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">cast</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">ImageFile</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s3">.</span><span class="s1">_typing </span><span class="s2">import </span><span class="s1">CapsuleType</span>
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># Check for Tkinter interface hooks</span>
+
+
+<span class="s2">def </span><span class="s1">_get_image_from_kw</span><span class="s3">(</span><span class="s1">kw</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]) </span><span class="s1">-&gt; ImageFile</span><span class="s3">.</span><span class="s1">ImageFile </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s1">source </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s2">if </span><span class="s4">&quot;file&quot; </span><span class="s2">in </span><span class="s1">kw</span><span class="s3">:</span>
+        <span class="s1">source </span><span class="s3">= </span><span class="s1">kw</span><span class="s3">.</span><span class="s1">pop</span><span class="s3">(</span><span class="s4">&quot;file&quot;</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s4">&quot;data&quot; </span><span class="s2">in </span><span class="s1">kw</span><span class="s3">:</span>
+        <span class="s1">source </span><span class="s3">= </span><span class="s1">BytesIO</span><span class="s3">(</span><span class="s1">kw</span><span class="s3">.</span><span class="s1">pop</span><span class="s3">(</span><span class="s4">&quot;data&quot;</span><span class="s3">))</span>
+    <span class="s2">if not </span><span class="s1">source</span><span class="s3">:</span>
+        <span class="s2">return None</span>
+    <span class="s2">return </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">open</span><span class="s3">(</span><span class="s1">source</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_pyimagingtkcall</span><span class="s3">(</span>
+    <span class="s1">command</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, </span><span class="s1">photo</span><span class="s3">: </span><span class="s1">PhotoImage </span><span class="s3">| </span><span class="s1">tkinter</span><span class="s3">.</span><span class="s1">PhotoImage</span><span class="s3">, </span><span class="s1">ptr</span><span class="s3">: </span><span class="s1">CapsuleType</span>
+<span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s1">tk </span><span class="s3">= </span><span class="s1">photo</span><span class="s3">.</span><span class="s1">tk</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">tk</span><span class="s3">.</span><span class="s1">call</span><span class="s3">(</span><span class="s1">command</span><span class="s3">, </span><span class="s1">photo</span><span class="s3">, </span><span class="s1">repr</span><span class="s3">(</span><span class="s1">ptr</span><span class="s3">))</span>
+    <span class="s2">except </span><span class="s1">tkinter</span><span class="s3">.</span><span class="s1">TclError</span><span class="s3">:</span>
+        <span class="s0"># activate Tkinter hook</span>
+        <span class="s0"># may raise an error if it cannot attach to Tkinter</span>
+        <span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">_imagingtk</span>
+
+        <span class="s1">_imagingtk</span><span class="s3">.</span><span class="s1">tkinit</span><span class="s3">(</span><span class="s1">tk</span><span class="s3">.</span><span class="s1">interpaddr</span><span class="s3">())</span>
+        <span class="s1">tk</span><span class="s3">.</span><span class="s1">call</span><span class="s3">(</span><span class="s1">command</span><span class="s3">, </span><span class="s1">photo</span><span class="s3">, </span><span class="s1">repr</span><span class="s3">(</span><span class="s1">ptr</span><span class="s3">))</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># PhotoImage</span>
+
+
+<span class="s2">class </span><span class="s1">PhotoImage</span><span class="s3">:</span>
+    <span class="s5">&quot;&quot;&quot; 
+    A Tkinter-compatible photo image.  This can be used 
+    everywhere Tkinter expects an image object.  If the image is an RGBA 
+    image, pixels having alpha 0 are treated as transparent. 
+ 
+    The constructor takes either a PIL image, or a mode and a size. 
+    Alternatively, you can use the ``file`` or ``data`` options to initialize 
+    the photo image object. 
+ 
+    :param image: Either a PIL image, or a mode string.  If a mode string is 
+                  used, a size must also be given. 
+    :param size: If the first argument is a mode string, this defines the size 
+                 of the image. 
+    :keyword file: A filename to load the image from (using 
+                   ``Image.open(file)``). 
+    :keyword data: An 8-bit string containing image data (as loaded from an 
+                   image file). 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image </span><span class="s3">| </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">size</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s3">**</span><span class="s1">kw</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s0"># Tk compatibility: file or data</span>
+        <span class="s2">if </span><span class="s1">image </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s1">image </span><span class="s3">= </span><span class="s1">_get_image_from_kw</span><span class="s3">(</span><span class="s1">kw</span><span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s1">image </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;Image is required&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">image</span><span class="s3">, </span><span class="s1">str</span><span class="s3">):</span>
+            <span class="s1">mode </span><span class="s3">= </span><span class="s1">image</span>
+            <span class="s1">image </span><span class="s3">= </span><span class="s2">None</span>
+
+            <span class="s2">if </span><span class="s1">size </span><span class="s2">is None</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;If first argument is mode, size is required&quot;</span>
+                <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s0"># got an image instead of a mode</span>
+            <span class="s1">mode </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode</span>
+            <span class="s2">if </span><span class="s1">mode </span><span class="s3">== </span><span class="s4">&quot;P&quot;</span><span class="s3">:</span>
+                <span class="s0"># palette mapped data</span>
+                <span class="s1">image</span><span class="s3">.</span><span class="s1">apply_transparency</span><span class="s3">()</span>
+                <span class="s1">image</span><span class="s3">.</span><span class="s1">load</span><span class="s3">()</span>
+                <span class="s1">mode </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">palette</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">if </span><span class="s1">image</span><span class="s3">.</span><span class="s1">palette </span><span class="s2">else </span><span class="s4">&quot;RGB&quot;</span>
+            <span class="s1">size </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">size</span>
+            <span class="s1">kw</span><span class="s3">[</span><span class="s4">&quot;width&quot;</span><span class="s3">], </span><span class="s1">kw</span><span class="s3">[</span><span class="s4">&quot;height&quot;</span><span class="s3">] = </span><span class="s1">size</span>
+
+        <span class="s2">if </span><span class="s1">mode </span><span class="s2">not in </span><span class="s3">[</span><span class="s4">&quot;1&quot;</span><span class="s3">, </span><span class="s4">&quot;L&quot;</span><span class="s3">, </span><span class="s4">&quot;RGB&quot;</span><span class="s3">, </span><span class="s4">&quot;RGBA&quot;</span><span class="s3">]:</span>
+            <span class="s1">mode </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">getmodebase</span><span class="s3">(</span><span class="s1">mode</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__mode </span><span class="s3">= </span><span class="s1">mode</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__size </span><span class="s3">= </span><span class="s1">size</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__photo </span><span class="s3">= </span><span class="s1">tkinter</span><span class="s3">.</span><span class="s1">PhotoImage</span><span class="s3">(**</span><span class="s1">kw</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">tk </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__photo</span><span class="s3">.</span><span class="s1">tk</span>
+        <span class="s2">if </span><span class="s1">image</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">paste</span><span class="s3">(</span><span class="s1">image</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">__del__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">name </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__photo</span><span class="s3">.</span><span class="s1">name</span>
+        <span class="s2">except </span><span class="s1">AttributeError</span><span class="s3">:</span>
+            <span class="s2">return</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__photo</span><span class="s3">.</span><span class="s1">name </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">__photo</span><span class="s3">.</span><span class="s1">tk</span><span class="s3">.</span><span class="s1">call</span><span class="s3">(</span><span class="s4">&quot;image&quot;</span><span class="s3">, </span><span class="s4">&quot;delete&quot;</span><span class="s3">, </span><span class="s1">name</span><span class="s3">)</span>
+        <span class="s2">except </span><span class="s1">Exception</span><span class="s3">:</span>
+            <span class="s2">pass  </span><span class="s0"># ignore internal errors</span>
+
+    <span class="s2">def </span><span class="s1">__str__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; str</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Get the Tkinter photo image identifier.  This method is automatically 
+        called by Tkinter whenever a PhotoImage object is passed to a Tkinter 
+        method. 
+ 
+        :return: A Tkinter photo image identifier (a string). 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">str</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__photo</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">width</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Get the width of the image. 
+ 
+        :return: The width, in pixels. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__size</span><span class="s3">[</span><span class="s6">0</span><span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">height</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Get the height of the image. 
+ 
+        :return: The height, in pixels. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__size</span><span class="s3">[</span><span class="s6">1</span><span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">paste</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Paste a PIL image into the photo image.  Note that this can 
+        be very slow if the photo image is displayed. 
+ 
+        :param im: A PIL image. The size must match the target region.  If the 
+                   mode does not match, the image is converted to the mode of 
+                   the bitmap image. 
+        &quot;&quot;&quot;</span>
+        <span class="s0"># convert to blittable</span>
+        <span class="s1">ptr </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">getim</span><span class="s3">()</span>
+        <span class="s1">image </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">im</span>
+        <span class="s2">if not </span><span class="s1">image</span><span class="s3">.</span><span class="s1">isblock</span><span class="s3">() </span><span class="s2">or </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">!= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__mode</span><span class="s3">:</span>
+            <span class="s1">block </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">.</span><span class="s1">new_block</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__mode</span><span class="s3">, </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+            <span class="s1">image</span><span class="s3">.</span><span class="s1">convert2</span><span class="s3">(</span><span class="s1">block</span><span class="s3">, </span><span class="s1">image</span><span class="s3">)  </span><span class="s0"># convert directly between buffers</span>
+            <span class="s1">ptr </span><span class="s3">= </span><span class="s1">block</span><span class="s3">.</span><span class="s1">ptr</span>
+
+        <span class="s1">_pyimagingtkcall</span><span class="s3">(</span><span class="s4">&quot;PyImagingPhoto&quot;</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__photo</span><span class="s3">, </span><span class="s1">ptr</span><span class="s3">)</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+<span class="s0"># BitmapImage</span>
+
+
+<span class="s2">class </span><span class="s1">BitmapImage</span><span class="s3">:</span>
+    <span class="s5">&quot;&quot;&quot; 
+    A Tkinter-compatible bitmap image.  This can be used everywhere Tkinter 
+    expects an image object. 
+ 
+    The given image must have mode &quot;1&quot;.  Pixels having value 0 are treated as 
+    transparent.  Options, if any, are passed on to Tkinter.  The most commonly 
+    used option is ``foreground``, which is used to specify the color for the 
+    non-transparent parts.  See the Tkinter documentation for information on 
+    how to specify colours. 
+ 
+    :param image: A PIL image. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">, **</span><span class="s1">kw</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s0"># Tk compatibility: file or data</span>
+        <span class="s2">if </span><span class="s1">image </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s1">image </span><span class="s3">= </span><span class="s1">_get_image_from_kw</span><span class="s3">(</span><span class="s1">kw</span><span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s1">image </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;Image is required&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__mode </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__size </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">size</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__photo </span><span class="s3">= </span><span class="s1">tkinter</span><span class="s3">.</span><span class="s1">BitmapImage</span><span class="s3">(</span><span class="s1">data</span><span class="s3">=</span><span class="s1">image</span><span class="s3">.</span><span class="s1">tobitmap</span><span class="s3">(), **</span><span class="s1">kw</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">__del__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">name </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__photo</span><span class="s3">.</span><span class="s1">name</span>
+        <span class="s2">except </span><span class="s1">AttributeError</span><span class="s3">:</span>
+            <span class="s2">return</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__photo</span><span class="s3">.</span><span class="s1">name </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">__photo</span><span class="s3">.</span><span class="s1">tk</span><span class="s3">.</span><span class="s1">call</span><span class="s3">(</span><span class="s4">&quot;image&quot;</span><span class="s3">, </span><span class="s4">&quot;delete&quot;</span><span class="s3">, </span><span class="s1">name</span><span class="s3">)</span>
+        <span class="s2">except </span><span class="s1">Exception</span><span class="s3">:</span>
+            <span class="s2">pass  </span><span class="s0"># ignore internal errors</span>
+
+    <span class="s2">def </span><span class="s1">width</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Get the width of the image. 
+ 
+        :return: The width, in pixels. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__size</span><span class="s3">[</span><span class="s6">0</span><span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">height</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Get the height of the image. 
+ 
+        :return: The height, in pixels. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__size</span><span class="s3">[</span><span class="s6">1</span><span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">__str__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; str</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Get the Tkinter bitmap image identifier.  This method is automatically 
+        called by Tkinter whenever a BitmapImage object is passed to a Tkinter 
+        method. 
+ 
+        :return: A Tkinter bitmap image identifier (a string). 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">str</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__photo</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">getimage</span><span class="s3">(</span><span class="s1">photo</span><span class="s3">: </span><span class="s1">PhotoImage</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">:</span>
+    <span class="s5">&quot;&quot;&quot;Copies the contents of a PhotoImage to a PIL image memory.&quot;&quot;&quot;</span>
+    <span class="s1">im </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">new</span><span class="s3">(</span><span class="s4">&quot;RGBA&quot;</span><span class="s3">, (</span><span class="s1">photo</span><span class="s3">.</span><span class="s1">width</span><span class="s3">(), </span><span class="s1">photo</span><span class="s3">.</span><span class="s1">height</span><span class="s3">()))</span>
+
+    <span class="s1">_pyimagingtkcall</span><span class="s3">(</span><span class="s4">&quot;PyImagingPhotoGet&quot;</span><span class="s3">, </span><span class="s1">photo</span><span class="s3">, </span><span class="s1">im</span><span class="s3">.</span><span class="s1">getim</span><span class="s3">())</span>
+
+    <span class="s2">return </span><span class="s1">im</span>
+
+
+<span class="s2">def </span><span class="s1">_show</span><span class="s3">(</span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">title</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s5">&quot;&quot;&quot;Helper for the Image.show method.&quot;&quot;&quot;</span>
+
+    <span class="s2">class </span><span class="s1">UI</span><span class="s3">(</span><span class="s1">tkinter</span><span class="s3">.</span><span class="s1">Label</span><span class="s3">):</span>
+        <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">master</span><span class="s3">: </span><span class="s1">tkinter</span><span class="s3">.</span><span class="s1">Toplevel</span><span class="s3">, </span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">image</span><span class="s3">: </span><span class="s1">BitmapImage </span><span class="s3">| </span><span class="s1">PhotoImage</span>
+            <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s4">&quot;1&quot;</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">image </span><span class="s3">= </span><span class="s1">BitmapImage</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">foreground</span><span class="s3">=</span><span class="s4">&quot;white&quot;</span><span class="s3">, </span><span class="s1">master</span><span class="s3">=</span><span class="s1">master</span><span class="s3">)</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">image </span><span class="s3">= </span><span class="s1">PhotoImage</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">master</span><span class="s3">=</span><span class="s1">master</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">TYPE_CHECKING</span><span class="s3">:</span>
+                <span class="s1">image </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">tkinter</span><span class="s3">.</span><span class="s1">_Image</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">image</span><span class="s3">)</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">image </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">image</span>
+            <span class="s1">super</span><span class="s3">().</span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">master</span><span class="s3">, </span><span class="s1">image</span><span class="s3">=</span><span class="s1">image</span><span class="s3">, </span><span class="s1">bg</span><span class="s3">=</span><span class="s4">&quot;black&quot;</span><span class="s3">, </span><span class="s1">bd</span><span class="s3">=</span><span class="s6">0</span><span class="s3">)</span>
+
+    <span class="s2">if not </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">tkinter</span><span class="s3">, </span><span class="s4">&quot;_default_root&quot;</span><span class="s3">):</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;tkinter not initialized&quot;</span>
+        <span class="s2">raise </span><span class="s1">OSError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+    <span class="s1">top </span><span class="s3">= </span><span class="s1">tkinter</span><span class="s3">.</span><span class="s1">Toplevel</span><span class="s3">()</span>
+    <span class="s2">if </span><span class="s1">title</span><span class="s3">:</span>
+        <span class="s1">top</span><span class="s3">.</span><span class="s1">title</span><span class="s3">(</span><span class="s1">title</span><span class="s3">)</span>
+    <span class="s1">UI</span><span class="s3">(</span><span class="s1">top</span><span class="s3">, </span><span class="s1">image</span><span class="s3">).</span><span class="s1">pack</span><span class="s3">()</span>
+</pre>
+</body>
+</html>

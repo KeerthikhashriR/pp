@@ -1,0 +1,162 @@
+<html>
+<head>
+<title>_schema_validator.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_schema_validator.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;Pluggable schema validator for pydantic.&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">functools</span>
+<span class="s2">from </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">abc </span><span class="s2">import </span><span class="s1">Iterable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Callable</span><span class="s3">, </span><span class="s1">Literal</span><span class="s3">, </span><span class="s1">TypeVar</span>
+
+<span class="s2">from </span><span class="s1">pydantic_core </span><span class="s2">import </span><span class="s1">CoreConfig</span><span class="s3">, </span><span class="s1">CoreSchema</span><span class="s3">, </span><span class="s1">SchemaValidator</span><span class="s3">, </span><span class="s1">ValidationError</span>
+<span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">ParamSpec</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">BaseValidateHandlerProtocol</span><span class="s3">, </span><span class="s1">PydanticPluginProtocol</span><span class="s3">, </span><span class="s1">SchemaKind</span><span class="s3">, </span><span class="s1">SchemaTypePath</span>
+
+
+<span class="s1">P </span><span class="s3">= </span><span class="s1">ParamSpec</span><span class="s3">(</span><span class="s4">'P'</span><span class="s3">)</span>
+<span class="s1">R </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s4">'R'</span><span class="s3">)</span>
+<span class="s1">Event </span><span class="s3">= </span><span class="s1">Literal</span><span class="s3">[</span><span class="s4">'on_validate_python'</span><span class="s3">, </span><span class="s4">'on_validate_json'</span><span class="s3">, </span><span class="s4">'on_validate_strings'</span><span class="s3">]</span>
+<span class="s1">events</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">Event</span><span class="s3">] = </span><span class="s1">list</span><span class="s3">(</span><span class="s1">Event</span><span class="s3">.</span><span class="s1">__args__</span><span class="s3">)  </span><span class="s5"># type: ignore</span>
+
+
+<span class="s2">def </span><span class="s1">create_schema_validator</span><span class="s3">(</span>
+    <span class="s1">schema</span><span class="s3">: </span><span class="s1">CoreSchema</span><span class="s3">,</span>
+    <span class="s1">schema_type</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+    <span class="s1">schema_type_module</span><span class="s3">: </span><span class="s1">str</span><span class="s3">,</span>
+    <span class="s1">schema_type_name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">,</span>
+    <span class="s1">schema_kind</span><span class="s3">: </span><span class="s1">SchemaKind</span><span class="s3">,</span>
+    <span class="s1">config</span><span class="s3">: </span><span class="s1">CoreConfig </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">plugin_settings</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; SchemaValidator </span><span class="s3">| </span><span class="s1">PluggableSchemaValidator</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Create a `SchemaValidator` or `PluggableSchemaValidator` if plugins are installed. 
+ 
+    Returns: 
+        If plugins are installed then return `PluggableSchemaValidator`, otherwise return `SchemaValidator`. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">SchemaTypePath</span>
+    <span class="s2">from </span><span class="s3">.</span><span class="s1">_loader </span><span class="s2">import </span><span class="s1">get_plugins</span>
+
+    <span class="s1">plugins </span><span class="s3">= </span><span class="s1">get_plugins</span><span class="s3">()</span>
+    <span class="s2">if </span><span class="s1">plugins</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">PluggableSchemaValidator</span><span class="s3">(</span>
+            <span class="s1">schema</span><span class="s3">,</span>
+            <span class="s1">schema_type</span><span class="s3">,</span>
+            <span class="s1">SchemaTypePath</span><span class="s3">(</span><span class="s1">schema_type_module</span><span class="s3">, </span><span class="s1">schema_type_name</span><span class="s3">),</span>
+            <span class="s1">schema_kind</span><span class="s3">,</span>
+            <span class="s1">config</span><span class="s3">,</span>
+            <span class="s1">plugins</span><span class="s3">,</span>
+            <span class="s1">plugin_settings </span><span class="s2">or </span><span class="s3">{},</span>
+        <span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">SchemaValidator</span><span class="s3">(</span><span class="s1">schema</span><span class="s3">, </span><span class="s1">config</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">PluggableSchemaValidator</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Pluggable schema validator.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ </span><span class="s3">= </span><span class="s4">'_schema_validator'</span><span class="s3">, </span><span class="s4">'validate_json'</span><span class="s3">, </span><span class="s4">'validate_python'</span><span class="s3">, </span><span class="s4">'validate_strings'</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">schema</span><span class="s3">: </span><span class="s1">CoreSchema</span><span class="s3">,</span>
+        <span class="s1">schema_type</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+        <span class="s1">schema_type_path</span><span class="s3">: </span><span class="s1">SchemaTypePath</span><span class="s3">,</span>
+        <span class="s1">schema_kind</span><span class="s3">: </span><span class="s1">SchemaKind</span><span class="s3">,</span>
+        <span class="s1">config</span><span class="s3">: </span><span class="s1">CoreConfig </span><span class="s3">| </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s1">plugins</span><span class="s3">: </span><span class="s1">Iterable</span><span class="s3">[</span><span class="s1">PydanticPluginProtocol</span><span class="s3">],</span>
+        <span class="s1">plugin_settings</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">],</span>
+    <span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_schema_validator </span><span class="s3">= </span><span class="s1">SchemaValidator</span><span class="s3">(</span><span class="s1">schema</span><span class="s3">, </span><span class="s1">config</span><span class="s3">)</span>
+
+        <span class="s1">python_event_handlers</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">BaseValidateHandlerProtocol</span><span class="s3">] = []</span>
+        <span class="s1">json_event_handlers</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">BaseValidateHandlerProtocol</span><span class="s3">] = []</span>
+        <span class="s1">strings_event_handlers</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">BaseValidateHandlerProtocol</span><span class="s3">] = []</span>
+        <span class="s2">for </span><span class="s1">plugin </span><span class="s2">in </span><span class="s1">plugins</span><span class="s3">:</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">p</span><span class="s3">, </span><span class="s1">j</span><span class="s3">, </span><span class="s1">s </span><span class="s3">= </span><span class="s1">plugin</span><span class="s3">.</span><span class="s1">new_schema_validator</span><span class="s3">(</span>
+                    <span class="s1">schema</span><span class="s3">, </span><span class="s1">schema_type</span><span class="s3">, </span><span class="s1">schema_type_path</span><span class="s3">, </span><span class="s1">schema_kind</span><span class="s3">, </span><span class="s1">config</span><span class="s3">, </span><span class="s1">plugin_settings</span>
+                <span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">TypeError </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:  </span><span class="s5"># pragma: no cover</span>
+                <span class="s2">raise </span><span class="s1">TypeError</span><span class="s3">(</span><span class="s4">f'Error using plugin `</span><span class="s2">{</span><span class="s1">plugin</span><span class="s3">.</span><span class="s1">__module__</span><span class="s2">}</span><span class="s4">:</span><span class="s2">{</span><span class="s1">plugin</span><span class="s3">.</span><span class="s1">__class__</span><span class="s3">.</span><span class="s1">__name__</span><span class="s2">}</span><span class="s4">`: </span><span class="s2">{</span><span class="s1">e</span><span class="s2">}</span><span class="s4">'</span><span class="s3">) </span><span class="s2">from </span><span class="s1">e</span>
+            <span class="s2">if </span><span class="s1">p </span><span class="s2">is not None</span><span class="s3">:</span>
+                <span class="s1">python_event_handlers</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">p</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">j </span><span class="s2">is not None</span><span class="s3">:</span>
+                <span class="s1">json_event_handlers</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">j</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">s </span><span class="s2">is not None</span><span class="s3">:</span>
+                <span class="s1">strings_event_handlers</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">validate_python </span><span class="s3">= </span><span class="s1">build_wrapper</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_schema_validator</span><span class="s3">.</span><span class="s1">validate_python</span><span class="s3">, </span><span class="s1">python_event_handlers</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">validate_json </span><span class="s3">= </span><span class="s1">build_wrapper</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_schema_validator</span><span class="s3">.</span><span class="s1">validate_json</span><span class="s3">, </span><span class="s1">json_event_handlers</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">validate_strings </span><span class="s3">= </span><span class="s1">build_wrapper</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_schema_validator</span><span class="s3">.</span><span class="s1">validate_strings</span><span class="s3">, </span><span class="s1">strings_event_handlers</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">__getattr__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_schema_validator</span><span class="s3">, </span><span class="s1">name</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">build_wrapper</span><span class="s3">(</span><span class="s1">func</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[</span><span class="s1">P</span><span class="s3">, </span><span class="s1">R</span><span class="s3">], </span><span class="s1">event_handlers</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">BaseValidateHandlerProtocol</span><span class="s3">]) </span><span class="s1">-&gt; Callable</span><span class="s3">[</span><span class="s1">P</span><span class="s3">, </span><span class="s1">R</span><span class="s3">]:</span>
+    <span class="s2">if not </span><span class="s1">event_handlers</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">func</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">on_enters </span><span class="s3">= </span><span class="s1">tuple</span><span class="s3">(</span><span class="s1">h</span><span class="s3">.</span><span class="s1">on_enter </span><span class="s2">for </span><span class="s1">h </span><span class="s2">in </span><span class="s1">event_handlers </span><span class="s2">if </span><span class="s1">filter_handlers</span><span class="s3">(</span><span class="s1">h</span><span class="s3">, </span><span class="s4">'on_enter'</span><span class="s3">))</span>
+        <span class="s1">on_successes </span><span class="s3">= </span><span class="s1">tuple</span><span class="s3">(</span><span class="s1">h</span><span class="s3">.</span><span class="s1">on_success </span><span class="s2">for </span><span class="s1">h </span><span class="s2">in </span><span class="s1">event_handlers </span><span class="s2">if </span><span class="s1">filter_handlers</span><span class="s3">(</span><span class="s1">h</span><span class="s3">, </span><span class="s4">'on_success'</span><span class="s3">))</span>
+        <span class="s1">on_errors </span><span class="s3">= </span><span class="s1">tuple</span><span class="s3">(</span><span class="s1">h</span><span class="s3">.</span><span class="s1">on_error </span><span class="s2">for </span><span class="s1">h </span><span class="s2">in </span><span class="s1">event_handlers </span><span class="s2">if </span><span class="s1">filter_handlers</span><span class="s3">(</span><span class="s1">h</span><span class="s3">, </span><span class="s4">'on_error'</span><span class="s3">))</span>
+        <span class="s1">on_exceptions </span><span class="s3">= </span><span class="s1">tuple</span><span class="s3">(</span><span class="s1">h</span><span class="s3">.</span><span class="s1">on_exception </span><span class="s2">for </span><span class="s1">h </span><span class="s2">in </span><span class="s1">event_handlers </span><span class="s2">if </span><span class="s1">filter_handlers</span><span class="s3">(</span><span class="s1">h</span><span class="s3">, </span><span class="s4">'on_exception'</span><span class="s3">))</span>
+
+        <span class="s3">@</span><span class="s1">functools</span><span class="s3">.</span><span class="s1">wraps</span><span class="s3">(</span><span class="s1">func</span><span class="s3">)</span>
+        <span class="s2">def </span><span class="s1">wrapper</span><span class="s3">(*</span><span class="s1">args</span><span class="s3">: </span><span class="s1">P</span><span class="s3">.</span><span class="s1">args</span><span class="s3">, **</span><span class="s1">kwargs</span><span class="s3">: </span><span class="s1">P</span><span class="s3">.</span><span class="s1">kwargs</span><span class="s3">) </span><span class="s1">-&gt; R</span><span class="s3">:</span>
+            <span class="s2">for </span><span class="s1">on_enter_handler </span><span class="s2">in </span><span class="s1">on_enters</span><span class="s3">:</span>
+                <span class="s1">on_enter_handler</span><span class="s3">(*</span><span class="s1">args</span><span class="s3">, **</span><span class="s1">kwargs</span><span class="s3">)</span>
+
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">result </span><span class="s3">= </span><span class="s1">func</span><span class="s3">(*</span><span class="s1">args</span><span class="s3">, **</span><span class="s1">kwargs</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">ValidationError </span><span class="s2">as </span><span class="s1">error</span><span class="s3">:</span>
+                <span class="s2">for </span><span class="s1">on_error_handler </span><span class="s2">in </span><span class="s1">on_errors</span><span class="s3">:</span>
+                    <span class="s1">on_error_handler</span><span class="s3">(</span><span class="s1">error</span><span class="s3">)</span>
+                <span class="s2">raise</span>
+            <span class="s2">except </span><span class="s1">Exception </span><span class="s2">as </span><span class="s1">exception</span><span class="s3">:</span>
+                <span class="s2">for </span><span class="s1">on_exception_handler </span><span class="s2">in </span><span class="s1">on_exceptions</span><span class="s3">:</span>
+                    <span class="s1">on_exception_handler</span><span class="s3">(</span><span class="s1">exception</span><span class="s3">)</span>
+                <span class="s2">raise</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s2">for </span><span class="s1">on_success_handler </span><span class="s2">in </span><span class="s1">on_successes</span><span class="s3">:</span>
+                    <span class="s1">on_success_handler</span><span class="s3">(</span><span class="s1">result</span><span class="s3">)</span>
+                <span class="s2">return </span><span class="s1">result</span>
+
+        <span class="s2">return </span><span class="s1">wrapper</span>
+
+
+<span class="s2">def </span><span class="s1">filter_handlers</span><span class="s3">(</span><span class="s1">handler_cls</span><span class="s3">: </span><span class="s1">BaseValidateHandlerProtocol</span><span class="s3">, </span><span class="s1">method_name</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Filter out handler methods which are not implemented by the plugin directly - e.g. are missing 
+    or are inherited from the protocol. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">handler </span><span class="s3">= </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">handler_cls</span><span class="s3">, </span><span class="s1">method_name</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">handler </span><span class="s2">is None</span><span class="s3">:</span>
+        <span class="s2">return False</span>
+    <span class="s2">elif </span><span class="s1">handler</span><span class="s3">.</span><span class="s1">__module__ </span><span class="s3">== </span><span class="s4">'pydantic.plugin'</span><span class="s3">:</span>
+        <span class="s5"># this is the original handler, from the protocol due to runtime inheritance</span>
+        <span class="s5"># we don't want to call it</span>
+        <span class="s2">return False</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">return True</span>
+</pre>
+</body>
+</html>

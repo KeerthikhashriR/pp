@@ -1,0 +1,82 @@
+<html>
+<head>
+<title>trustedhost.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8;}
+.s5 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+trustedhost.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">typing</span>
+
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">datastructures </span><span class="s0">import </span><span class="s1">URL</span><span class="s2">, </span><span class="s1">Headers</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">responses </span><span class="s0">import </span><span class="s1">PlainTextResponse</span><span class="s2">, </span><span class="s1">RedirectResponse</span><span class="s2">, </span><span class="s1">Response</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">ASGIApp</span><span class="s2">, </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">Send</span>
+
+<span class="s1">ENFORCE_DOMAIN_WILDCARD </span><span class="s2">= </span><span class="s3">&quot;Domain wildcard patterns must be like '*.example.com'.&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">TrustedHostMiddleware</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">app</span><span class="s2">: </span><span class="s1">ASGIApp</span><span class="s2">,</span>
+        <span class="s1">allowed_hosts</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Sequence</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">www_redirect</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">allowed_hosts </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">allowed_hosts </span><span class="s2">= [</span><span class="s3">&quot;*&quot;</span><span class="s2">]</span>
+
+        <span class="s0">for </span><span class="s1">pattern </span><span class="s0">in </span><span class="s1">allowed_hosts</span><span class="s2">:</span>
+            <span class="s0">assert </span><span class="s3">&quot;*&quot; </span><span class="s0">not in </span><span class="s1">pattern</span><span class="s2">[</span><span class="s4">1</span><span class="s2">:], </span><span class="s1">ENFORCE_DOMAIN_WILDCARD</span>
+            <span class="s0">if </span><span class="s1">pattern</span><span class="s2">.</span><span class="s1">startswith</span><span class="s2">(</span><span class="s3">&quot;*&quot;</span><span class="s2">) </span><span class="s0">and </span><span class="s1">pattern </span><span class="s2">!= </span><span class="s3">&quot;*&quot;</span><span class="s2">:</span>
+                <span class="s0">assert </span><span class="s1">pattern</span><span class="s2">.</span><span class="s1">startswith</span><span class="s2">(</span><span class="s3">&quot;*.&quot;</span><span class="s2">), </span><span class="s1">ENFORCE_DOMAIN_WILDCARD</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app </span><span class="s2">= </span><span class="s1">app</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">allowed_hosts </span><span class="s2">= </span><span class="s1">list</span><span class="s2">(</span><span class="s1">allowed_hosts</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">allow_any </span><span class="s2">= </span><span class="s3">&quot;*&quot; </span><span class="s0">in </span><span class="s1">allowed_hosts</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">www_redirect </span><span class="s2">= </span><span class="s1">www_redirect</span>
+
+    <span class="s0">async def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">: </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">: </span><span class="s1">Send</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">allow_any </span><span class="s0">or </span><span class="s1">scope</span><span class="s2">[</span><span class="s3">&quot;type&quot;</span><span class="s2">] </span><span class="s0">not in </span><span class="s2">(</span>
+            <span class="s3">&quot;http&quot;</span><span class="s2">,</span>
+            <span class="s3">&quot;websocket&quot;</span><span class="s2">,</span>
+        <span class="s2">):  </span><span class="s5"># pragma: no cover</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+            <span class="s0">return</span>
+
+        <span class="s1">headers </span><span class="s2">= </span><span class="s1">Headers</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">=</span><span class="s1">scope</span><span class="s2">)</span>
+        <span class="s1">host </span><span class="s2">= </span><span class="s1">headers</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;host&quot;</span><span class="s2">, </span><span class="s3">&quot;&quot;</span><span class="s2">).</span><span class="s1">split</span><span class="s2">(</span><span class="s3">&quot;:&quot;</span><span class="s2">)[</span><span class="s4">0</span><span class="s2">]</span>
+        <span class="s1">is_valid_host </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">found_www_redirect </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s0">for </span><span class="s1">pattern </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">allowed_hosts</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">host </span><span class="s2">== </span><span class="s1">pattern </span><span class="s0">or </span><span class="s2">(</span><span class="s1">pattern</span><span class="s2">.</span><span class="s1">startswith</span><span class="s2">(</span><span class="s3">&quot;*&quot;</span><span class="s2">) </span><span class="s0">and </span><span class="s1">host</span><span class="s2">.</span><span class="s1">endswith</span><span class="s2">(</span><span class="s1">pattern</span><span class="s2">[</span><span class="s4">1</span><span class="s2">:])):</span>
+                <span class="s1">is_valid_host </span><span class="s2">= </span><span class="s0">True</span>
+                <span class="s0">break</span>
+            <span class="s0">elif </span><span class="s3">&quot;www.&quot; </span><span class="s2">+ </span><span class="s1">host </span><span class="s2">== </span><span class="s1">pattern</span><span class="s2">:</span>
+                <span class="s1">found_www_redirect </span><span class="s2">= </span><span class="s0">True</span>
+
+        <span class="s0">if </span><span class="s1">is_valid_host</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">response</span><span class="s2">: </span><span class="s1">Response</span>
+            <span class="s0">if </span><span class="s1">found_www_redirect </span><span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">www_redirect</span><span class="s2">:</span>
+                <span class="s1">url </span><span class="s2">= </span><span class="s1">URL</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">=</span><span class="s1">scope</span><span class="s2">)</span>
+                <span class="s1">redirect_url </span><span class="s2">= </span><span class="s1">url</span><span class="s2">.</span><span class="s1">replace</span><span class="s2">(</span><span class="s1">netloc</span><span class="s2">=</span><span class="s3">&quot;www.&quot; </span><span class="s2">+ </span><span class="s1">url</span><span class="s2">.</span><span class="s1">netloc</span><span class="s2">)</span>
+                <span class="s1">response </span><span class="s2">= </span><span class="s1">RedirectResponse</span><span class="s2">(</span><span class="s1">url</span><span class="s2">=</span><span class="s1">str</span><span class="s2">(</span><span class="s1">redirect_url</span><span class="s2">))</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">response </span><span class="s2">= </span><span class="s1">PlainTextResponse</span><span class="s2">(</span><span class="s3">&quot;Invalid host header&quot;</span><span class="s2">, </span><span class="s1">status_code</span><span class="s2">=</span><span class="s4">400</span><span class="s2">)</span>
+            <span class="s0">await </span><span class="s1">response</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

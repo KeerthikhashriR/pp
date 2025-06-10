@@ -1,0 +1,690 @@
+<html>
+<head>
+<title>pipeline.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #2aacb8;}
+.s5 { color: #6aab73;}
+.s6 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+pipeline.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;Experimental pipeline API functionality. Be careful with this API, it's subject to change.&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">datetime</span>
+<span class="s2">import </span><span class="s1">operator</span>
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">from </span><span class="s1">collections </span><span class="s2">import </span><span class="s1">deque</span>
+<span class="s2">from </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">abc </span><span class="s2">import </span><span class="s1">Container</span>
+<span class="s2">from </span><span class="s1">dataclasses </span><span class="s2">import </span><span class="s1">dataclass</span>
+<span class="s2">from </span><span class="s1">decimal </span><span class="s2">import </span><span class="s1">Decimal</span>
+<span class="s2">from </span><span class="s1">functools </span><span class="s2">import </span><span class="s1">cached_property</span><span class="s3">, </span><span class="s1">partial</span>
+<span class="s2">from </span><span class="s1">re </span><span class="s2">import </span><span class="s1">Pattern</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">TYPE_CHECKING</span><span class="s3">, </span><span class="s1">Annotated</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Callable</span><span class="s3">, </span><span class="s1">Generic</span><span class="s3">, </span><span class="s1">Protocol</span><span class="s3">, </span><span class="s1">TypeVar</span><span class="s3">, </span><span class="s1">Union</span><span class="s3">, </span><span class="s1">overload</span>
+
+<span class="s2">import </span><span class="s1">annotated_types</span>
+
+<span class="s2">if </span><span class="s1">TYPE_CHECKING</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s1">pydantic_core </span><span class="s2">import </span><span class="s1">core_schema </span><span class="s2">as </span><span class="s1">cs</span>
+
+    <span class="s2">from </span><span class="s1">pydantic </span><span class="s2">import </span><span class="s1">GetCoreSchemaHandler</span>
+
+<span class="s2">from </span><span class="s1">pydantic</span><span class="s3">.</span><span class="s1">_internal</span><span class="s3">.</span><span class="s1">_internal_dataclass </span><span class="s2">import </span><span class="s1">slots_true </span><span class="s2">as </span><span class="s1">_slots_true</span>
+
+<span class="s2">if </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">version_info </span><span class="s3">&lt; (</span><span class="s4">3</span><span class="s3">, </span><span class="s4">10</span><span class="s3">):</span>
+    <span class="s1">EllipsisType </span><span class="s3">= </span><span class="s1">type</span><span class="s3">(</span><span class="s1">Ellipsis</span><span class="s3">)</span>
+<span class="s2">else</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s1">types </span><span class="s2">import </span><span class="s1">EllipsisType</span>
+
+<span class="s1">__all__ </span><span class="s3">= [</span><span class="s5">'validate_as'</span><span class="s3">, </span><span class="s5">'validate_as_deferred'</span><span class="s3">, </span><span class="s5">'transform'</span><span class="s3">]</span>
+
+<span class="s1">_slots_frozen </span><span class="s3">= {**</span><span class="s1">_slots_true</span><span class="s3">, </span><span class="s5">'frozen'</span><span class="s3">: </span><span class="s2">True</span><span class="s3">}</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">_slots_frozen</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">_ValidateAs</span><span class="s3">:</span>
+    <span class="s1">tp</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]</span>
+    <span class="s1">strict</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span>
+<span class="s2">class </span><span class="s1">_ValidateAsDefer</span><span class="s3">:</span>
+    <span class="s1">func</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[], </span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]]</span>
+
+    <span class="s3">@</span><span class="s1">cached_property</span>
+    <span class="s2">def </span><span class="s1">tp</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">func</span><span class="s3">()</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">_slots_frozen</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">_Transform</span><span class="s3">:</span>
+    <span class="s1">func</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">Any</span><span class="s3">], </span><span class="s1">Any</span><span class="s3">]</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">_slots_frozen</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">_PipelineOr</span><span class="s3">:</span>
+    <span class="s1">left</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]</span>
+    <span class="s1">right</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">_slots_frozen</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">_PipelineAnd</span><span class="s3">:</span>
+    <span class="s1">left</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]</span>
+    <span class="s1">right</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">_slots_frozen</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">_Eq</span><span class="s3">:</span>
+    <span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">_slots_frozen</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">_NotEq</span><span class="s3">:</span>
+    <span class="s1">value</span><span class="s3">: </span><span class="s1">Any</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">_slots_frozen</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">_In</span><span class="s3">:</span>
+    <span class="s1">values</span><span class="s3">: </span><span class="s1">Container</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">_slots_frozen</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">_NotIn</span><span class="s3">:</span>
+    <span class="s1">values</span><span class="s3">: </span><span class="s1">Container</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]</span>
+
+
+<span class="s1">_ConstraintAnnotation </span><span class="s3">= </span><span class="s1">Union</span><span class="s3">[</span>
+    <span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Le</span><span class="s3">,</span>
+    <span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Ge</span><span class="s3">,</span>
+    <span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Lt</span><span class="s3">,</span>
+    <span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Gt</span><span class="s3">,</span>
+    <span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Len</span><span class="s3">,</span>
+    <span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">MultipleOf</span><span class="s3">,</span>
+    <span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Timezone</span><span class="s3">,</span>
+    <span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Interval</span><span class="s3">,</span>
+    <span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Predicate</span><span class="s3">,</span>
+    <span class="s6"># common predicates not included in annotated_types</span>
+    <span class="s1">_Eq</span><span class="s3">,</span>
+    <span class="s1">_NotEq</span><span class="s3">,</span>
+    <span class="s1">_In</span><span class="s3">,</span>
+    <span class="s1">_NotIn</span><span class="s3">,</span>
+    <span class="s6"># regular expressions</span>
+    <span class="s1">Pattern</span><span class="s3">[</span><span class="s1">str</span><span class="s3">],</span>
+<span class="s3">]</span>
+
+
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">_slots_frozen</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">_Constraint</span><span class="s3">:</span>
+    <span class="s1">constraint</span><span class="s3">: </span><span class="s1">_ConstraintAnnotation</span>
+
+
+<span class="s1">_Step </span><span class="s3">= </span><span class="s1">Union</span><span class="s3">[</span><span class="s1">_ValidateAs</span><span class="s3">, </span><span class="s1">_ValidateAsDefer</span><span class="s3">, </span><span class="s1">_Transform</span><span class="s3">, </span><span class="s1">_PipelineOr</span><span class="s3">, </span><span class="s1">_PipelineAnd</span><span class="s3">, </span><span class="s1">_Constraint</span><span class="s3">]</span>
+
+<span class="s1">_InT </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_InT'</span><span class="s3">)</span>
+<span class="s1">_OutT </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_OutT'</span><span class="s3">)</span>
+<span class="s1">_NewOutT </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_NewOutT'</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">_FieldTypeMarker</span><span class="s3">:</span>
+    <span class="s2">pass</span>
+
+
+<span class="s6"># TODO: ultimately, make this public, see https://github.com/pydantic/pydantic/pull/9459#discussion_r1628197626</span>
+<span class="s6"># Also, make this frozen eventually, but that doesn't work right now because of the generic base</span>
+<span class="s6"># Which attempts to modify __orig_base__ and such.</span>
+<span class="s6"># We could go with a manual freeze, but that seems overkill for now.</span>
+<span class="s3">@</span><span class="s1">dataclass</span><span class="s3">(**</span><span class="s1">_slots_true</span><span class="s3">)</span>
+<span class="s2">class </span><span class="s1">_Pipeline</span><span class="s3">(</span><span class="s1">Generic</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">]):</span>
+    <span class="s0">&quot;&quot;&quot;Abstract representation of a chain of validation, transformation, and parsing steps.&quot;&quot;&quot;</span>
+
+    <span class="s1">_steps</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">_Step</span><span class="s3">, ...]</span>
+
+    <span class="s2">def </span><span class="s1">transform</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">func</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">_OutT</span><span class="s3">], </span><span class="s1">_NewOutT</span><span class="s3">],</span>
+    <span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutT</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Transform the output of the previous step. 
+ 
+        If used as the first step in a pipeline, the type of the field is used. 
+        That is, the transformation is applied to after the value is parsed to the field's type. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutT</span><span class="s3">](</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_steps </span><span class="s3">+ (</span><span class="s1">_Transform</span><span class="s3">(</span><span class="s1">func</span><span class="s3">),))</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">validate_as</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">tp</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">_NewOutT</span><span class="s3">], *, </span><span class="s1">strict</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= ...) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutT</span><span class="s3">]: ...</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">validate_as</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">tp</span><span class="s3">: </span><span class="s1">EllipsisType</span><span class="s3">, *, </span><span class="s1">strict</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= ...) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]:  </span><span class="s6"># type: ignore</span>
+        <span class="s3">...</span>
+
+    <span class="s2">def </span><span class="s1">validate_as</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">tp</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">_NewOutT</span><span class="s3">] | </span><span class="s1">EllipsisType</span><span class="s3">, *, </span><span class="s1">strict</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]:  </span><span class="s6"># type: ignore</span>
+        <span class="s0">&quot;&quot;&quot;Validate / parse the input into a new type. 
+ 
+        If no type is provided, the type of the field is used. 
+ 
+        Types are parsed in Pydantic's `lax` mode by default, 
+        but you can enable `strict` mode by passing `strict=True`. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">tp</span><span class="s3">, </span><span class="s1">EllipsisType</span><span class="s3">):</span>
+            <span class="s2">return </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">](</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_steps </span><span class="s3">+ (</span><span class="s1">_ValidateAs</span><span class="s3">(</span><span class="s1">_FieldTypeMarker</span><span class="s3">, </span><span class="s1">strict</span><span class="s3">=</span><span class="s1">strict</span><span class="s3">),))</span>
+        <span class="s2">return </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutT</span><span class="s3">](</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_steps </span><span class="s3">+ (</span><span class="s1">_ValidateAs</span><span class="s3">(</span><span class="s1">tp</span><span class="s3">, </span><span class="s1">strict</span><span class="s3">=</span><span class="s1">strict</span><span class="s3">),))</span>
+
+    <span class="s2">def </span><span class="s1">validate_as_deferred</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">func</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[], </span><span class="s1">type</span><span class="s3">[</span><span class="s1">_NewOutT</span><span class="s3">]]) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutT</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Parse the input into a new type, deferring resolution of the type until the current class 
+        is fully defined. 
+ 
+        This is useful when you need to reference the class in it's own type annotations. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutT</span><span class="s3">](</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_steps </span><span class="s3">+ (</span><span class="s1">_ValidateAsDefer</span><span class="s3">(</span><span class="s1">func</span><span class="s3">),))</span>
+
+    <span class="s6"># constraints</span>
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutGe</span><span class="s3">], </span><span class="s1">constraint</span><span class="s3">: </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Ge</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutGe</span><span class="s3">]: ...</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutGt</span><span class="s3">], </span><span class="s1">constraint</span><span class="s3">: </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Gt</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutGt</span><span class="s3">]: ...</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutLe</span><span class="s3">], </span><span class="s1">constraint</span><span class="s3">: </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Le</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutLe</span><span class="s3">]: ...</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutLt</span><span class="s3">], </span><span class="s1">constraint</span><span class="s3">: </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Lt</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutLt</span><span class="s3">]: ...</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">constrain</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutLen</span><span class="s3">], </span><span class="s1">constraint</span><span class="s3">: </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Len</span>
+    <span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutLen</span><span class="s3">]: ...</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">constrain</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutT</span><span class="s3">], </span><span class="s1">constraint</span><span class="s3">: </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">MultipleOf</span>
+    <span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutT</span><span class="s3">]: ...</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">constrain</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutDatetime</span><span class="s3">], </span><span class="s1">constraint</span><span class="s3">: </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Timezone</span>
+    <span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutDatetime</span><span class="s3">]: ...</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">], </span><span class="s1">constraint</span><span class="s3">: </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Predicate</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">]: ...</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">constrain</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutInterval</span><span class="s3">], </span><span class="s1">constraint</span><span class="s3">: </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Interval</span>
+    <span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutInterval</span><span class="s3">]: ...</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">], </span><span class="s1">constraint</span><span class="s3">: </span><span class="s1">_Eq</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">]: ...</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">], </span><span class="s1">constraint</span><span class="s3">: </span><span class="s1">_NotEq</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">]: ...</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">], </span><span class="s1">constraint</span><span class="s3">: </span><span class="s1">_In</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">]: ...</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">], </span><span class="s1">constraint</span><span class="s3">: </span><span class="s1">_NotIn</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">]: ...</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutT</span><span class="s3">], </span><span class="s1">constraint</span><span class="s3">: </span><span class="s1">Pattern</span><span class="s3">[</span><span class="s1">str</span><span class="s3">]) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutT</span><span class="s3">]: ...</span>
+
+    <span class="s2">def </span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">constraint</span><span class="s3">: </span><span class="s1">_ConstraintAnnotation</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+        <span class="s0">&quot;&quot;&quot;Constrain a value to meet a certain condition. 
+ 
+        We support most conditions from `annotated_types`, as well as regular expressions. 
+ 
+        Most of the time you'll be calling a shortcut method like `gt`, `lt`, `len`, etc 
+        so you don't need to call this directly. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">](</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_steps </span><span class="s3">+ (</span><span class="s1">_Constraint</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">),))</span>
+
+    <span class="s2">def </span><span class="s1">predicate</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutT</span><span class="s3">], </span><span class="s1">func</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">_NewOutT</span><span class="s3">], </span><span class="s1">bool</span><span class="s3">]) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutT</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Constrain a value to meet a certain predicate.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Predicate</span><span class="s3">(</span><span class="s1">func</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">gt</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutGt</span><span class="s3">], </span><span class="s1">gt</span><span class="s3">: </span><span class="s1">_NewOutGt</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutGt</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Constrain a value to be greater than a certain value.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Gt</span><span class="s3">(</span><span class="s1">gt</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">lt</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutLt</span><span class="s3">], </span><span class="s1">lt</span><span class="s3">: </span><span class="s1">_NewOutLt</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutLt</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Constrain a value to be less than a certain value.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Lt</span><span class="s3">(</span><span class="s1">lt</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">ge</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutGe</span><span class="s3">], </span><span class="s1">ge</span><span class="s3">: </span><span class="s1">_NewOutGe</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutGe</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Constrain a value to be greater than or equal to a certain value.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Ge</span><span class="s3">(</span><span class="s1">ge</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">le</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutLe</span><span class="s3">], </span><span class="s1">le</span><span class="s3">: </span><span class="s1">_NewOutLe</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutLe</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Constrain a value to be less than or equal to a certain value.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Le</span><span class="s3">(</span><span class="s1">le</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">len</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutLen</span><span class="s3">], </span><span class="s1">min_len</span><span class="s3">: </span><span class="s1">int</span><span class="s3">, </span><span class="s1">max_len</span><span class="s3">: </span><span class="s1">int </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutLen</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Constrain a value to have a certain length.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Len</span><span class="s3">(</span><span class="s1">min_len</span><span class="s3">, </span><span class="s1">max_len</span><span class="s3">))</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">multiple_of</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutDiv</span><span class="s3">], </span><span class="s1">multiple_of</span><span class="s3">: </span><span class="s1">_NewOutDiv</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutDiv</span><span class="s3">]: ...</span>
+
+    <span class="s3">@</span><span class="s1">overload</span>
+    <span class="s2">def </span><span class="s1">multiple_of</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutMod</span><span class="s3">], </span><span class="s1">multiple_of</span><span class="s3">: </span><span class="s1">_NewOutMod</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_NewOutMod</span><span class="s3">]: ...</span>
+
+    <span class="s2">def </span><span class="s1">multiple_of</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">], </span><span class="s1">multiple_of</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Constrain a value to be a multiple of a certain number.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">MultipleOf</span><span class="s3">(</span><span class="s1">multiple_of</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">eq</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">], </span><span class="s1">value</span><span class="s3">: </span><span class="s1">_OutT</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Constrain a value to be equal to a certain value.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">_Eq</span><span class="s3">(</span><span class="s1">value</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">not_eq</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">], </span><span class="s1">value</span><span class="s3">: </span><span class="s1">_OutT</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Constrain a value to not be equal to a certain value.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">_NotEq</span><span class="s3">(</span><span class="s1">value</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">in_</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">], </span><span class="s1">values</span><span class="s3">: </span><span class="s1">Container</span><span class="s3">[</span><span class="s1">_OutT</span><span class="s3">]) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Constrain a value to be in a certain set.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">_In</span><span class="s3">(</span><span class="s1">values</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">not_in</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">], </span><span class="s1">values</span><span class="s3">: </span><span class="s1">Container</span><span class="s3">[</span><span class="s1">_OutT</span><span class="s3">]) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OutT</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Constrain a value to not be in a certain set.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">_NotIn</span><span class="s3">(</span><span class="s1">values</span><span class="s3">))</span>
+
+    <span class="s6"># timezone methods</span>
+    <span class="s2">def </span><span class="s1">datetime_tz_naive</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">datetime</span><span class="s3">.</span><span class="s1">datetime</span><span class="s3">]) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">datetime</span><span class="s3">.</span><span class="s1">datetime</span><span class="s3">]:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Timezone</span><span class="s3">(</span><span class="s2">None</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">datetime_tz_aware</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">datetime</span><span class="s3">.</span><span class="s1">datetime</span><span class="s3">]) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">datetime</span><span class="s3">.</span><span class="s1">datetime</span><span class="s3">]:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Timezone</span><span class="s3">(...))</span>
+
+    <span class="s2">def </span><span class="s1">datetime_tz</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">datetime</span><span class="s3">.</span><span class="s1">datetime</span><span class="s3">], </span><span class="s1">tz</span><span class="s3">: </span><span class="s1">datetime</span><span class="s3">.</span><span class="s1">tzinfo</span>
+    <span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">datetime</span><span class="s3">.</span><span class="s1">datetime</span><span class="s3">]:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Timezone</span><span class="s3">(</span><span class="s1">tz</span><span class="s3">))  </span><span class="s6"># type: ignore</span>
+
+    <span class="s2">def </span><span class="s1">datetime_with_tz</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">datetime</span><span class="s3">.</span><span class="s1">datetime</span><span class="s3">], </span><span class="s1">tz</span><span class="s3">: </span><span class="s1">datetime</span><span class="s3">.</span><span class="s1">tzinfo </span><span class="s3">| </span><span class="s2">None</span>
+    <span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">datetime</span><span class="s3">.</span><span class="s1">datetime</span><span class="s3">]:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">transform</span><span class="s3">(</span><span class="s1">partial</span><span class="s3">(</span><span class="s1">datetime</span><span class="s3">.</span><span class="s1">datetime</span><span class="s3">.</span><span class="s1">replace</span><span class="s3">, </span><span class="s1">tzinfo</span><span class="s3">=</span><span class="s1">tz</span><span class="s3">))</span>
+
+    <span class="s6"># string methods</span>
+    <span class="s2">def </span><span class="s1">str_lower</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">transform</span><span class="s3">(</span><span class="s1">str</span><span class="s3">.</span><span class="s1">lower</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">str_upper</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">transform</span><span class="s3">(</span><span class="s1">str</span><span class="s3">.</span><span class="s1">upper</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">str_title</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">transform</span><span class="s3">(</span><span class="s1">str</span><span class="s3">.</span><span class="s1">title</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">str_strip</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">transform</span><span class="s3">(</span><span class="s1">str</span><span class="s3">.</span><span class="s1">strip</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">str_pattern</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">str</span><span class="s3">], </span><span class="s1">pattern</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">constrain</span><span class="s3">(</span><span class="s1">re</span><span class="s3">.</span><span class="s1">compile</span><span class="s3">(</span><span class="s1">pattern</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">str_contains</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">str</span><span class="s3">], </span><span class="s1">substring</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">predicate</span><span class="s3">(</span><span class="s2">lambda </span><span class="s1">v</span><span class="s3">: </span><span class="s1">substring </span><span class="s2">in </span><span class="s1">v</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">str_starts_with</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">str</span><span class="s3">], </span><span class="s1">prefix</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">predicate</span><span class="s3">(</span><span class="s2">lambda </span><span class="s1">v</span><span class="s3">: </span><span class="s1">v</span><span class="s3">.</span><span class="s1">startswith</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">str_ends_with</span><span class="s3">(</span><span class="s1">self</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">str</span><span class="s3">], </span><span class="s1">suffix</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">predicate</span><span class="s3">(</span><span class="s2">lambda </span><span class="s1">v</span><span class="s3">: </span><span class="s1">v</span><span class="s3">.</span><span class="s1">endswith</span><span class="s3">(</span><span class="s1">suffix</span><span class="s3">))</span>
+
+    <span class="s6"># operators</span>
+    <span class="s2">def </span><span class="s1">otherwise</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">other</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_OtherIn</span><span class="s3">, </span><span class="s1">_OtherOut</span><span class="s3">]) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT </span><span class="s3">| </span><span class="s1">_OtherIn</span><span class="s3">, </span><span class="s1">_OutT </span><span class="s3">| </span><span class="s1">_OtherOut</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Combine two validation chains, returning the result of the first chain if it succeeds, and the second chain if it fails.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">_Pipeline</span><span class="s3">((</span><span class="s1">_PipelineOr</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">other</span><span class="s3">),))</span>
+
+    <span class="s1">__or__ </span><span class="s3">= </span><span class="s1">otherwise</span>
+
+    <span class="s2">def </span><span class="s1">then</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">other</span><span class="s3">: </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">_OutT</span><span class="s3">, </span><span class="s1">_OtherOut</span><span class="s3">]) </span><span class="s1">-&gt; _Pipeline</span><span class="s3">[</span><span class="s1">_InT</span><span class="s3">, </span><span class="s1">_OtherOut</span><span class="s3">]:</span>
+        <span class="s0">&quot;&quot;&quot;Pipe the result of one validation chain into another.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">_Pipeline</span><span class="s3">((</span><span class="s1">_PipelineAnd</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">other</span><span class="s3">),))</span>
+
+    <span class="s1">__and__ </span><span class="s3">= </span><span class="s1">then</span>
+
+    <span class="s2">def </span><span class="s1">__get_pydantic_core_schema__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">source_type</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">: </span><span class="s1">GetCoreSchemaHandler</span><span class="s3">) </span><span class="s1">-&gt; cs</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">:</span>
+        <span class="s2">from </span><span class="s1">pydantic_core </span><span class="s2">import </span><span class="s1">core_schema </span><span class="s2">as </span><span class="s1">cs</span>
+
+        <span class="s1">queue </span><span class="s3">= </span><span class="s1">deque</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_steps</span><span class="s3">)</span>
+
+        <span class="s1">s </span><span class="s3">= </span><span class="s2">None</span>
+
+        <span class="s2">while </span><span class="s1">queue</span><span class="s3">:</span>
+            <span class="s1">step </span><span class="s3">= </span><span class="s1">queue</span><span class="s3">.</span><span class="s1">popleft</span><span class="s3">()</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">_apply_step</span><span class="s3">(</span><span class="s1">step</span><span class="s3">, </span><span class="s1">s</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">, </span><span class="s1">source_type</span><span class="s3">)</span>
+
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">s </span><span class="s2">or </span><span class="s1">cs</span><span class="s3">.</span><span class="s1">any_schema</span><span class="s3">()</span>
+        <span class="s2">return </span><span class="s1">s</span>
+
+    <span class="s2">def </span><span class="s1">__supports_type__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">_</span><span class="s3">: </span><span class="s1">_OutT</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError</span>
+
+
+<span class="s1">validate_as </span><span class="s3">= </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">](()).</span><span class="s1">validate_as</span>
+<span class="s1">validate_as_deferred </span><span class="s3">= </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">](()).</span><span class="s1">validate_as_deferred</span>
+<span class="s1">transform </span><span class="s3">= </span><span class="s1">_Pipeline</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">]((</span><span class="s1">_ValidateAs</span><span class="s3">(</span><span class="s1">_FieldTypeMarker</span><span class="s3">),)).</span><span class="s1">transform</span>
+
+
+<span class="s2">def </span><span class="s1">_check_func</span><span class="s3">(</span>
+    <span class="s1">func</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">Any</span><span class="s3">], </span><span class="s1">bool</span><span class="s3">], </span><span class="s1">predicate_err</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">Callable</span><span class="s3">[[], </span><span class="s1">str</span><span class="s3">], </span><span class="s1">s</span><span class="s3">: </span><span class="s1">cs</span><span class="s3">.</span><span class="s1">CoreSchema </span><span class="s3">| </span><span class="s2">None</span>
+<span class="s3">) </span><span class="s1">-&gt; cs</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s1">pydantic_core </span><span class="s2">import </span><span class="s1">core_schema </span><span class="s2">as </span><span class="s1">cs</span>
+
+    <span class="s2">def </span><span class="s1">handler</span><span class="s3">(</span><span class="s1">v</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; Any</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">func</span><span class="s3">(</span><span class="s1">v</span><span class="s3">):</span>
+            <span class="s2">return </span><span class="s1">v</span>
+        <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s5">f'Expected </span><span class="s2">{</span><span class="s1">predicate_err </span><span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">predicate_err</span><span class="s3">, </span><span class="s1">str</span><span class="s3">) </span><span class="s2">else </span><span class="s1">predicate_err</span><span class="s3">()</span><span class="s2">}</span><span class="s5">'</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">s </span><span class="s2">is None</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">cs</span><span class="s3">.</span><span class="s1">no_info_plain_validator_function</span><span class="s3">(</span><span class="s1">handler</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">cs</span><span class="s3">.</span><span class="s1">no_info_after_validator_function</span><span class="s3">(</span><span class="s1">handler</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_apply_step</span><span class="s3">(</span><span class="s1">step</span><span class="s3">: </span><span class="s1">_Step</span><span class="s3">, </span><span class="s1">s</span><span class="s3">: </span><span class="s1">cs</span><span class="s3">.</span><span class="s1">CoreSchema </span><span class="s3">| </span><span class="s2">None</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">: </span><span class="s1">GetCoreSchemaHandler</span><span class="s3">, </span><span class="s1">source_type</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; cs</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s1">pydantic_core </span><span class="s2">import </span><span class="s1">core_schema </span><span class="s2">as </span><span class="s1">cs</span>
+
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">step</span><span class="s3">, </span><span class="s1">_ValidateAs</span><span class="s3">):</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">_apply_parse</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">step</span><span class="s3">.</span><span class="s1">tp</span><span class="s3">, </span><span class="s1">step</span><span class="s3">.</span><span class="s1">strict</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">, </span><span class="s1">source_type</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">step</span><span class="s3">, </span><span class="s1">_ValidateAsDefer</span><span class="s3">):</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">_apply_parse</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">step</span><span class="s3">.</span><span class="s1">tp</span><span class="s3">, </span><span class="s2">False</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">, </span><span class="s1">source_type</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">step</span><span class="s3">, </span><span class="s1">_Transform</span><span class="s3">):</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">_apply_transform</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">step</span><span class="s3">.</span><span class="s1">func</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">step</span><span class="s3">, </span><span class="s1">_Constraint</span><span class="s3">):</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">_apply_constraint</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">step</span><span class="s3">.</span><span class="s1">constraint</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">step</span><span class="s3">, </span><span class="s1">_PipelineOr</span><span class="s3">):</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">cs</span><span class="s3">.</span><span class="s1">union_schema</span><span class="s3">([</span><span class="s1">handler</span><span class="s3">(</span><span class="s1">step</span><span class="s3">.</span><span class="s1">left</span><span class="s3">), </span><span class="s1">handler</span><span class="s3">(</span><span class="s1">step</span><span class="s3">.</span><span class="s1">right</span><span class="s3">)])</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">step</span><span class="s3">, </span><span class="s1">_PipelineAnd</span><span class="s3">)</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">cs</span><span class="s3">.</span><span class="s1">chain_schema</span><span class="s3">([</span><span class="s1">handler</span><span class="s3">(</span><span class="s1">step</span><span class="s3">.</span><span class="s1">left</span><span class="s3">), </span><span class="s1">handler</span><span class="s3">(</span><span class="s1">step</span><span class="s3">.</span><span class="s1">right</span><span class="s3">)])</span>
+    <span class="s2">return </span><span class="s1">s</span>
+
+
+<span class="s2">def </span><span class="s1">_apply_parse</span><span class="s3">(</span>
+    <span class="s1">s</span><span class="s3">: </span><span class="s1">cs</span><span class="s3">.</span><span class="s1">CoreSchema </span><span class="s3">| </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">tp</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">],</span>
+    <span class="s1">strict</span><span class="s3">: </span><span class="s1">bool</span><span class="s3">,</span>
+    <span class="s1">handler</span><span class="s3">: </span><span class="s1">GetCoreSchemaHandler</span><span class="s3">,</span>
+    <span class="s1">source_type</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; cs</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s1">pydantic_core </span><span class="s2">import </span><span class="s1">core_schema </span><span class="s2">as </span><span class="s1">cs</span>
+
+    <span class="s2">from </span><span class="s1">pydantic </span><span class="s2">import </span><span class="s1">Strict</span>
+
+    <span class="s2">if </span><span class="s1">tp </span><span class="s2">is </span><span class="s1">_FieldTypeMarker</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">cs</span><span class="s3">.</span><span class="s1">chain_schema</span><span class="s3">([</span><span class="s1">s</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">(</span><span class="s1">source_type</span><span class="s3">)]) </span><span class="s2">if </span><span class="s1">s </span><span class="s2">else </span><span class="s1">handler</span><span class="s3">(</span><span class="s1">source_type</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">strict</span><span class="s3">:</span>
+        <span class="s1">tp </span><span class="s3">= </span><span class="s1">Annotated</span><span class="s3">[</span><span class="s1">tp</span><span class="s3">, </span><span class="s1">Strict</span><span class="s3">()]  </span><span class="s6"># type: ignore</span>
+
+    <span class="s2">if </span><span class="s1">s </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'any'</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">handler</span><span class="s3">(</span><span class="s1">tp</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">cs</span><span class="s3">.</span><span class="s1">chain_schema</span><span class="s3">([</span><span class="s1">s</span><span class="s3">, </span><span class="s1">handler</span><span class="s3">(</span><span class="s1">tp</span><span class="s3">)]) </span><span class="s2">if </span><span class="s1">s </span><span class="s2">else </span><span class="s1">handler</span><span class="s3">(</span><span class="s1">tp</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_apply_transform</span><span class="s3">(</span>
+    <span class="s1">s</span><span class="s3">: </span><span class="s1">cs</span><span class="s3">.</span><span class="s1">CoreSchema </span><span class="s3">| </span><span class="s2">None</span><span class="s3">, </span><span class="s1">func</span><span class="s3">: </span><span class="s1">Callable</span><span class="s3">[[</span><span class="s1">Any</span><span class="s3">], </span><span class="s1">Any</span><span class="s3">], </span><span class="s1">handler</span><span class="s3">: </span><span class="s1">GetCoreSchemaHandler</span>
+<span class="s3">) </span><span class="s1">-&gt; cs</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s1">pydantic_core </span><span class="s2">import </span><span class="s1">core_schema </span><span class="s2">as </span><span class="s1">cs</span>
+
+    <span class="s2">if </span><span class="s1">s </span><span class="s2">is None</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">cs</span><span class="s3">.</span><span class="s1">no_info_plain_validator_function</span><span class="s3">(</span><span class="s1">func</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'str'</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">func </span><span class="s2">is </span><span class="s1">str</span><span class="s3">.</span><span class="s1">strip</span><span class="s3">:</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+            <span class="s1">s</span><span class="s3">[</span><span class="s5">'strip_whitespace'</span><span class="s3">] = </span><span class="s2">True</span>
+            <span class="s2">return </span><span class="s1">s</span>
+        <span class="s2">elif </span><span class="s1">func </span><span class="s2">is </span><span class="s1">str</span><span class="s3">.</span><span class="s1">lower</span><span class="s3">:</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+            <span class="s1">s</span><span class="s3">[</span><span class="s5">'to_lower'</span><span class="s3">] = </span><span class="s2">True</span>
+            <span class="s2">return </span><span class="s1">s</span>
+        <span class="s2">elif </span><span class="s1">func </span><span class="s2">is </span><span class="s1">str</span><span class="s3">.</span><span class="s1">upper</span><span class="s3">:</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+            <span class="s1">s</span><span class="s3">[</span><span class="s5">'to_upper'</span><span class="s3">] = </span><span class="s2">True</span>
+            <span class="s2">return </span><span class="s1">s</span>
+
+    <span class="s2">return </span><span class="s1">cs</span><span class="s3">.</span><span class="s1">no_info_after_validator_function</span><span class="s3">(</span><span class="s1">func</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_apply_constraint</span><span class="s3">(  </span><span class="s6"># noqa: C901</span>
+    <span class="s1">s</span><span class="s3">: </span><span class="s1">cs</span><span class="s3">.</span><span class="s1">CoreSchema </span><span class="s3">| </span><span class="s2">None</span><span class="s3">, </span><span class="s1">constraint</span><span class="s3">: </span><span class="s1">_ConstraintAnnotation</span>
+<span class="s3">) </span><span class="s1">-&gt; cs</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Apply a single constraint to a schema.&quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">, </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Gt</span><span class="s3">):</span>
+        <span class="s1">gt </span><span class="s3">= </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">gt</span>
+        <span class="s2">if </span><span class="s1">s </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] </span><span class="s2">in </span><span class="s3">{</span><span class="s5">'int'</span><span class="s3">, </span><span class="s5">'float'</span><span class="s3">, </span><span class="s5">'decimal'</span><span class="s3">}:</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+            <span class="s2">if </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'int' </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">gt</span><span class="s3">, </span><span class="s1">int</span><span class="s3">):</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'gt'</span><span class="s3">] = </span><span class="s1">gt</span>
+            <span class="s2">elif </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'float' </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">gt</span><span class="s3">, </span><span class="s1">float</span><span class="s3">):</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'gt'</span><span class="s3">] = </span><span class="s1">gt</span>
+            <span class="s2">elif </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'decimal' </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">gt</span><span class="s3">, </span><span class="s1">Decimal</span><span class="s3">):</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'gt'</span><span class="s3">] = </span><span class="s1">gt</span>
+        <span class="s2">else</span><span class="s3">:</span>
+
+            <span class="s2">def </span><span class="s1">check_gt</span><span class="s3">(</span><span class="s1">v</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+                <span class="s2">return </span><span class="s1">v </span><span class="s3">&gt; </span><span class="s1">gt</span>
+
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">_check_func</span><span class="s3">(</span><span class="s1">check_gt</span><span class="s3">, </span><span class="s5">f'&gt; </span><span class="s2">{</span><span class="s1">gt</span><span class="s2">}</span><span class="s5">'</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">, </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Ge</span><span class="s3">):</span>
+        <span class="s1">ge </span><span class="s3">= </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">ge</span>
+        <span class="s2">if </span><span class="s1">s </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] </span><span class="s2">in </span><span class="s3">{</span><span class="s5">'int'</span><span class="s3">, </span><span class="s5">'float'</span><span class="s3">, </span><span class="s5">'decimal'</span><span class="s3">}:</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+            <span class="s2">if </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'int' </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">ge</span><span class="s3">, </span><span class="s1">int</span><span class="s3">):</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'ge'</span><span class="s3">] = </span><span class="s1">ge</span>
+            <span class="s2">elif </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'float' </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">ge</span><span class="s3">, </span><span class="s1">float</span><span class="s3">):</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'ge'</span><span class="s3">] = </span><span class="s1">ge</span>
+            <span class="s2">elif </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'decimal' </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">ge</span><span class="s3">, </span><span class="s1">Decimal</span><span class="s3">):</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'ge'</span><span class="s3">] = </span><span class="s1">ge</span>
+
+        <span class="s2">def </span><span class="s1">check_ge</span><span class="s3">(</span><span class="s1">v</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">v </span><span class="s3">&gt;= </span><span class="s1">ge</span>
+
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">_check_func</span><span class="s3">(</span><span class="s1">check_ge</span><span class="s3">, </span><span class="s5">f'&gt;= </span><span class="s2">{</span><span class="s1">ge</span><span class="s2">}</span><span class="s5">'</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">, </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Lt</span><span class="s3">):</span>
+        <span class="s1">lt </span><span class="s3">= </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">lt</span>
+        <span class="s2">if </span><span class="s1">s </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] </span><span class="s2">in </span><span class="s3">{</span><span class="s5">'int'</span><span class="s3">, </span><span class="s5">'float'</span><span class="s3">, </span><span class="s5">'decimal'</span><span class="s3">}:</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+            <span class="s2">if </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'int' </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">lt</span><span class="s3">, </span><span class="s1">int</span><span class="s3">):</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'lt'</span><span class="s3">] = </span><span class="s1">lt</span>
+            <span class="s2">elif </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'float' </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">lt</span><span class="s3">, </span><span class="s1">float</span><span class="s3">):</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'lt'</span><span class="s3">] = </span><span class="s1">lt</span>
+            <span class="s2">elif </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'decimal' </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">lt</span><span class="s3">, </span><span class="s1">Decimal</span><span class="s3">):</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'lt'</span><span class="s3">] = </span><span class="s1">lt</span>
+
+        <span class="s2">def </span><span class="s1">check_lt</span><span class="s3">(</span><span class="s1">v</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">v </span><span class="s3">&lt; </span><span class="s1">lt</span>
+
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">_check_func</span><span class="s3">(</span><span class="s1">check_lt</span><span class="s3">, </span><span class="s5">f'&lt; </span><span class="s2">{</span><span class="s1">lt</span><span class="s2">}</span><span class="s5">'</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">, </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Le</span><span class="s3">):</span>
+        <span class="s1">le </span><span class="s3">= </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">le</span>
+        <span class="s2">if </span><span class="s1">s </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] </span><span class="s2">in </span><span class="s3">{</span><span class="s5">'int'</span><span class="s3">, </span><span class="s5">'float'</span><span class="s3">, </span><span class="s5">'decimal'</span><span class="s3">}:</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+            <span class="s2">if </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'int' </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">le</span><span class="s3">, </span><span class="s1">int</span><span class="s3">):</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'le'</span><span class="s3">] = </span><span class="s1">le</span>
+            <span class="s2">elif </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'float' </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">le</span><span class="s3">, </span><span class="s1">float</span><span class="s3">):</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'le'</span><span class="s3">] = </span><span class="s1">le</span>
+            <span class="s2">elif </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'decimal' </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">le</span><span class="s3">, </span><span class="s1">Decimal</span><span class="s3">):</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'le'</span><span class="s3">] = </span><span class="s1">le</span>
+
+        <span class="s2">def </span><span class="s1">check_le</span><span class="s3">(</span><span class="s1">v</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">v </span><span class="s3">&lt;= </span><span class="s1">le</span>
+
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">_check_func</span><span class="s3">(</span><span class="s1">check_le</span><span class="s3">, </span><span class="s5">f'&lt;= </span><span class="s2">{</span><span class="s1">le</span><span class="s2">}</span><span class="s5">'</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">, </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Len</span><span class="s3">):</span>
+        <span class="s1">min_len </span><span class="s3">= </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">min_length</span>
+        <span class="s1">max_len </span><span class="s3">= </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">max_length</span>
+
+        <span class="s2">if </span><span class="s1">s </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] </span><span class="s2">in </span><span class="s3">{</span><span class="s5">'str'</span><span class="s3">, </span><span class="s5">'list'</span><span class="s3">, </span><span class="s5">'tuple'</span><span class="s3">, </span><span class="s5">'set'</span><span class="s3">, </span><span class="s5">'frozenset'</span><span class="s3">, </span><span class="s5">'dict'</span><span class="s3">}:</span>
+            <span class="s2">assert </span><span class="s3">(</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'str'</span>
+                <span class="s2">or </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'list'</span>
+                <span class="s2">or </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'tuple'</span>
+                <span class="s2">or </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'set'</span>
+                <span class="s2">or </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'dict'</span>
+                <span class="s2">or </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'frozenset'</span>
+            <span class="s3">)</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+            <span class="s2">if </span><span class="s1">min_len </span><span class="s3">!= </span><span class="s4">0</span><span class="s3">:</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'min_length'</span><span class="s3">] = </span><span class="s1">min_len</span>
+            <span class="s2">if </span><span class="s1">max_len </span><span class="s2">is not None</span><span class="s3">:</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'max_length'</span><span class="s3">] = </span><span class="s1">max_len</span>
+
+        <span class="s2">def </span><span class="s1">check_len</span><span class="s3">(</span><span class="s1">v</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">max_len </span><span class="s2">is not None</span><span class="s3">:</span>
+                <span class="s2">return </span><span class="s3">(</span><span class="s1">min_len </span><span class="s3">&lt;= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">v</span><span class="s3">)) </span><span class="s2">and </span><span class="s3">(</span><span class="s1">len</span><span class="s3">(</span><span class="s1">v</span><span class="s3">) &lt;= </span><span class="s1">max_len</span><span class="s3">)</span>
+            <span class="s2">return </span><span class="s1">min_len </span><span class="s3">&lt;= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">v</span><span class="s3">)</span>
+
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">_check_func</span><span class="s3">(</span><span class="s1">check_len</span><span class="s3">, </span><span class="s5">f'length &gt;= </span><span class="s2">{</span><span class="s1">min_len</span><span class="s2">} </span><span class="s5">and length &lt;= </span><span class="s2">{</span><span class="s1">max_len</span><span class="s2">}</span><span class="s5">'</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">, </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">MultipleOf</span><span class="s3">):</span>
+        <span class="s1">multiple_of </span><span class="s3">= </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">multiple_of</span>
+        <span class="s2">if </span><span class="s1">s </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] </span><span class="s2">in </span><span class="s3">{</span><span class="s5">'int'</span><span class="s3">, </span><span class="s5">'float'</span><span class="s3">, </span><span class="s5">'decimal'</span><span class="s3">}:</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+            <span class="s2">if </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'int' </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">multiple_of</span><span class="s3">, </span><span class="s1">int</span><span class="s3">):</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'multiple_of'</span><span class="s3">] = </span><span class="s1">multiple_of</span>
+            <span class="s2">elif </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'float' </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">multiple_of</span><span class="s3">, </span><span class="s1">float</span><span class="s3">):</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'multiple_of'</span><span class="s3">] = </span><span class="s1">multiple_of</span>
+            <span class="s2">elif </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'decimal' </span><span class="s2">and </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">multiple_of</span><span class="s3">, </span><span class="s1">Decimal</span><span class="s3">):</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'multiple_of'</span><span class="s3">] = </span><span class="s1">multiple_of</span>
+
+        <span class="s2">def </span><span class="s1">check_multiple_of</span><span class="s3">(</span><span class="s1">v</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">v </span><span class="s3">% </span><span class="s1">multiple_of </span><span class="s3">== </span><span class="s4">0</span>
+
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">_check_func</span><span class="s3">(</span><span class="s1">check_multiple_of</span><span class="s3">, </span><span class="s5">f'% </span><span class="s2">{</span><span class="s1">multiple_of</span><span class="s2">} </span><span class="s5">== 0'</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">, </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Timezone</span><span class="s3">):</span>
+        <span class="s1">tz </span><span class="s3">= </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">tz</span>
+
+        <span class="s2">if </span><span class="s1">tz </span><span class="s2">is </span><span class="s3">...:</span>
+            <span class="s2">if </span><span class="s1">s </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'datetime'</span><span class="s3">:</span>
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'tz_constraint'</span><span class="s3">] = </span><span class="s5">'aware'</span>
+            <span class="s2">else</span><span class="s3">:</span>
+
+                <span class="s2">def </span><span class="s1">check_tz_aware</span><span class="s3">(</span><span class="s1">v</span><span class="s3">: </span><span class="s1">object</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+                    <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">v</span><span class="s3">, </span><span class="s1">datetime</span><span class="s3">.</span><span class="s1">datetime</span><span class="s3">)</span>
+                    <span class="s2">return </span><span class="s1">v</span><span class="s3">.</span><span class="s1">tzinfo </span><span class="s2">is not None</span>
+
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">_check_func</span><span class="s3">(</span><span class="s1">check_tz_aware</span><span class="s3">, </span><span class="s5">'timezone aware'</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+        <span class="s2">elif </span><span class="s1">tz </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">s </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'datetime'</span><span class="s3">:</span>
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+                <span class="s1">s</span><span class="s3">[</span><span class="s5">'tz_constraint'</span><span class="s3">] = </span><span class="s5">'naive'</span>
+            <span class="s2">else</span><span class="s3">:</span>
+
+                <span class="s2">def </span><span class="s1">check_tz_naive</span><span class="s3">(</span><span class="s1">v</span><span class="s3">: </span><span class="s1">object</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+                    <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">v</span><span class="s3">, </span><span class="s1">datetime</span><span class="s3">.</span><span class="s1">datetime</span><span class="s3">)</span>
+                    <span class="s2">return </span><span class="s1">v</span><span class="s3">.</span><span class="s1">tzinfo </span><span class="s2">is None</span>
+
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">_check_func</span><span class="s3">(</span><span class="s1">check_tz_naive</span><span class="s3">, </span><span class="s5">'timezone naive'</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">NotImplementedError</span><span class="s3">(</span><span class="s5">'Constraining to a specific timezone is not yet supported'</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">, </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Interval</span><span class="s3">):</span>
+        <span class="s2">if </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">ge</span><span class="s3">:</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">_apply_constraint</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Ge</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">ge</span><span class="s3">))</span>
+        <span class="s2">if </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">gt</span><span class="s3">:</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">_apply_constraint</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Gt</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">gt</span><span class="s3">))</span>
+        <span class="s2">if </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">le</span><span class="s3">:</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">_apply_constraint</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Le</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">le</span><span class="s3">))</span>
+        <span class="s2">if </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">lt</span><span class="s3">:</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">_apply_constraint</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Lt</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">lt</span><span class="s3">))</span>
+        <span class="s2">assert </span><span class="s1">s </span><span class="s2">is not None</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">, </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">Predicate</span><span class="s3">):</span>
+        <span class="s1">func </span><span class="s3">= </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">func</span>
+
+        <span class="s2">if </span><span class="s1">func</span><span class="s3">.</span><span class="s1">__name__ </span><span class="s3">== </span><span class="s5">'&lt;lambda&gt;'</span><span class="s3">:</span>
+            <span class="s6"># attempt to extract the source code for a lambda function</span>
+            <span class="s6"># to use as the function name in error messages</span>
+            <span class="s6"># TODO: is there a better way? should we just not do this?</span>
+            <span class="s2">import </span><span class="s1">inspect</span>
+
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">source </span><span class="s3">= </span><span class="s1">inspect</span><span class="s3">.</span><span class="s1">getsource</span><span class="s3">(</span><span class="s1">func</span><span class="s3">).</span><span class="s1">strip</span><span class="s3">()</span>
+                <span class="s1">source </span><span class="s3">= </span><span class="s1">source</span><span class="s3">.</span><span class="s1">removesuffix</span><span class="s3">(</span><span class="s5">')'</span><span class="s3">)</span>
+                <span class="s1">lambda_source_code </span><span class="s3">= </span><span class="s5">'`' </span><span class="s3">+ </span><span class="s5">''</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s5">''</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">source</span><span class="s3">.</span><span class="s1">split</span><span class="s3">(</span><span class="s5">'lambda '</span><span class="s3">)[</span><span class="s4">1</span><span class="s3">:]).</span><span class="s1">split</span><span class="s3">(</span><span class="s5">':'</span><span class="s3">)[</span><span class="s4">1</span><span class="s3">:]).</span><span class="s1">strip</span><span class="s3">() + </span><span class="s5">'`'</span>
+            <span class="s2">except </span><span class="s1">OSError</span><span class="s3">:</span>
+                <span class="s6"># stringified annotations</span>
+                <span class="s1">lambda_source_code </span><span class="s3">= </span><span class="s5">'lambda'</span>
+
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">_check_func</span><span class="s3">(</span><span class="s1">func</span><span class="s3">, </span><span class="s1">lambda_source_code</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">_check_func</span><span class="s3">(</span><span class="s1">func</span><span class="s3">, </span><span class="s1">func</span><span class="s3">.</span><span class="s1">__name__</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">, </span><span class="s1">_NotEq</span><span class="s3">):</span>
+        <span class="s1">value </span><span class="s3">= </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">value</span>
+
+        <span class="s2">def </span><span class="s1">check_not_eq</span><span class="s3">(</span><span class="s1">v</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">operator</span><span class="s3">.</span><span class="s1">__ne__</span><span class="s3">(</span><span class="s1">v</span><span class="s3">, </span><span class="s1">value</span><span class="s3">)</span>
+
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">_check_func</span><span class="s3">(</span><span class="s1">check_not_eq</span><span class="s3">, </span><span class="s5">f'!= </span><span class="s2">{</span><span class="s1">value</span><span class="s2">}</span><span class="s5">'</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">, </span><span class="s1">_Eq</span><span class="s3">):</span>
+        <span class="s1">value </span><span class="s3">= </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">value</span>
+
+        <span class="s2">def </span><span class="s1">check_eq</span><span class="s3">(</span><span class="s1">v</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">operator</span><span class="s3">.</span><span class="s1">__eq__</span><span class="s3">(</span><span class="s1">v</span><span class="s3">, </span><span class="s1">value</span><span class="s3">)</span>
+
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">_check_func</span><span class="s3">(</span><span class="s1">check_eq</span><span class="s3">, </span><span class="s5">f'== </span><span class="s2">{</span><span class="s1">value</span><span class="s2">}</span><span class="s5">'</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">, </span><span class="s1">_In</span><span class="s3">):</span>
+        <span class="s1">values </span><span class="s3">= </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">values</span>
+
+        <span class="s2">def </span><span class="s1">check_in</span><span class="s3">(</span><span class="s1">v</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">operator</span><span class="s3">.</span><span class="s1">__contains__</span><span class="s3">(</span><span class="s1">values</span><span class="s3">, </span><span class="s1">v</span><span class="s3">)</span>
+
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">_check_func</span><span class="s3">(</span><span class="s1">check_in</span><span class="s3">, </span><span class="s5">f'in </span><span class="s2">{</span><span class="s1">values</span><span class="s2">}</span><span class="s5">'</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">, </span><span class="s1">_NotIn</span><span class="s3">):</span>
+        <span class="s1">values </span><span class="s3">= </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">values</span>
+
+        <span class="s2">def </span><span class="s1">check_not_in</span><span class="s3">(</span><span class="s1">v</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">operator</span><span class="s3">.</span><span class="s1">__not__</span><span class="s3">(</span><span class="s1">operator</span><span class="s3">.</span><span class="s1">__contains__</span><span class="s3">(</span><span class="s1">values</span><span class="s3">, </span><span class="s1">v</span><span class="s3">))</span>
+
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">_check_func</span><span class="s3">(</span><span class="s1">check_not_in</span><span class="s3">, </span><span class="s5">f'not in </span><span class="s2">{</span><span class="s1">values</span><span class="s2">}</span><span class="s5">'</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">constraint</span><span class="s3">, </span><span class="s1">Pattern</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">s </span><span class="s2">and </span><span class="s1">s</span><span class="s3">[</span><span class="s5">'type'</span><span class="s3">] == </span><span class="s5">'str'</span><span class="s3">:</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+            <span class="s1">s</span><span class="s3">[</span><span class="s5">'pattern'</span><span class="s3">] = </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">pattern</span>
+        <span class="s2">else</span><span class="s3">:</span>
+
+            <span class="s2">def </span><span class="s1">check_pattern</span><span class="s3">(</span><span class="s1">v</span><span class="s3">: </span><span class="s1">object</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+                <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">v</span><span class="s3">, </span><span class="s1">str</span><span class="s3">)</span>
+                <span class="s2">return </span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s1">v</span><span class="s3">) </span><span class="s2">is not None</span>
+
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">_check_func</span><span class="s3">(</span><span class="s1">check_pattern</span><span class="s3">, </span><span class="s5">f'~ </span><span class="s2">{</span><span class="s1">constraint</span><span class="s3">.</span><span class="s1">pattern</span><span class="s2">}</span><span class="s5">'</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+    <span class="s2">return </span><span class="s1">s</span>
+
+
+<span class="s2">class </span><span class="s1">_SupportsRange</span><span class="s3">(</span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">SupportsLe</span><span class="s3">, </span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">SupportsGe</span><span class="s3">, </span><span class="s1">Protocol</span><span class="s3">):</span>
+    <span class="s2">pass</span>
+
+
+<span class="s2">class </span><span class="s1">_SupportsLen</span><span class="s3">(</span><span class="s1">Protocol</span><span class="s3">):</span>
+    <span class="s2">def </span><span class="s1">__len__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">: ...</span>
+
+
+<span class="s1">_NewOutGt </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_NewOutGt'</span><span class="s3">, </span><span class="s1">bound</span><span class="s3">=</span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">SupportsGt</span><span class="s3">)</span>
+<span class="s1">_NewOutGe </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_NewOutGe'</span><span class="s3">, </span><span class="s1">bound</span><span class="s3">=</span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">SupportsGe</span><span class="s3">)</span>
+<span class="s1">_NewOutLt </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_NewOutLt'</span><span class="s3">, </span><span class="s1">bound</span><span class="s3">=</span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">SupportsLt</span><span class="s3">)</span>
+<span class="s1">_NewOutLe </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_NewOutLe'</span><span class="s3">, </span><span class="s1">bound</span><span class="s3">=</span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">SupportsLe</span><span class="s3">)</span>
+<span class="s1">_NewOutLen </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_NewOutLen'</span><span class="s3">, </span><span class="s1">bound</span><span class="s3">=</span><span class="s1">_SupportsLen</span><span class="s3">)</span>
+<span class="s1">_NewOutDiv </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_NewOutDiv'</span><span class="s3">, </span><span class="s1">bound</span><span class="s3">=</span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">SupportsDiv</span><span class="s3">)</span>
+<span class="s1">_NewOutMod </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_NewOutMod'</span><span class="s3">, </span><span class="s1">bound</span><span class="s3">=</span><span class="s1">annotated_types</span><span class="s3">.</span><span class="s1">SupportsMod</span><span class="s3">)</span>
+<span class="s1">_NewOutDatetime </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_NewOutDatetime'</span><span class="s3">, </span><span class="s1">bound</span><span class="s3">=</span><span class="s1">datetime</span><span class="s3">.</span><span class="s1">datetime</span><span class="s3">)</span>
+<span class="s1">_NewOutInterval </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_NewOutInterval'</span><span class="s3">, </span><span class="s1">bound</span><span class="s3">=</span><span class="s1">_SupportsRange</span><span class="s3">)</span>
+<span class="s1">_OtherIn </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_OtherIn'</span><span class="s3">)</span>
+<span class="s1">_OtherOut </span><span class="s3">= </span><span class="s1">TypeVar</span><span class="s3">(</span><span class="s5">'_OtherOut'</span><span class="s3">)</span>
+</pre>
+</body>
+</html>

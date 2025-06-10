@@ -1,0 +1,173 @@
+<html>
+<head>
+<title>GimpGradientFile.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #5f826b; font-style: italic;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #bcbec4;}
+.s5 { color: #2aacb8;}
+.s6 { color: #6aab73;}
+.s7 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+GimpGradientFile.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># Python Imaging Library</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># stuff to read (and render) GIMP gradient files</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0">#       97-08-23 fl     Created</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) Secret Labs AB 1997.</span>
+<span class="s0"># Copyright (c) Fredrik Lundh 1997.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">&quot;&quot;&quot; 
+Stuff to translate curve segments to palette values (derived from 
+the corresponding code in GIMP, written by Federico Mena Quintero. 
+See the GIMP distribution for more information.) 
+&quot;&quot;&quot;</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">math </span><span class="s3">import </span><span class="s1">log</span><span class="s4">, </span><span class="s1">pi</span><span class="s4">, </span><span class="s1">sin</span><span class="s4">, </span><span class="s1">sqrt</span>
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">IO</span><span class="s4">, </span><span class="s1">Callable</span>
+
+<span class="s3">from </span><span class="s4">.</span><span class="s1">_binary </span><span class="s3">import </span><span class="s1">o8</span>
+
+<span class="s1">EPSILON </span><span class="s4">= </span><span class="s5">1e-10</span>
+<span class="s6">&quot;&quot;&quot;&quot;&quot;&quot;  </span><span class="s0"># Enable auto-doc for data member</span>
+
+
+<span class="s3">def </span><span class="s1">linear</span><span class="s4">(</span><span class="s1">middle</span><span class="s4">: </span><span class="s1">float</span><span class="s4">, </span><span class="s1">pos</span><span class="s4">: </span><span class="s1">float</span><span class="s4">) </span><span class="s1">-&gt; float</span><span class="s4">:</span>
+    <span class="s3">if </span><span class="s1">pos </span><span class="s4">&lt;= </span><span class="s1">middle</span><span class="s4">:</span>
+        <span class="s3">if </span><span class="s1">middle </span><span class="s4">&lt; </span><span class="s1">EPSILON</span><span class="s4">:</span>
+            <span class="s3">return </span><span class="s5">0.0</span>
+        <span class="s3">else</span><span class="s4">:</span>
+            <span class="s3">return </span><span class="s5">0.5 </span><span class="s4">* </span><span class="s1">pos </span><span class="s4">/ </span><span class="s1">middle</span>
+    <span class="s3">else</span><span class="s4">:</span>
+        <span class="s1">pos </span><span class="s4">= </span><span class="s1">pos </span><span class="s4">- </span><span class="s1">middle</span>
+        <span class="s1">middle </span><span class="s4">= </span><span class="s5">1.0 </span><span class="s4">- </span><span class="s1">middle</span>
+        <span class="s3">if </span><span class="s1">middle </span><span class="s4">&lt; </span><span class="s1">EPSILON</span><span class="s4">:</span>
+            <span class="s3">return </span><span class="s5">1.0</span>
+        <span class="s3">else</span><span class="s4">:</span>
+            <span class="s3">return </span><span class="s5">0.5 </span><span class="s4">+ </span><span class="s5">0.5 </span><span class="s4">* </span><span class="s1">pos </span><span class="s4">/ </span><span class="s1">middle</span>
+
+
+<span class="s3">def </span><span class="s1">curved</span><span class="s4">(</span><span class="s1">middle</span><span class="s4">: </span><span class="s1">float</span><span class="s4">, </span><span class="s1">pos</span><span class="s4">: </span><span class="s1">float</span><span class="s4">) </span><span class="s1">-&gt; float</span><span class="s4">:</span>
+    <span class="s3">return </span><span class="s1">pos </span><span class="s4">** (</span><span class="s1">log</span><span class="s4">(</span><span class="s5">0.5</span><span class="s4">) / </span><span class="s1">log</span><span class="s4">(</span><span class="s1">max</span><span class="s4">(</span><span class="s1">middle</span><span class="s4">, </span><span class="s1">EPSILON</span><span class="s4">)))</span>
+
+
+<span class="s3">def </span><span class="s1">sine</span><span class="s4">(</span><span class="s1">middle</span><span class="s4">: </span><span class="s1">float</span><span class="s4">, </span><span class="s1">pos</span><span class="s4">: </span><span class="s1">float</span><span class="s4">) </span><span class="s1">-&gt; float</span><span class="s4">:</span>
+    <span class="s3">return </span><span class="s4">(</span><span class="s1">sin</span><span class="s4">((-</span><span class="s1">pi </span><span class="s4">/ </span><span class="s5">2.0</span><span class="s4">) + </span><span class="s1">pi </span><span class="s4">* </span><span class="s1">linear</span><span class="s4">(</span><span class="s1">middle</span><span class="s4">, </span><span class="s1">pos</span><span class="s4">)) + </span><span class="s5">1.0</span><span class="s4">) / </span><span class="s5">2.0</span>
+
+
+<span class="s3">def </span><span class="s1">sphere_increasing</span><span class="s4">(</span><span class="s1">middle</span><span class="s4">: </span><span class="s1">float</span><span class="s4">, </span><span class="s1">pos</span><span class="s4">: </span><span class="s1">float</span><span class="s4">) </span><span class="s1">-&gt; float</span><span class="s4">:</span>
+    <span class="s3">return </span><span class="s1">sqrt</span><span class="s4">(</span><span class="s5">1.0 </span><span class="s4">- (</span><span class="s1">linear</span><span class="s4">(</span><span class="s1">middle</span><span class="s4">, </span><span class="s1">pos</span><span class="s4">) - </span><span class="s5">1.0</span><span class="s4">) ** </span><span class="s5">2</span><span class="s4">)</span>
+
+
+<span class="s3">def </span><span class="s1">sphere_decreasing</span><span class="s4">(</span><span class="s1">middle</span><span class="s4">: </span><span class="s1">float</span><span class="s4">, </span><span class="s1">pos</span><span class="s4">: </span><span class="s1">float</span><span class="s4">) </span><span class="s1">-&gt; float</span><span class="s4">:</span>
+    <span class="s3">return </span><span class="s5">1.0 </span><span class="s4">- </span><span class="s1">sqrt</span><span class="s4">(</span><span class="s5">1.0 </span><span class="s4">- </span><span class="s1">linear</span><span class="s4">(</span><span class="s1">middle</span><span class="s4">, </span><span class="s1">pos</span><span class="s4">) ** </span><span class="s5">2</span><span class="s4">)</span>
+
+
+<span class="s1">SEGMENTS </span><span class="s4">= [</span><span class="s1">linear</span><span class="s4">, </span><span class="s1">curved</span><span class="s4">, </span><span class="s1">sine</span><span class="s4">, </span><span class="s1">sphere_increasing</span><span class="s4">, </span><span class="s1">sphere_decreasing</span><span class="s4">]</span>
+<span class="s6">&quot;&quot;&quot;&quot;&quot;&quot;  </span><span class="s0"># Enable auto-doc for data member</span>
+
+
+<span class="s3">class </span><span class="s1">GradientFile</span><span class="s4">:</span>
+    <span class="s1">gradient</span><span class="s4">: (</span>
+        <span class="s1">list</span><span class="s4">[</span>
+            <span class="s1">tuple</span><span class="s4">[</span>
+                <span class="s1">float</span><span class="s4">,</span>
+                <span class="s1">float</span><span class="s4">,</span>
+                <span class="s1">float</span><span class="s4">,</span>
+                <span class="s1">list</span><span class="s4">[</span><span class="s1">float</span><span class="s4">],</span>
+                <span class="s1">list</span><span class="s4">[</span><span class="s1">float</span><span class="s4">],</span>
+                <span class="s1">Callable</span><span class="s4">[[</span><span class="s1">float</span><span class="s4">, </span><span class="s1">float</span><span class="s4">], </span><span class="s1">float</span><span class="s4">],</span>
+            <span class="s4">]</span>
+        <span class="s4">]</span>
+        <span class="s4">| </span><span class="s3">None</span>
+    <span class="s4">) = </span><span class="s3">None</span>
+
+    <span class="s3">def </span><span class="s1">getpalette</span><span class="s4">(</span><span class="s1">self</span><span class="s4">, </span><span class="s1">entries</span><span class="s4">: </span><span class="s1">int </span><span class="s4">= </span><span class="s5">256</span><span class="s4">) </span><span class="s1">-&gt; tuple</span><span class="s4">[</span><span class="s1">bytes</span><span class="s4">, </span><span class="s1">str</span><span class="s4">]:</span>
+        <span class="s3">assert </span><span class="s1">self</span><span class="s4">.</span><span class="s1">gradient </span><span class="s3">is not None</span>
+        <span class="s1">palette </span><span class="s4">= []</span>
+
+        <span class="s1">ix </span><span class="s4">= </span><span class="s5">0</span>
+        <span class="s1">x0</span><span class="s4">, </span><span class="s1">x1</span><span class="s4">, </span><span class="s1">xm</span><span class="s4">, </span><span class="s1">rgb0</span><span class="s4">, </span><span class="s1">rgb1</span><span class="s4">, </span><span class="s1">segment </span><span class="s4">= </span><span class="s1">self</span><span class="s4">.</span><span class="s1">gradient</span><span class="s4">[</span><span class="s1">ix</span><span class="s4">]</span>
+
+        <span class="s3">for </span><span class="s1">i </span><span class="s3">in </span><span class="s1">range</span><span class="s4">(</span><span class="s1">entries</span><span class="s4">):</span>
+            <span class="s1">x </span><span class="s4">= </span><span class="s1">i </span><span class="s4">/ (</span><span class="s1">entries </span><span class="s4">- </span><span class="s5">1</span><span class="s4">)</span>
+
+            <span class="s3">while </span><span class="s1">x1 </span><span class="s4">&lt; </span><span class="s1">x</span><span class="s4">:</span>
+                <span class="s1">ix </span><span class="s4">+= </span><span class="s5">1</span>
+                <span class="s1">x0</span><span class="s4">, </span><span class="s1">x1</span><span class="s4">, </span><span class="s1">xm</span><span class="s4">, </span><span class="s1">rgb0</span><span class="s4">, </span><span class="s1">rgb1</span><span class="s4">, </span><span class="s1">segment </span><span class="s4">= </span><span class="s1">self</span><span class="s4">.</span><span class="s1">gradient</span><span class="s4">[</span><span class="s1">ix</span><span class="s4">]</span>
+
+            <span class="s1">w </span><span class="s4">= </span><span class="s1">x1 </span><span class="s4">- </span><span class="s1">x0</span>
+
+            <span class="s3">if </span><span class="s1">w </span><span class="s4">&lt; </span><span class="s1">EPSILON</span><span class="s4">:</span>
+                <span class="s1">scale </span><span class="s4">= </span><span class="s1">segment</span><span class="s4">(</span><span class="s5">0.5</span><span class="s4">, </span><span class="s5">0.5</span><span class="s4">)</span>
+            <span class="s3">else</span><span class="s4">:</span>
+                <span class="s1">scale </span><span class="s4">= </span><span class="s1">segment</span><span class="s4">((</span><span class="s1">xm </span><span class="s4">- </span><span class="s1">x0</span><span class="s4">) / </span><span class="s1">w</span><span class="s4">, (</span><span class="s1">x </span><span class="s4">- </span><span class="s1">x0</span><span class="s4">) / </span><span class="s1">w</span><span class="s4">)</span>
+
+            <span class="s0"># expand to RGBA</span>
+            <span class="s1">r </span><span class="s4">= </span><span class="s1">o8</span><span class="s4">(</span><span class="s1">int</span><span class="s4">(</span><span class="s5">255 </span><span class="s4">* ((</span><span class="s1">rgb1</span><span class="s4">[</span><span class="s5">0</span><span class="s4">] - </span><span class="s1">rgb0</span><span class="s4">[</span><span class="s5">0</span><span class="s4">]) * </span><span class="s1">scale </span><span class="s4">+ </span><span class="s1">rgb0</span><span class="s4">[</span><span class="s5">0</span><span class="s4">]) + </span><span class="s5">0.5</span><span class="s4">))</span>
+            <span class="s1">g </span><span class="s4">= </span><span class="s1">o8</span><span class="s4">(</span><span class="s1">int</span><span class="s4">(</span><span class="s5">255 </span><span class="s4">* ((</span><span class="s1">rgb1</span><span class="s4">[</span><span class="s5">1</span><span class="s4">] - </span><span class="s1">rgb0</span><span class="s4">[</span><span class="s5">1</span><span class="s4">]) * </span><span class="s1">scale </span><span class="s4">+ </span><span class="s1">rgb0</span><span class="s4">[</span><span class="s5">1</span><span class="s4">]) + </span><span class="s5">0.5</span><span class="s4">))</span>
+            <span class="s1">b </span><span class="s4">= </span><span class="s1">o8</span><span class="s4">(</span><span class="s1">int</span><span class="s4">(</span><span class="s5">255 </span><span class="s4">* ((</span><span class="s1">rgb1</span><span class="s4">[</span><span class="s5">2</span><span class="s4">] - </span><span class="s1">rgb0</span><span class="s4">[</span><span class="s5">2</span><span class="s4">]) * </span><span class="s1">scale </span><span class="s4">+ </span><span class="s1">rgb0</span><span class="s4">[</span><span class="s5">2</span><span class="s4">]) + </span><span class="s5">0.5</span><span class="s4">))</span>
+            <span class="s1">a </span><span class="s4">= </span><span class="s1">o8</span><span class="s4">(</span><span class="s1">int</span><span class="s4">(</span><span class="s5">255 </span><span class="s4">* ((</span><span class="s1">rgb1</span><span class="s4">[</span><span class="s5">3</span><span class="s4">] - </span><span class="s1">rgb0</span><span class="s4">[</span><span class="s5">3</span><span class="s4">]) * </span><span class="s1">scale </span><span class="s4">+ </span><span class="s1">rgb0</span><span class="s4">[</span><span class="s5">3</span><span class="s4">]) + </span><span class="s5">0.5</span><span class="s4">))</span>
+
+            <span class="s0"># add to palette</span>
+            <span class="s1">palette</span><span class="s4">.</span><span class="s1">append</span><span class="s4">(</span><span class="s1">r </span><span class="s4">+ </span><span class="s1">g </span><span class="s4">+ </span><span class="s1">b </span><span class="s4">+ </span><span class="s1">a</span><span class="s4">)</span>
+
+        <span class="s3">return </span><span class="s7">b&quot;&quot;</span><span class="s4">.</span><span class="s1">join</span><span class="s4">(</span><span class="s1">palette</span><span class="s4">), </span><span class="s6">&quot;RGBA&quot;</span>
+
+
+<span class="s3">class </span><span class="s1">GimpGradientFile</span><span class="s4">(</span><span class="s1">GradientFile</span><span class="s4">):</span>
+    <span class="s2">&quot;&quot;&quot;File handler for GIMP's gradient format.&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__</span><span class="s4">(</span><span class="s1">self</span><span class="s4">, </span><span class="s1">fp</span><span class="s4">: </span><span class="s1">IO</span><span class="s4">[</span><span class="s1">bytes</span><span class="s4">]) </span><span class="s1">-&gt; </span><span class="s3">None</span><span class="s4">:</span>
+        <span class="s3">if </span><span class="s1">fp</span><span class="s4">.</span><span class="s1">readline</span><span class="s4">()[:</span><span class="s5">13</span><span class="s4">] != </span><span class="s7">b&quot;GIMP Gradient&quot;</span><span class="s4">:</span>
+            <span class="s1">msg </span><span class="s4">= </span><span class="s6">&quot;not a GIMP gradient file&quot;</span>
+            <span class="s3">raise </span><span class="s1">SyntaxError</span><span class="s4">(</span><span class="s1">msg</span><span class="s4">)</span>
+
+        <span class="s1">line </span><span class="s4">= </span><span class="s1">fp</span><span class="s4">.</span><span class="s1">readline</span><span class="s4">()</span>
+
+        <span class="s0"># GIMP 1.2 gradient files don't contain a name, but GIMP 1.3 files do</span>
+        <span class="s3">if </span><span class="s1">line</span><span class="s4">.</span><span class="s1">startswith</span><span class="s4">(</span><span class="s7">b&quot;Name: &quot;</span><span class="s4">):</span>
+            <span class="s1">line </span><span class="s4">= </span><span class="s1">fp</span><span class="s4">.</span><span class="s1">readline</span><span class="s4">().</span><span class="s1">strip</span><span class="s4">()</span>
+
+        <span class="s1">count </span><span class="s4">= </span><span class="s1">int</span><span class="s4">(</span><span class="s1">line</span><span class="s4">)</span>
+
+        <span class="s1">self</span><span class="s4">.</span><span class="s1">gradient </span><span class="s4">= []</span>
+
+        <span class="s3">for </span><span class="s1">i </span><span class="s3">in </span><span class="s1">range</span><span class="s4">(</span><span class="s1">count</span><span class="s4">):</span>
+            <span class="s1">s </span><span class="s4">= </span><span class="s1">fp</span><span class="s4">.</span><span class="s1">readline</span><span class="s4">().</span><span class="s1">split</span><span class="s4">()</span>
+            <span class="s1">w </span><span class="s4">= [</span><span class="s1">float</span><span class="s4">(</span><span class="s1">x</span><span class="s4">) </span><span class="s3">for </span><span class="s1">x </span><span class="s3">in </span><span class="s1">s</span><span class="s4">[:</span><span class="s5">11</span><span class="s4">]]</span>
+
+            <span class="s1">x0</span><span class="s4">, </span><span class="s1">x1 </span><span class="s4">= </span><span class="s1">w</span><span class="s4">[</span><span class="s5">0</span><span class="s4">], </span><span class="s1">w</span><span class="s4">[</span><span class="s5">2</span><span class="s4">]</span>
+            <span class="s1">xm </span><span class="s4">= </span><span class="s1">w</span><span class="s4">[</span><span class="s5">1</span><span class="s4">]</span>
+            <span class="s1">rgb0 </span><span class="s4">= </span><span class="s1">w</span><span class="s4">[</span><span class="s5">3</span><span class="s4">:</span><span class="s5">7</span><span class="s4">]</span>
+            <span class="s1">rgb1 </span><span class="s4">= </span><span class="s1">w</span><span class="s4">[</span><span class="s5">7</span><span class="s4">:</span><span class="s5">11</span><span class="s4">]</span>
+
+            <span class="s1">segment </span><span class="s4">= </span><span class="s1">SEGMENTS</span><span class="s4">[</span><span class="s1">int</span><span class="s4">(</span><span class="s1">s</span><span class="s4">[</span><span class="s5">11</span><span class="s4">])]</span>
+            <span class="s1">cspace </span><span class="s4">= </span><span class="s1">int</span><span class="s4">(</span><span class="s1">s</span><span class="s4">[</span><span class="s5">12</span><span class="s4">])</span>
+
+            <span class="s3">if </span><span class="s1">cspace </span><span class="s4">!= </span><span class="s5">0</span><span class="s4">:</span>
+                <span class="s1">msg </span><span class="s4">= </span><span class="s6">&quot;cannot handle HSV colour space&quot;</span>
+                <span class="s3">raise </span><span class="s1">OSError</span><span class="s4">(</span><span class="s1">msg</span><span class="s4">)</span>
+
+            <span class="s1">self</span><span class="s4">.</span><span class="s1">gradient</span><span class="s4">.</span><span class="s1">append</span><span class="s4">((</span><span class="s1">x0</span><span class="s4">, </span><span class="s1">x1</span><span class="s4">, </span><span class="s1">xm</span><span class="s4">, </span><span class="s1">rgb0</span><span class="s4">, </span><span class="s1">rgb1</span><span class="s4">, </span><span class="s1">segment</span><span class="s4">))</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,570 @@
+<html>
+<head>
+<title>_generics.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+.s5 { color: #6aab73;}
+.s6 { color: #5f826b; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_generics.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">import </span><span class="s1">types</span>
+<span class="s0">import </span><span class="s1">typing</span>
+<span class="s0">from </span><span class="s1">collections </span><span class="s0">import </span><span class="s1">ChainMap</span>
+<span class="s0">from </span><span class="s1">collections</span><span class="s2">.</span><span class="s1">abc </span><span class="s0">import </span><span class="s1">Iterator</span><span class="s2">, </span><span class="s1">Mapping</span>
+<span class="s0">from </span><span class="s1">contextlib </span><span class="s0">import </span><span class="s1">contextmanager</span>
+<span class="s0">from </span><span class="s1">contextvars </span><span class="s0">import </span><span class="s1">ContextVar</span>
+<span class="s0">from </span><span class="s1">itertools </span><span class="s0">import </span><span class="s1">zip_longest</span>
+<span class="s0">from </span><span class="s1">types </span><span class="s0">import </span><span class="s1">prepare_class</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">TYPE_CHECKING</span><span class="s2">, </span><span class="s1">Annotated</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">TypeVar</span>
+<span class="s0">from </span><span class="s1">weakref </span><span class="s0">import </span><span class="s1">WeakValueDictionary</span>
+
+<span class="s0">import </span><span class="s1">typing_extensions</span>
+<span class="s0">from </span><span class="s1">typing_inspection </span><span class="s0">import </span><span class="s1">typing_objects</span>
+<span class="s0">from </span><span class="s1">typing_inspection</span><span class="s2">.</span><span class="s1">introspection </span><span class="s0">import </span><span class="s1">is_union_origin</span>
+
+<span class="s0">from </span><span class="s2">. </span><span class="s0">import </span><span class="s1">_typing_extra</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">_core_utils </span><span class="s0">import </span><span class="s1">get_type_ref</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">_forward_ref </span><span class="s0">import </span><span class="s1">PydanticRecursiveRef</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">_utils </span><span class="s0">import </span><span class="s1">all_identical</span><span class="s2">, </span><span class="s1">is_model_class</span>
+
+<span class="s0">if </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">version_info </span><span class="s2">&gt;= (</span><span class="s3">3</span><span class="s2">, </span><span class="s3">10</span><span class="s2">):</span>
+    <span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">_UnionGenericAlias  </span><span class="s4"># type: ignore[attr-defined]</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+    <span class="s0">from </span><span class="s2">..</span><span class="s1">main </span><span class="s0">import </span><span class="s1">BaseModel</span>
+
+<span class="s1">GenericTypesCacheKey </span><span class="s2">= </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...]]</span>
+
+<span class="s4"># Note: We want to remove LimitedDict, but to do this, we'd need to improve the handling of generics caching.</span>
+<span class="s4">#   Right now, to handle recursive generics, we some types must remain cached for brief periods without references.</span>
+<span class="s4">#   By chaining the WeakValuesDict with a LimitedDict, we have a way to retain caching for all types with references,</span>
+<span class="s4">#   while also retaining a limited number of types even without references. This is generally enough to build</span>
+<span class="s4">#   specific recursive generic models without losing required items out of the cache.</span>
+
+<span class="s1">KT </span><span class="s2">= </span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s5">'KT'</span><span class="s2">)</span>
+<span class="s1">VT </span><span class="s2">= </span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s5">'VT'</span><span class="s2">)</span>
+<span class="s1">_LIMITED_DICT_SIZE </span><span class="s2">= </span><span class="s3">100</span>
+
+
+<span class="s0">class </span><span class="s1">LimitedDict</span><span class="s2">(</span><span class="s1">dict</span><span class="s2">[</span><span class="s1">KT</span><span class="s2">, </span><span class="s1">VT</span><span class="s2">]):</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">size_limit</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s1">_LIMITED_DICT_SIZE</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">size_limit </span><span class="s2">= </span><span class="s1">size_limit</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">__setitem__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">: </span><span class="s1">KT</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">VT</span><span class="s2">, /) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__setitem__</span><span class="s2">(</span><span class="s1">key</span><span class="s2">, </span><span class="s1">value</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) &gt; </span><span class="s1">self</span><span class="s2">.</span><span class="s1">size_limit</span><span class="s2">:</span>
+            <span class="s1">excess </span><span class="s2">= </span><span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) - </span><span class="s1">self</span><span class="s2">.</span><span class="s1">size_limit </span><span class="s2">+ </span><span class="s1">self</span><span class="s2">.</span><span class="s1">size_limit </span><span class="s2">// </span><span class="s3">10</span>
+            <span class="s1">to_remove </span><span class="s2">= </span><span class="s1">list</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">())[:</span><span class="s1">excess</span><span class="s2">]</span>
+            <span class="s0">for </span><span class="s1">k </span><span class="s0">in </span><span class="s1">to_remove</span><span class="s2">:</span>
+                <span class="s0">del </span><span class="s1">self</span><span class="s2">[</span><span class="s1">k</span><span class="s2">]</span>
+
+
+<span class="s4"># weak dictionaries allow the dynamically created parametrized versions of generic models to get collected</span>
+<span class="s4"># once they are no longer referenced by the caller.</span>
+<span class="s1">GenericTypesCache </span><span class="s2">= </span><span class="s1">WeakValueDictionary</span><span class="s2">[</span><span class="s1">GenericTypesCacheKey</span><span class="s2">, </span><span class="s5">'type[BaseModel]'</span><span class="s2">]</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+
+    <span class="s0">class </span><span class="s1">DeepChainMap</span><span class="s2">(</span><span class="s1">ChainMap</span><span class="s2">[</span><span class="s1">KT</span><span class="s2">, </span><span class="s1">VT</span><span class="s2">]):  </span><span class="s4"># type: ignore</span>
+        <span class="s2">...</span>
+
+<span class="s0">else</span><span class="s2">:</span>
+
+    <span class="s0">class </span><span class="s1">DeepChainMap</span><span class="s2">(</span><span class="s1">ChainMap</span><span class="s2">):</span>
+        <span class="s6">&quot;&quot;&quot;Variant of ChainMap that allows direct updates to inner scopes. 
+ 
+        Taken from https://docs.python.org/3/library/collections.html#collections.ChainMap, 
+        with some light modifications for this use case. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0">def </span><span class="s1">clear</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s0">for </span><span class="s1">mapping </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">maps</span><span class="s2">:</span>
+                <span class="s1">mapping</span><span class="s2">.</span><span class="s1">clear</span><span class="s2">()</span>
+
+        <span class="s0">def </span><span class="s1">__setitem__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">: </span><span class="s1">KT</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">VT</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s0">for </span><span class="s1">mapping </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">maps</span><span class="s2">:</span>
+                <span class="s1">mapping</span><span class="s2">[</span><span class="s1">key</span><span class="s2">] = </span><span class="s1">value</span>
+
+        <span class="s0">def </span><span class="s1">__delitem__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">: </span><span class="s1">KT</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s1">hit </span><span class="s2">= </span><span class="s0">False</span>
+            <span class="s0">for </span><span class="s1">mapping </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">maps</span><span class="s2">:</span>
+                <span class="s0">if </span><span class="s1">key </span><span class="s0">in </span><span class="s1">mapping</span><span class="s2">:</span>
+                    <span class="s0">del </span><span class="s1">mapping</span><span class="s2">[</span><span class="s1">key</span><span class="s2">]</span>
+                    <span class="s1">hit </span><span class="s2">= </span><span class="s0">True</span>
+            <span class="s0">if not </span><span class="s1">hit</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">KeyError</span><span class="s2">(</span><span class="s1">key</span><span class="s2">)</span>
+
+
+<span class="s4"># Despite the fact that LimitedDict _seems_ no longer necessary, I'm very nervous to actually remove it</span>
+<span class="s4"># and discover later on that we need to re-add all this infrastructure...</span>
+<span class="s4"># _GENERIC_TYPES_CACHE = DeepChainMap(GenericTypesCache(), LimitedDict())</span>
+
+<span class="s1">_GENERIC_TYPES_CACHE</span><span class="s2">: </span><span class="s1">ContextVar</span><span class="s2">[</span><span class="s1">GenericTypesCache </span><span class="s2">| </span><span class="s0">None</span><span class="s2">] = </span><span class="s1">ContextVar</span><span class="s2">(</span><span class="s5">'_GENERIC_TYPES_CACHE'</span><span class="s2">, </span><span class="s1">default</span><span class="s2">=</span><span class="s0">None</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">PydanticGenericMetadata</span><span class="s2">(</span><span class="s1">typing_extensions</span><span class="s2">.</span><span class="s1">TypedDict</span><span class="s2">):</span>
+    <span class="s1">origin</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">] | </span><span class="s0">None  </span><span class="s4"># analogous to typing._GenericAlias.__origin__</span>
+    <span class="s1">args</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...]  </span><span class="s4"># analogous to typing._GenericAlias.__args__</span>
+    <span class="s1">parameters</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">TypeVar</span><span class="s2">, ...]  </span><span class="s4"># analogous to typing.Generic.__parameters__</span>
+
+
+<span class="s0">def </span><span class="s1">create_generic_submodel</span><span class="s2">(</span>
+    <span class="s1">model_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">origin</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">], </span><span class="s1">args</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...], </span><span class="s1">params</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...]</span>
+<span class="s2">) </span><span class="s1">-&gt; type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">]:</span>
+    <span class="s6">&quot;&quot;&quot;Dynamically create a submodel of a provided (generic) BaseModel. 
+ 
+    This is used when producing concrete parametrizations of generic models. This function 
+    only *creates* the new subclass; the schema/validators/serialization must be updated to 
+    reflect a concrete parametrization elsewhere. 
+ 
+    Args: 
+        model_name: The name of the newly created model. 
+        origin: The base class for the new model to inherit from. 
+        args: A tuple of generic metadata arguments. 
+        params: A tuple of generic metadata parameters. 
+ 
+    Returns: 
+        The created submodel. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">namespace</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] = {</span><span class="s5">'__module__'</span><span class="s2">: </span><span class="s1">origin</span><span class="s2">.</span><span class="s1">__module__</span><span class="s2">}</span>
+    <span class="s1">bases </span><span class="s2">= (</span><span class="s1">origin</span><span class="s2">,)</span>
+    <span class="s1">meta</span><span class="s2">, </span><span class="s1">ns</span><span class="s2">, </span><span class="s1">kwds </span><span class="s2">= </span><span class="s1">prepare_class</span><span class="s2">(</span><span class="s1">model_name</span><span class="s2">, </span><span class="s1">bases</span><span class="s2">)</span>
+    <span class="s1">namespace</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">ns</span><span class="s2">)</span>
+    <span class="s1">created_model </span><span class="s2">= </span><span class="s1">meta</span><span class="s2">(</span>
+        <span class="s1">model_name</span><span class="s2">,</span>
+        <span class="s1">bases</span><span class="s2">,</span>
+        <span class="s1">namespace</span><span class="s2">,</span>
+        <span class="s1">__pydantic_generic_metadata__</span><span class="s2">={</span>
+            <span class="s5">'origin'</span><span class="s2">: </span><span class="s1">origin</span><span class="s2">,</span>
+            <span class="s5">'args'</span><span class="s2">: </span><span class="s1">args</span><span class="s2">,</span>
+            <span class="s5">'parameters'</span><span class="s2">: </span><span class="s1">params</span><span class="s2">,</span>
+        <span class="s2">},</span>
+        <span class="s1">__pydantic_reset_parent_namespace__</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s2">**</span><span class="s1">kwds</span><span class="s2">,</span>
+    <span class="s2">)</span>
+
+    <span class="s1">model_module</span><span class="s2">, </span><span class="s1">called_globally </span><span class="s2">= </span><span class="s1">_get_caller_frame_info</span><span class="s2">(</span><span class="s1">depth</span><span class="s2">=</span><span class="s3">3</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">called_globally</span><span class="s2">:  </span><span class="s4"># create global reference and therefore allow pickling</span>
+        <span class="s1">object_by_reference </span><span class="s2">= </span><span class="s0">None</span>
+        <span class="s1">reference_name </span><span class="s2">= </span><span class="s1">model_name</span>
+        <span class="s1">reference_module_globals </span><span class="s2">= </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">modules</span><span class="s2">[</span><span class="s1">created_model</span><span class="s2">.</span><span class="s1">__module__</span><span class="s2">].</span><span class="s1">__dict__</span>
+        <span class="s0">while </span><span class="s1">object_by_reference </span><span class="s0">is not </span><span class="s1">created_model</span><span class="s2">:</span>
+            <span class="s1">object_by_reference </span><span class="s2">= </span><span class="s1">reference_module_globals</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s1">reference_name</span><span class="s2">, </span><span class="s1">created_model</span><span class="s2">)</span>
+            <span class="s1">reference_name </span><span class="s2">+= </span><span class="s5">'_'</span>
+
+    <span class="s0">return </span><span class="s1">created_model</span>
+
+
+<span class="s0">def </span><span class="s1">_get_caller_frame_info</span><span class="s2">(</span><span class="s1">depth</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s3">2</span><span class="s2">) </span><span class="s1">-&gt; tuple</span><span class="s2">[</span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">, </span><span class="s1">bool</span><span class="s2">]:</span>
+    <span class="s6">&quot;&quot;&quot;Used inside a function to check whether it was called globally. 
+ 
+    Args: 
+        depth: The depth to get the frame. 
+ 
+    Returns: 
+        A tuple contains `module_name` and `called_globally`. 
+ 
+    Raises: 
+        RuntimeError: If the function is not called inside a function. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s1">previous_caller_frame </span><span class="s2">= </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">_getframe</span><span class="s2">(</span><span class="s1">depth</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">ValueError </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s5">'This function must be used inside another function'</span><span class="s2">) </span><span class="s0">from </span><span class="s1">e</span>
+    <span class="s0">except </span><span class="s1">AttributeError</span><span class="s2">:  </span><span class="s4"># sys module does not have _getframe function, so there's nothing we can do about it</span>
+        <span class="s0">return None</span><span class="s2">, </span><span class="s0">False</span>
+    <span class="s1">frame_globals </span><span class="s2">= </span><span class="s1">previous_caller_frame</span><span class="s2">.</span><span class="s1">f_globals</span>
+    <span class="s0">return </span><span class="s1">frame_globals</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">'__name__'</span><span class="s2">), </span><span class="s1">previous_caller_frame</span><span class="s2">.</span><span class="s1">f_locals </span><span class="s0">is </span><span class="s1">frame_globals</span>
+
+
+<span class="s1">DictValues</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">] = {}.</span><span class="s1">values</span><span class="s2">().</span><span class="s1">__class__</span>
+
+
+<span class="s0">def </span><span class="s1">iter_contained_typevars</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Iterator</span><span class="s2">[</span><span class="s1">TypeVar</span><span class="s2">]:</span>
+    <span class="s6">&quot;&quot;&quot;Recursively iterate through all subtypes and type args of `v` and yield any typevars that are found. 
+ 
+    This is inspired as an alternative to directly accessing the `__parameters__` attribute of a GenericAlias, 
+    since __parameters__ of (nested) generic BaseModel subclasses won't show up in that list. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">TypeVar</span><span class="s2">):</span>
+        <span class="s0">yield </span><span class="s1">v</span>
+    <span class="s0">elif </span><span class="s1">is_model_class</span><span class="s2">(</span><span class="s1">v</span><span class="s2">):</span>
+        <span class="s0">yield from </span><span class="s1">v</span><span class="s2">.</span><span class="s1">__pydantic_generic_metadata__</span><span class="s2">[</span><span class="s5">'parameters'</span><span class="s2">]</span>
+    <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, (</span><span class="s1">DictValues</span><span class="s2">, </span><span class="s1">list</span><span class="s2">)):</span>
+        <span class="s0">for </span><span class="s1">var </span><span class="s0">in </span><span class="s1">v</span><span class="s2">:</span>
+            <span class="s0">yield from </span><span class="s1">iter_contained_typevars</span><span class="s2">(</span><span class="s1">var</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s1">args </span><span class="s2">= </span><span class="s1">get_args</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+        <span class="s0">for </span><span class="s1">arg </span><span class="s0">in </span><span class="s1">args</span><span class="s2">:</span>
+            <span class="s0">yield from </span><span class="s1">iter_contained_typevars</span><span class="s2">(</span><span class="s1">arg</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">get_args</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+    <span class="s1">pydantic_generic_metadata</span><span class="s2">: </span><span class="s1">PydanticGenericMetadata </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s5">'__pydantic_generic_metadata__'</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">pydantic_generic_metadata</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">pydantic_generic_metadata</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">'args'</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">typing_extensions</span><span class="s2">.</span><span class="s1">get_args</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">get_origin</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+    <span class="s1">pydantic_generic_metadata</span><span class="s2">: </span><span class="s1">PydanticGenericMetadata </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s5">'__pydantic_generic_metadata__'</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">pydantic_generic_metadata</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">pydantic_generic_metadata</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">'origin'</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">typing_extensions</span><span class="s2">.</span><span class="s1">get_origin</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">get_standard_typevars_map</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; dict</span><span class="s2">[</span><span class="s1">TypeVar</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot;Package a generic type's typevars and parametrization (if present) into a dictionary compatible with the 
+    `replace_types` function. Specifically, this works with standard typing generics and typing._GenericAlias. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">origin </span><span class="s2">= </span><span class="s1">get_origin</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">origin </span><span class="s0">is None</span><span class="s2">:</span>
+        <span class="s0">return None</span>
+    <span class="s0">if not </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">origin</span><span class="s2">, </span><span class="s5">'__parameters__'</span><span class="s2">):</span>
+        <span class="s0">return None</span>
+
+    <span class="s4"># In this case, we know that cls is a _GenericAlias, and origin is the generic type</span>
+    <span class="s4"># So it is safe to access cls.__args__ and origin.__parameters__</span>
+    <span class="s1">args</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...] = </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__args__  </span><span class="s4"># type: ignore</span>
+    <span class="s1">parameters</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">TypeVar</span><span class="s2">, ...] = </span><span class="s1">origin</span><span class="s2">.</span><span class="s1">__parameters__</span>
+    <span class="s0">return </span><span class="s1">dict</span><span class="s2">(</span><span class="s1">zip</span><span class="s2">(</span><span class="s1">parameters</span><span class="s2">, </span><span class="s1">args</span><span class="s2">))</span>
+
+
+<span class="s0">def </span><span class="s1">get_model_typevars_map</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">]) </span><span class="s1">-&gt; dict</span><span class="s2">[</span><span class="s1">TypeVar</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]:</span>
+    <span class="s6">&quot;&quot;&quot;Package a generic BaseModel's typevars and concrete parametrization (if present) into a dictionary compatible 
+    with the `replace_types` function. 
+ 
+    Since BaseModel.__class_getitem__ does not produce a typing._GenericAlias, and the BaseModel generic info is 
+    stored in the __pydantic_generic_metadata__ attribute, we need special handling here. 
+    &quot;&quot;&quot;</span>
+    <span class="s4"># TODO: This could be unified with `get_standard_typevars_map` if we stored the generic metadata</span>
+    <span class="s4">#   in the __origin__, __args__, and __parameters__ attributes of the model.</span>
+    <span class="s1">generic_metadata </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__pydantic_generic_metadata__</span>
+    <span class="s1">origin </span><span class="s2">= </span><span class="s1">generic_metadata</span><span class="s2">[</span><span class="s5">'origin'</span><span class="s2">]</span>
+    <span class="s1">args </span><span class="s2">= </span><span class="s1">generic_metadata</span><span class="s2">[</span><span class="s5">'args'</span><span class="s2">]</span>
+    <span class="s0">if not </span><span class="s1">args</span><span class="s2">:</span>
+        <span class="s4"># No need to go into `iter_contained_typevars`:</span>
+        <span class="s0">return </span><span class="s2">{}</span>
+    <span class="s0">return </span><span class="s1">dict</span><span class="s2">(</span><span class="s1">zip</span><span class="s2">(</span><span class="s1">iter_contained_typevars</span><span class="s2">(</span><span class="s1">origin</span><span class="s2">), </span><span class="s1">args</span><span class="s2">))</span>
+
+
+<span class="s0">def </span><span class="s1">replace_types</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">type_map</span><span class="s2">: </span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">TypeVar</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot;Return type with all occurrences of `type_map` keys recursively replaced with their values. 
+ 
+    Args: 
+        type_: The class or generic alias. 
+        type_map: Mapping from `TypeVar` instance to concrete types. 
+ 
+    Returns: 
+        A new type representing the basic structure of `type_` with all 
+        `typevar_map` keys recursively replaced. 
+ 
+    Example: 
+        ```python 
+        from typing import List, Union 
+ 
+        from pydantic._internal._generics import replace_types 
+ 
+        replace_types(tuple[str, Union[List[str], float]], {str: int}) 
+        #&gt; tuple[int, Union[List[int], float]] 
+        ``` 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if not </span><span class="s1">type_map</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">type_</span>
+
+    <span class="s1">type_args </span><span class="s2">= </span><span class="s1">get_args</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">)</span>
+    <span class="s1">origin_type </span><span class="s2">= </span><span class="s1">get_origin</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">)</span>
+
+    <span class="s0">if </span><span class="s1">typing_objects</span><span class="s2">.</span><span class="s1">is_annotated</span><span class="s2">(</span><span class="s1">origin_type</span><span class="s2">):</span>
+        <span class="s1">annotated_type</span><span class="s2">, *</span><span class="s1">annotations </span><span class="s2">= </span><span class="s1">type_args</span>
+        <span class="s1">annotated_type </span><span class="s2">= </span><span class="s1">replace_types</span><span class="s2">(</span><span class="s1">annotated_type</span><span class="s2">, </span><span class="s1">type_map</span><span class="s2">)</span>
+        <span class="s4"># TODO remove parentheses when we drop support for Python 3.10:</span>
+        <span class="s0">return </span><span class="s1">Annotated</span><span class="s2">[(</span><span class="s1">annotated_type</span><span class="s2">, *</span><span class="s1">annotations</span><span class="s2">)]</span>
+
+    <span class="s4"># Having type args is a good indicator that this is a typing special form</span>
+    <span class="s4"># instance or a generic alias of some sort.</span>
+    <span class="s0">if </span><span class="s1">type_args</span><span class="s2">:</span>
+        <span class="s1">resolved_type_args </span><span class="s2">= </span><span class="s1">tuple</span><span class="s2">(</span><span class="s1">replace_types</span><span class="s2">(</span><span class="s1">arg</span><span class="s2">, </span><span class="s1">type_map</span><span class="s2">) </span><span class="s0">for </span><span class="s1">arg </span><span class="s0">in </span><span class="s1">type_args</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">all_identical</span><span class="s2">(</span><span class="s1">type_args</span><span class="s2">, </span><span class="s1">resolved_type_args</span><span class="s2">):</span>
+            <span class="s4"># If all arguments are the same, there is no need to modify the</span>
+            <span class="s4"># type or create a new object at all</span>
+            <span class="s0">return </span><span class="s1">type_</span>
+
+        <span class="s0">if </span><span class="s2">(</span>
+            <span class="s1">origin_type </span><span class="s0">is not None</span>
+            <span class="s0">and </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">, </span><span class="s1">_typing_extra</span><span class="s2">.</span><span class="s1">typing_base</span><span class="s2">)</span>
+            <span class="s0">and not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">origin_type</span><span class="s2">, </span><span class="s1">_typing_extra</span><span class="s2">.</span><span class="s1">typing_base</span><span class="s2">)</span>
+            <span class="s0">and </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">, </span><span class="s5">'_name'</span><span class="s2">, </span><span class="s0">None</span><span class="s2">) </span><span class="s0">is not None</span>
+        <span class="s2">):</span>
+            <span class="s4"># In python &lt; 3.9 generic aliases don't exist so any of these like `list`,</span>
+            <span class="s4"># `type` or `collections.abc.Callable` need to be translated.</span>
+            <span class="s4"># See: https://www.python.org/dev/peps/pep-0585</span>
+            <span class="s1">origin_type </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">typing</span><span class="s2">, </span><span class="s1">type_</span><span class="s2">.</span><span class="s1">_name</span><span class="s2">)</span>
+        <span class="s0">assert </span><span class="s1">origin_type </span><span class="s0">is not None</span>
+
+        <span class="s0">if </span><span class="s1">is_union_origin</span><span class="s2">(</span><span class="s1">origin_type</span><span class="s2">):</span>
+            <span class="s0">if </span><span class="s1">any</span><span class="s2">(</span><span class="s1">typing_objects</span><span class="s2">.</span><span class="s1">is_any</span><span class="s2">(</span><span class="s1">arg</span><span class="s2">) </span><span class="s0">for </span><span class="s1">arg </span><span class="s0">in </span><span class="s1">resolved_type_args</span><span class="s2">):</span>
+                <span class="s4"># `Any | T` ~ `Any`:</span>
+                <span class="s1">resolved_type_args </span><span class="s2">= (</span><span class="s1">Any</span><span class="s2">,)</span>
+            <span class="s4"># `Never | T` ~ `T`:</span>
+            <span class="s1">resolved_type_args </span><span class="s2">= </span><span class="s1">tuple</span><span class="s2">(</span>
+                <span class="s1">arg</span>
+                <span class="s0">for </span><span class="s1">arg </span><span class="s0">in </span><span class="s1">resolved_type_args</span>
+                <span class="s0">if not </span><span class="s2">(</span><span class="s1">typing_objects</span><span class="s2">.</span><span class="s1">is_noreturn</span><span class="s2">(</span><span class="s1">arg</span><span class="s2">) </span><span class="s0">or </span><span class="s1">typing_objects</span><span class="s2">.</span><span class="s1">is_never</span><span class="s2">(</span><span class="s1">arg</span><span class="s2">))</span>
+            <span class="s2">)</span>
+
+        <span class="s4"># PEP-604 syntax (Ex.: list | str) is represented with a types.UnionType object that does not have __getitem__.</span>
+        <span class="s4"># We also cannot use isinstance() since we have to compare types.</span>
+        <span class="s0">if </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">version_info </span><span class="s2">&gt;= (</span><span class="s3">3</span><span class="s2">, </span><span class="s3">10</span><span class="s2">) </span><span class="s0">and </span><span class="s1">origin_type </span><span class="s0">is </span><span class="s1">types</span><span class="s2">.</span><span class="s1">UnionType</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">_UnionGenericAlias</span><span class="s2">(</span><span class="s1">origin_type</span><span class="s2">, </span><span class="s1">resolved_type_args</span><span class="s2">)</span>
+        <span class="s4"># NotRequired[T] and Required[T] don't support tuple type resolved_type_args, hence the condition below</span>
+        <span class="s0">return </span><span class="s1">origin_type</span><span class="s2">[</span><span class="s1">resolved_type_args</span><span class="s2">[</span><span class="s3">0</span><span class="s2">] </span><span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">resolved_type_args</span><span class="s2">) == </span><span class="s3">1 </span><span class="s0">else </span><span class="s1">resolved_type_args</span><span class="s2">]</span>
+
+    <span class="s4"># We handle pydantic generic models separately as they don't have the same</span>
+    <span class="s4"># semantics as &quot;typing&quot; classes or generic aliases</span>
+
+    <span class="s0">if not </span><span class="s1">origin_type </span><span class="s0">and </span><span class="s1">is_model_class</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">):</span>
+        <span class="s1">parameters </span><span class="s2">= </span><span class="s1">type_</span><span class="s2">.</span><span class="s1">__pydantic_generic_metadata__</span><span class="s2">[</span><span class="s5">'parameters'</span><span class="s2">]</span>
+        <span class="s0">if not </span><span class="s1">parameters</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">type_</span>
+        <span class="s1">resolved_type_args </span><span class="s2">= </span><span class="s1">tuple</span><span class="s2">(</span><span class="s1">replace_types</span><span class="s2">(</span><span class="s1">t</span><span class="s2">, </span><span class="s1">type_map</span><span class="s2">) </span><span class="s0">for </span><span class="s1">t </span><span class="s0">in </span><span class="s1">parameters</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">all_identical</span><span class="s2">(</span><span class="s1">parameters</span><span class="s2">, </span><span class="s1">resolved_type_args</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">type_</span>
+        <span class="s0">return </span><span class="s1">type_</span><span class="s2">[</span><span class="s1">resolved_type_args</span><span class="s2">]</span>
+
+    <span class="s4"># Handle special case for typehints that can have lists as arguments.</span>
+    <span class="s4"># `typing.Callable[[int, str], int]` is an example for this.</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">, </span><span class="s1">list</span><span class="s2">):</span>
+        <span class="s1">resolved_list </span><span class="s2">= [</span><span class="s1">replace_types</span><span class="s2">(</span><span class="s1">element</span><span class="s2">, </span><span class="s1">type_map</span><span class="s2">) </span><span class="s0">for </span><span class="s1">element </span><span class="s0">in </span><span class="s1">type_</span><span class="s2">]</span>
+        <span class="s0">if </span><span class="s1">all_identical</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">, </span><span class="s1">resolved_list</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">type_</span>
+        <span class="s0">return </span><span class="s1">resolved_list</span>
+
+    <span class="s4"># If all else fails, we try to resolve the type directly and otherwise just</span>
+    <span class="s4"># return the input with no modifications.</span>
+    <span class="s0">return </span><span class="s1">type_map</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">, </span><span class="s1">type_</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">map_generic_model_arguments</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">], </span><span class="s1">args</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...]) </span><span class="s1">-&gt; dict</span><span class="s2">[</span><span class="s1">TypeVar</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]:</span>
+    <span class="s6">&quot;&quot;&quot;Return a mapping between the parameters of a generic model and the provided arguments during parameterization. 
+ 
+    Raises: 
+        TypeError: If the number of arguments does not match the parameters (i.e. if providing too few or too many arguments). 
+ 
+    Example: 
+        ```python {test=&quot;skip&quot; lint=&quot;skip&quot;} 
+        class Model[T, U, V = int](BaseModel): ... 
+ 
+        map_generic_model_arguments(Model, (str, bytes)) 
+        #&gt; {T: str, U: bytes, V: int} 
+ 
+        map_generic_model_arguments(Model, (str,)) 
+        #&gt; TypeError: Too few arguments for &lt;class '__main__.Model'&gt;; actual 1, expected at least 2 
+ 
+        map_generic_model_arguments(Model, (str, bytes, int, complex)) 
+        #&gt; TypeError: Too many arguments for &lt;class '__main__.Model'&gt;; actual 4, expected 3 
+        ``` 
+ 
+    Note: 
+        This function is analogous to the private `typing._check_generic_specialization` function. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">parameters </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__pydantic_generic_metadata__</span><span class="s2">[</span><span class="s5">'parameters'</span><span class="s2">]</span>
+    <span class="s1">expected_len </span><span class="s2">= </span><span class="s1">len</span><span class="s2">(</span><span class="s1">parameters</span><span class="s2">)</span>
+    <span class="s1">typevars_map</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">TypeVar</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] = {}</span>
+
+    <span class="s1">_missing </span><span class="s2">= </span><span class="s1">object</span><span class="s2">()</span>
+    <span class="s0">for </span><span class="s1">parameter</span><span class="s2">, </span><span class="s1">argument </span><span class="s0">in </span><span class="s1">zip_longest</span><span class="s2">(</span><span class="s1">parameters</span><span class="s2">, </span><span class="s1">args</span><span class="s2">, </span><span class="s1">fillvalue</span><span class="s2">=</span><span class="s1">_missing</span><span class="s2">):</span>
+        <span class="s0">if </span><span class="s1">parameter </span><span class="s0">is </span><span class="s1">_missing</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span><span class="s5">f'Too many arguments for </span><span class="s0">{</span><span class="s1">cls</span><span class="s0">}</span><span class="s5">; actual </span><span class="s0">{</span><span class="s1">len</span><span class="s2">(</span><span class="s1">args</span><span class="s2">)</span><span class="s0">}</span><span class="s5">, expected </span><span class="s0">{</span><span class="s1">expected_len</span><span class="s0">}</span><span class="s5">'</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">argument </span><span class="s0">is </span><span class="s1">_missing</span><span class="s2">:</span>
+            <span class="s1">param </span><span class="s2">= </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">cast</span><span class="s2">(</span><span class="s1">TypeVar</span><span class="s2">, </span><span class="s1">parameter</span><span class="s2">)</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">has_default </span><span class="s2">= </span><span class="s1">param</span><span class="s2">.</span><span class="s1">has_default</span><span class="s2">()</span>
+            <span class="s0">except </span><span class="s1">AttributeError</span><span class="s2">:</span>
+                <span class="s4"># Happens if using `typing.TypeVar` (and not `typing_extensions`) on Python &lt; 3.13.</span>
+                <span class="s1">has_default </span><span class="s2">= </span><span class="s0">False</span>
+            <span class="s0">if </span><span class="s1">has_default</span><span class="s2">:</span>
+                <span class="s4"># The default might refer to other type parameters. For an example, see:</span>
+                <span class="s4"># https://typing.readthedocs.io/en/latest/spec/generics.html#type-parameters-as-parameters-to-generics</span>
+                <span class="s1">typevars_map</span><span class="s2">[</span><span class="s1">param</span><span class="s2">] = </span><span class="s1">replace_types</span><span class="s2">(</span><span class="s1">param</span><span class="s2">.</span><span class="s1">__default__</span><span class="s2">, </span><span class="s1">typevars_map</span><span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">expected_len </span><span class="s2">-= </span><span class="s1">sum</span><span class="s2">(</span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">p</span><span class="s2">, </span><span class="s5">'has_default'</span><span class="s2">) </span><span class="s0">and </span><span class="s1">p</span><span class="s2">.</span><span class="s1">has_default</span><span class="s2">() </span><span class="s0">for </span><span class="s1">p </span><span class="s0">in </span><span class="s1">parameters</span><span class="s2">)</span>
+                <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span><span class="s5">f'Too few arguments for </span><span class="s0">{</span><span class="s1">cls</span><span class="s0">}</span><span class="s5">; actual </span><span class="s0">{</span><span class="s1">len</span><span class="s2">(</span><span class="s1">args</span><span class="s2">)</span><span class="s0">}</span><span class="s5">, expected at least </span><span class="s0">{</span><span class="s1">expected_len</span><span class="s0">}</span><span class="s5">'</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">param </span><span class="s2">= </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">cast</span><span class="s2">(</span><span class="s1">TypeVar</span><span class="s2">, </span><span class="s1">parameter</span><span class="s2">)</span>
+            <span class="s1">typevars_map</span><span class="s2">[</span><span class="s1">param</span><span class="s2">] = </span><span class="s1">argument</span>
+
+    <span class="s0">return </span><span class="s1">typevars_map</span>
+
+
+<span class="s1">_generic_recursion_cache</span><span class="s2">: </span><span class="s1">ContextVar</span><span class="s2">[</span><span class="s1">set</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None</span><span class="s2">] = </span><span class="s1">ContextVar</span><span class="s2">(</span><span class="s5">'_generic_recursion_cache'</span><span class="s2">, </span><span class="s1">default</span><span class="s2">=</span><span class="s0">None</span><span class="s2">)</span>
+
+
+<span class="s2">@</span><span class="s1">contextmanager</span>
+<span class="s0">def </span><span class="s1">generic_recursion_self_type</span><span class="s2">(</span>
+    <span class="s1">origin</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">], </span><span class="s1">args</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...]</span>
+<span class="s2">) </span><span class="s1">-&gt; Iterator</span><span class="s2">[</span><span class="s1">PydanticRecursiveRef </span><span class="s2">| </span><span class="s0">None</span><span class="s2">]:</span>
+    <span class="s6">&quot;&quot;&quot;This contextmanager should be placed around the recursive calls used to build a generic type, 
+    and accept as arguments the generic origin type and the type arguments being passed to it. 
+ 
+    If the same origin and arguments are observed twice, it implies that a self-reference placeholder 
+    can be used while building the core schema, and will produce a schema_ref that will be valid in the 
+    final parent schema. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">previously_seen_type_refs </span><span class="s2">= </span><span class="s1">_generic_recursion_cache</span><span class="s2">.</span><span class="s1">get</span><span class="s2">()</span>
+    <span class="s0">if </span><span class="s1">previously_seen_type_refs </span><span class="s0">is None</span><span class="s2">:</span>
+        <span class="s1">previously_seen_type_refs </span><span class="s2">= </span><span class="s1">set</span><span class="s2">()</span>
+        <span class="s1">token </span><span class="s2">= </span><span class="s1">_generic_recursion_cache</span><span class="s2">.</span><span class="s1">set</span><span class="s2">(</span><span class="s1">previously_seen_type_refs</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s1">token </span><span class="s2">= </span><span class="s0">None</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s1">type_ref </span><span class="s2">= </span><span class="s1">get_type_ref</span><span class="s2">(</span><span class="s1">origin</span><span class="s2">, </span><span class="s1">args_override</span><span class="s2">=</span><span class="s1">args</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">type_ref </span><span class="s0">in </span><span class="s1">previously_seen_type_refs</span><span class="s2">:</span>
+            <span class="s1">self_type </span><span class="s2">= </span><span class="s1">PydanticRecursiveRef</span><span class="s2">(</span><span class="s1">type_ref</span><span class="s2">=</span><span class="s1">type_ref</span><span class="s2">)</span>
+            <span class="s0">yield </span><span class="s1">self_type</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">previously_seen_type_refs</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">type_ref</span><span class="s2">)</span>
+            <span class="s0">yield</span>
+            <span class="s1">previously_seen_type_refs</span><span class="s2">.</span><span class="s1">remove</span><span class="s2">(</span><span class="s1">type_ref</span><span class="s2">)</span>
+    <span class="s0">finally</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">token</span><span class="s2">:</span>
+            <span class="s1">_generic_recursion_cache</span><span class="s2">.</span><span class="s1">reset</span><span class="s2">(</span><span class="s1">token</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">recursively_defined_type_refs</span><span class="s2">() </span><span class="s1">-&gt; set</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s1">visited </span><span class="s2">= </span><span class="s1">_generic_recursion_cache</span><span class="s2">.</span><span class="s1">get</span><span class="s2">()</span>
+    <span class="s0">if not </span><span class="s1">visited</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">set</span><span class="s2">()  </span><span class="s4"># not in a generic recursion, so there are no types</span>
+
+    <span class="s0">return </span><span class="s1">visited</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">()  </span><span class="s4"># don't allow modifications</span>
+
+
+<span class="s0">def </span><span class="s1">get_cached_generic_type_early</span><span class="s2">(</span><span class="s1">parent</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">], </span><span class="s1">typevar_values</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">] | </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot;The use of a two-stage cache lookup approach was necessary to have the highest performance possible for 
+    repeated calls to `__class_getitem__` on generic types (which may happen in tighter loops during runtime), 
+    while still ensuring that certain alternative parametrizations ultimately resolve to the same type. 
+ 
+    As a concrete example, this approach was necessary to make Model[List[T]][int] equal to Model[List[int]]. 
+    The approach could be modified to not use two different cache keys at different points, but the 
+    _early_cache_key is optimized to be as quick to compute as possible (for repeated-access speed), and the 
+    _late_cache_key is optimized to be as &quot;correct&quot; as possible, so that two types that will ultimately be the 
+    same after resolving the type arguments will always produce cache hits. 
+ 
+    If we wanted to move to only using a single cache key per type, we would either need to always use the 
+    slower/more computationally intensive logic associated with _late_cache_key, or would need to accept 
+    that Model[List[T]][int] is a different type than Model[List[T]][int]. Because we rely on subclass relationships 
+    during validation, I think it is worthwhile to ensure that types that are functionally equivalent are actually 
+    equal. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">generic_types_cache </span><span class="s2">= </span><span class="s1">_GENERIC_TYPES_CACHE</span><span class="s2">.</span><span class="s1">get</span><span class="s2">()</span>
+    <span class="s0">if </span><span class="s1">generic_types_cache </span><span class="s0">is None</span><span class="s2">:</span>
+        <span class="s1">generic_types_cache </span><span class="s2">= </span><span class="s1">GenericTypesCache</span><span class="s2">()</span>
+        <span class="s1">_GENERIC_TYPES_CACHE</span><span class="s2">.</span><span class="s1">set</span><span class="s2">(</span><span class="s1">generic_types_cache</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">generic_types_cache</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">_early_cache_key</span><span class="s2">(</span><span class="s1">parent</span><span class="s2">, </span><span class="s1">typevar_values</span><span class="s2">))</span>
+
+
+<span class="s0">def </span><span class="s1">get_cached_generic_type_late</span><span class="s2">(</span>
+    <span class="s1">parent</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">], </span><span class="s1">typevar_values</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">origin</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">], </span><span class="s1">args</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...]</span>
+<span class="s2">) </span><span class="s1">-&gt; type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">] | </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot;See the docstring of `get_cached_generic_type_early` for more information about the two-stage cache lookup.&quot;&quot;&quot;</span>
+    <span class="s1">generic_types_cache </span><span class="s2">= </span><span class="s1">_GENERIC_TYPES_CACHE</span><span class="s2">.</span><span class="s1">get</span><span class="s2">()</span>
+    <span class="s0">if </span><span class="s2">(</span>
+        <span class="s1">generic_types_cache </span><span class="s0">is None</span>
+    <span class="s2">):  </span><span class="s4"># pragma: no cover (early cache is guaranteed to run first and initialize the cache)</span>
+        <span class="s1">generic_types_cache </span><span class="s2">= </span><span class="s1">GenericTypesCache</span><span class="s2">()</span>
+        <span class="s1">_GENERIC_TYPES_CACHE</span><span class="s2">.</span><span class="s1">set</span><span class="s2">(</span><span class="s1">generic_types_cache</span><span class="s2">)</span>
+    <span class="s1">cached </span><span class="s2">= </span><span class="s1">generic_types_cache</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">_late_cache_key</span><span class="s2">(</span><span class="s1">origin</span><span class="s2">, </span><span class="s1">args</span><span class="s2">, </span><span class="s1">typevar_values</span><span class="s2">))</span>
+    <span class="s0">if </span><span class="s1">cached </span><span class="s0">is not None</span><span class="s2">:</span>
+        <span class="s1">set_cached_generic_type</span><span class="s2">(</span><span class="s1">parent</span><span class="s2">, </span><span class="s1">typevar_values</span><span class="s2">, </span><span class="s1">cached</span><span class="s2">, </span><span class="s1">origin</span><span class="s2">, </span><span class="s1">args</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">cached</span>
+
+
+<span class="s0">def </span><span class="s1">set_cached_generic_type</span><span class="s2">(</span>
+    <span class="s1">parent</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">],</span>
+    <span class="s1">typevar_values</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...],</span>
+    <span class="s1">type_</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">],</span>
+    <span class="s1">origin</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">args</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+<span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot;See the docstring of `get_cached_generic_type_early` for more information about why items are cached with 
+    two different keys. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">generic_types_cache </span><span class="s2">= </span><span class="s1">_GENERIC_TYPES_CACHE</span><span class="s2">.</span><span class="s1">get</span><span class="s2">()</span>
+    <span class="s0">if </span><span class="s2">(</span>
+        <span class="s1">generic_types_cache </span><span class="s0">is None</span>
+    <span class="s2">):  </span><span class="s4"># pragma: no cover (cache lookup is guaranteed to run first and initialize the cache)</span>
+        <span class="s1">generic_types_cache </span><span class="s2">= </span><span class="s1">GenericTypesCache</span><span class="s2">()</span>
+        <span class="s1">_GENERIC_TYPES_CACHE</span><span class="s2">.</span><span class="s1">set</span><span class="s2">(</span><span class="s1">generic_types_cache</span><span class="s2">)</span>
+    <span class="s1">generic_types_cache</span><span class="s2">[</span><span class="s1">_early_cache_key</span><span class="s2">(</span><span class="s1">parent</span><span class="s2">, </span><span class="s1">typevar_values</span><span class="s2">)] = </span><span class="s1">type_</span>
+    <span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">typevar_values</span><span class="s2">) == </span><span class="s3">1</span><span class="s2">:</span>
+        <span class="s1">generic_types_cache</span><span class="s2">[</span><span class="s1">_early_cache_key</span><span class="s2">(</span><span class="s1">parent</span><span class="s2">, </span><span class="s1">typevar_values</span><span class="s2">[</span><span class="s3">0</span><span class="s2">])] = </span><span class="s1">type_</span>
+    <span class="s0">if </span><span class="s1">origin </span><span class="s0">and </span><span class="s1">args</span><span class="s2">:</span>
+        <span class="s1">generic_types_cache</span><span class="s2">[</span><span class="s1">_late_cache_key</span><span class="s2">(</span><span class="s1">origin</span><span class="s2">, </span><span class="s1">args</span><span class="s2">, </span><span class="s1">typevar_values</span><span class="s2">)] = </span><span class="s1">type_</span>
+
+
+<span class="s0">def </span><span class="s1">_union_orderings_key</span><span class="s2">(</span><span class="s1">typevar_values</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot;This is intended to help differentiate between Union types with the same arguments in different order. 
+ 
+    Thanks to caching internal to the `typing` module, it is not possible to distinguish between 
+    List[Union[int, float]] and List[Union[float, int]] (and similarly for other &quot;parent&quot; origins besides List) 
+    because `typing` considers Union[int, float] to be equal to Union[float, int]. 
+ 
+    However, you _can_ distinguish between (top-level) Union[int, float] vs. Union[float, int]. 
+    Because we parse items as the first Union type that is successful, we get slightly more consistent behavior 
+    if we make an effort to distinguish the ordering of items in a union. It would be best if we could _always_ 
+    get the exact-correct order of items in the union, but that would require a change to the `typing` module itself. 
+    (See https://github.com/python/cpython/issues/86483 for reference.) 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">typevar_values</span><span class="s2">, </span><span class="s1">tuple</span><span class="s2">):</span>
+        <span class="s1">args_data </span><span class="s2">= []</span>
+        <span class="s0">for </span><span class="s1">value </span><span class="s0">in </span><span class="s1">typevar_values</span><span class="s2">:</span>
+            <span class="s1">args_data</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">_union_orderings_key</span><span class="s2">(</span><span class="s1">value</span><span class="s2">))</span>
+        <span class="s0">return </span><span class="s1">tuple</span><span class="s2">(</span><span class="s1">args_data</span><span class="s2">)</span>
+    <span class="s0">elif </span><span class="s1">typing_objects</span><span class="s2">.</span><span class="s1">is_union</span><span class="s2">(</span><span class="s1">typing_extensions</span><span class="s2">.</span><span class="s1">get_origin</span><span class="s2">(</span><span class="s1">typevar_values</span><span class="s2">)):</span>
+        <span class="s0">return </span><span class="s1">get_args</span><span class="s2">(</span><span class="s1">typevar_values</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">_early_cache_key</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">], </span><span class="s1">typevar_values</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; GenericTypesCacheKey</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot;This is intended for minimal computational overhead during lookups of cached types. 
+ 
+    Note that this is overly simplistic, and it's possible that two different cls/typevar_values 
+    inputs would ultimately result in the same type being created in BaseModel.__class_getitem__. 
+    To handle this, we have a fallback _late_cache_key that is checked later if the _early_cache_key 
+    lookup fails, and should result in a cache hit _precisely_ when the inputs to __class_getitem__ 
+    would result in the same type. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s1">cls</span><span class="s2">, </span><span class="s1">typevar_values</span><span class="s2">, </span><span class="s1">_union_orderings_key</span><span class="s2">(</span><span class="s1">typevar_values</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">_late_cache_key</span><span class="s2">(</span><span class="s1">origin</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">], </span><span class="s1">args</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...], </span><span class="s1">typevar_values</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; GenericTypesCacheKey</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot;This is intended for use later in the process of creating a new type, when we have more information 
+    about the exact args that will be passed. If it turns out that a different set of inputs to 
+    __class_getitem__ resulted in the same inputs to the generic type creation process, we can still 
+    return the cached type, and update the cache with the _early_cache_key as well. 
+    &quot;&quot;&quot;</span>
+    <span class="s4"># The _union_orderings_key is placed at the start here to ensure there cannot be a collision with an</span>
+    <span class="s4"># _early_cache_key, as that function will always produce a BaseModel subclass as the first item in the key,</span>
+    <span class="s4"># whereas this function will always produce a tuple as the first item in the key.</span>
+    <span class="s0">return </span><span class="s1">_union_orderings_key</span><span class="s2">(</span><span class="s1">typevar_values</span><span class="s2">), </span><span class="s1">origin</span><span class="s2">, </span><span class="s1">args</span>
+</pre>
+</body>
+</html>

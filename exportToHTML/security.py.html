@@ -1,0 +1,189 @@
+<html>
+<head>
+<title>security.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8;}
+.s5 { color: #5f826b; font-style: italic;}
+.s6 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+security.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">hashlib</span>
+<span class="s0">import </span><span class="s1">hmac</span>
+<span class="s0">import </span><span class="s1">os</span>
+<span class="s0">import </span><span class="s1">posixpath</span>
+<span class="s0">import </span><span class="s1">secrets</span>
+
+<span class="s1">SALT_CHARS </span><span class="s2">= </span><span class="s3">&quot;abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789&quot;</span>
+<span class="s1">DEFAULT_PBKDF2_ITERATIONS </span><span class="s2">= </span><span class="s4">1_000_000</span>
+
+<span class="s1">_os_alt_seps</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = </span><span class="s1">list</span><span class="s2">(</span>
+    <span class="s1">sep </span><span class="s0">for </span><span class="s1">sep </span><span class="s0">in </span><span class="s2">[</span><span class="s1">os</span><span class="s2">.</span><span class="s1">sep</span><span class="s2">, </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">altsep</span><span class="s2">] </span><span class="s0">if </span><span class="s1">sep </span><span class="s0">is not None and </span><span class="s1">sep </span><span class="s2">!= </span><span class="s3">&quot;/&quot;</span>
+<span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">gen_salt</span><span class="s2">(</span><span class="s1">length</span><span class="s2">: </span><span class="s1">int</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot;Generate a random string of SALT_CHARS with specified ``length``.&quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">length </span><span class="s2">&lt;= </span><span class="s4">0</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s3">&quot;Salt length must be at least 1.&quot;</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s3">&quot;&quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">secrets</span><span class="s2">.</span><span class="s1">choice</span><span class="s2">(</span><span class="s1">SALT_CHARS</span><span class="s2">) </span><span class="s0">for </span><span class="s1">_ </span><span class="s0">in </span><span class="s1">range</span><span class="s2">(</span><span class="s1">length</span><span class="s2">))</span>
+
+
+<span class="s0">def </span><span class="s1">_hash_internal</span><span class="s2">(</span><span class="s1">method</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">salt</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">password</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s1">method</span><span class="s2">, *</span><span class="s1">args </span><span class="s2">= </span><span class="s1">method</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s3">&quot;:&quot;</span><span class="s2">)</span>
+    <span class="s1">salt_bytes </span><span class="s2">= </span><span class="s1">salt</span><span class="s2">.</span><span class="s1">encode</span><span class="s2">()</span>
+    <span class="s1">password_bytes </span><span class="s2">= </span><span class="s1">password</span><span class="s2">.</span><span class="s1">encode</span><span class="s2">()</span>
+
+    <span class="s0">if </span><span class="s1">method </span><span class="s2">== </span><span class="s3">&quot;scrypt&quot;</span><span class="s2">:</span>
+        <span class="s0">if not </span><span class="s1">args</span><span class="s2">:</span>
+            <span class="s1">n </span><span class="s2">= </span><span class="s4">2</span><span class="s2">**</span><span class="s4">15</span>
+            <span class="s1">r </span><span class="s2">= </span><span class="s4">8</span>
+            <span class="s1">p </span><span class="s2">= </span><span class="s4">1</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">n</span><span class="s2">, </span><span class="s1">r</span><span class="s2">, </span><span class="s1">p </span><span class="s2">= </span><span class="s1">map</span><span class="s2">(</span><span class="s1">int</span><span class="s2">, </span><span class="s1">args</span><span class="s2">)</span>
+            <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s3">&quot;'scrypt' takes 3 arguments.&quot;</span><span class="s2">) </span><span class="s0">from None</span>
+
+        <span class="s1">maxmem </span><span class="s2">= </span><span class="s4">132 </span><span class="s2">* </span><span class="s1">n </span><span class="s2">* </span><span class="s1">r </span><span class="s2">* </span><span class="s1">p  </span><span class="s6"># ideally 128, but some extra seems needed</span>
+        <span class="s0">return </span><span class="s2">(</span>
+            <span class="s1">hashlib</span><span class="s2">.</span><span class="s1">scrypt</span><span class="s2">(</span>
+                <span class="s1">password_bytes</span><span class="s2">, </span><span class="s1">salt</span><span class="s2">=</span><span class="s1">salt_bytes</span><span class="s2">, </span><span class="s1">n</span><span class="s2">=</span><span class="s1">n</span><span class="s2">, </span><span class="s1">r</span><span class="s2">=</span><span class="s1">r</span><span class="s2">, </span><span class="s1">p</span><span class="s2">=</span><span class="s1">p</span><span class="s2">, </span><span class="s1">maxmem</span><span class="s2">=</span><span class="s1">maxmem</span>
+            <span class="s2">).</span><span class="s1">hex</span><span class="s2">(),</span>
+            <span class="s3">f&quot;scrypt:</span><span class="s0">{</span><span class="s1">n</span><span class="s0">}</span><span class="s3">:</span><span class="s0">{</span><span class="s1">r</span><span class="s0">}</span><span class="s3">:</span><span class="s0">{</span><span class="s1">p</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s2">,</span>
+        <span class="s2">)</span>
+    <span class="s0">elif </span><span class="s1">method </span><span class="s2">== </span><span class="s3">&quot;pbkdf2&quot;</span><span class="s2">:</span>
+        <span class="s1">len_args </span><span class="s2">= </span><span class="s1">len</span><span class="s2">(</span><span class="s1">args</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">len_args </span><span class="s2">== </span><span class="s4">0</span><span class="s2">:</span>
+            <span class="s1">hash_name </span><span class="s2">= </span><span class="s3">&quot;sha256&quot;</span>
+            <span class="s1">iterations </span><span class="s2">= </span><span class="s1">DEFAULT_PBKDF2_ITERATIONS</span>
+        <span class="s0">elif </span><span class="s1">len_args </span><span class="s2">== </span><span class="s4">1</span><span class="s2">:</span>
+            <span class="s1">hash_name </span><span class="s2">= </span><span class="s1">args</span><span class="s2">[</span><span class="s4">0</span><span class="s2">]</span>
+            <span class="s1">iterations </span><span class="s2">= </span><span class="s1">DEFAULT_PBKDF2_ITERATIONS</span>
+        <span class="s0">elif </span><span class="s1">len_args </span><span class="s2">== </span><span class="s4">2</span><span class="s2">:</span>
+            <span class="s1">hash_name </span><span class="s2">= </span><span class="s1">args</span><span class="s2">[</span><span class="s4">0</span><span class="s2">]</span>
+            <span class="s1">iterations </span><span class="s2">= </span><span class="s1">int</span><span class="s2">(</span><span class="s1">args</span><span class="s2">[</span><span class="s4">1</span><span class="s2">])</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s3">&quot;'pbkdf2' takes 2 arguments.&quot;</span><span class="s2">)</span>
+
+        <span class="s0">return </span><span class="s2">(</span>
+            <span class="s1">hashlib</span><span class="s2">.</span><span class="s1">pbkdf2_hmac</span><span class="s2">(</span>
+                <span class="s1">hash_name</span><span class="s2">, </span><span class="s1">password_bytes</span><span class="s2">, </span><span class="s1">salt_bytes</span><span class="s2">, </span><span class="s1">iterations</span>
+            <span class="s2">).</span><span class="s1">hex</span><span class="s2">(),</span>
+            <span class="s3">f&quot;pbkdf2:</span><span class="s0">{</span><span class="s1">hash_name</span><span class="s0">}</span><span class="s3">:</span><span class="s0">{</span><span class="s1">iterations</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s2">,</span>
+        <span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s3">f&quot;Invalid hash method '</span><span class="s0">{</span><span class="s1">method</span><span class="s0">}</span><span class="s3">'.&quot;</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">generate_password_hash</span><span class="s2">(</span>
+    <span class="s1">password</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">method</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s3">&quot;scrypt&quot;</span><span class="s2">, </span><span class="s1">salt_length</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s4">16</span>
+<span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot;Securely hash a password for storage. A password can be compared to a stored hash 
+    using :func:`check_password_hash`. 
+ 
+    The following methods are supported: 
+ 
+    -   ``scrypt``, the default. The parameters are ``n``, ``r``, and ``p``, the default 
+        is ``scrypt:32768:8:1``. See :func:`hashlib.scrypt`. 
+    -   ``pbkdf2``, less secure. The parameters are ``hash_method`` and ``iterations``, 
+        the default is ``pbkdf2:sha256:600000``. See :func:`hashlib.pbkdf2_hmac`. 
+ 
+    Default parameters may be updated to reflect current guidelines, and methods may be 
+    deprecated and removed if they are no longer considered secure. To migrate old 
+    hashes, you may generate a new hash when checking an old hash, or you may contact 
+    users with a link to reset their password. 
+ 
+    :param password: The plaintext password. 
+    :param method: The key derivation function and parameters. 
+    :param salt_length: The number of characters to generate for the salt. 
+ 
+    .. versionchanged:: 3.1 
+        The default iterations for pbkdf2 was increased to 1,000,000. 
+ 
+    .. versionchanged:: 2.3 
+        Scrypt support was added. 
+ 
+    .. versionchanged:: 2.3 
+        The default iterations for pbkdf2 was increased to 600,000. 
+ 
+    .. versionchanged:: 2.3 
+        All plain hashes are deprecated and will not be supported in Werkzeug 3.0. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">salt </span><span class="s2">= </span><span class="s1">gen_salt</span><span class="s2">(</span><span class="s1">salt_length</span><span class="s2">)</span>
+    <span class="s1">h</span><span class="s2">, </span><span class="s1">actual_method </span><span class="s2">= </span><span class="s1">_hash_internal</span><span class="s2">(</span><span class="s1">method</span><span class="s2">, </span><span class="s1">salt</span><span class="s2">, </span><span class="s1">password</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">actual_method</span><span class="s0">}</span><span class="s3">$</span><span class="s0">{</span><span class="s1">salt</span><span class="s0">}</span><span class="s3">$</span><span class="s0">{</span><span class="s1">h</span><span class="s0">}</span><span class="s3">&quot;</span>
+
+
+<span class="s0">def </span><span class="s1">check_password_hash</span><span class="s2">(</span><span class="s1">pwhash</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">password</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot;Securely check that the given stored password hash, previously generated using 
+    :func:`generate_password_hash`, matches the given password. 
+ 
+    Methods may be deprecated and removed if they are no longer considered secure. To 
+    migrate old hashes, you may generate a new hash when checking an old hash, or you 
+    may contact users with a link to reset their password. 
+ 
+    :param pwhash: The hashed password. 
+    :param password: The plaintext password. 
+ 
+    .. versionchanged:: 2.3 
+        All plain hashes are deprecated and will not be supported in Werkzeug 3.0. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s1">method</span><span class="s2">, </span><span class="s1">salt</span><span class="s2">, </span><span class="s1">hashval </span><span class="s2">= </span><span class="s1">pwhash</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s3">&quot;$&quot;</span><span class="s2">, </span><span class="s4">2</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+        <span class="s0">return False</span>
+
+    <span class="s0">return </span><span class="s1">hmac</span><span class="s2">.</span><span class="s1">compare_digest</span><span class="s2">(</span><span class="s1">_hash_internal</span><span class="s2">(</span><span class="s1">method</span><span class="s2">, </span><span class="s1">salt</span><span class="s2">, </span><span class="s1">password</span><span class="s2">)[</span><span class="s4">0</span><span class="s2">], </span><span class="s1">hashval</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">safe_join</span><span class="s2">(</span><span class="s1">directory</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, *</span><span class="s1">pathnames</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot;Safely join zero or more untrusted path components to a base 
+    directory to avoid escaping the base directory. 
+ 
+    :param directory: The trusted base directory. 
+    :param pathnames: The untrusted path components relative to the 
+        base directory. 
+    :return: A safe path, otherwise ``None``. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if not </span><span class="s1">directory</span><span class="s2">:</span>
+        <span class="s6"># Ensure we end up with ./path if directory=&quot;&quot; is given,</span>
+        <span class="s6"># otherwise the first untrusted part could become trusted.</span>
+        <span class="s1">directory </span><span class="s2">= </span><span class="s3">&quot;.&quot;</span>
+
+    <span class="s1">parts </span><span class="s2">= [</span><span class="s1">directory</span><span class="s2">]</span>
+
+    <span class="s0">for </span><span class="s1">filename </span><span class="s0">in </span><span class="s1">pathnames</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">filename </span><span class="s2">!= </span><span class="s3">&quot;&quot;</span><span class="s2">:</span>
+            <span class="s1">filename </span><span class="s2">= </span><span class="s1">posixpath</span><span class="s2">.</span><span class="s1">normpath</span><span class="s2">(</span><span class="s1">filename</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s2">(</span>
+            <span class="s1">any</span><span class="s2">(</span><span class="s1">sep </span><span class="s0">in </span><span class="s1">filename </span><span class="s0">for </span><span class="s1">sep </span><span class="s0">in </span><span class="s1">_os_alt_seps</span><span class="s2">)</span>
+            <span class="s0">or </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">isabs</span><span class="s2">(</span><span class="s1">filename</span><span class="s2">)</span>
+            <span class="s6"># ntpath.isabs doesn't catch this on Python &lt; 3.11</span>
+            <span class="s0">or </span><span class="s1">filename</span><span class="s2">.</span><span class="s1">startswith</span><span class="s2">(</span><span class="s3">&quot;/&quot;</span><span class="s2">)</span>
+            <span class="s0">or </span><span class="s1">filename </span><span class="s2">== </span><span class="s3">&quot;..&quot;</span>
+            <span class="s0">or </span><span class="s1">filename</span><span class="s2">.</span><span class="s1">startswith</span><span class="s2">(</span><span class="s3">&quot;../&quot;</span><span class="s2">)</span>
+        <span class="s2">):</span>
+            <span class="s0">return None</span>
+
+        <span class="s1">parts</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">filename</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">posixpath</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(*</span><span class="s1">parts</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

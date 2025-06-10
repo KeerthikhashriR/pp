@@ -1,0 +1,283 @@
+<html>
+<head>
+<title>errors.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #5f826b; font-style: italic;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+errors.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">html</span>
+<span class="s0">import </span><span class="s1">inspect</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">import </span><span class="s1">traceback</span>
+<span class="s0">import </span><span class="s1">typing</span>
+
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">_utils </span><span class="s0">import </span><span class="s1">is_async_callable</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">concurrency </span><span class="s0">import </span><span class="s1">run_in_threadpool</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">requests </span><span class="s0">import </span><span class="s1">Request</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">responses </span><span class="s0">import </span><span class="s1">HTMLResponse</span><span class="s2">, </span><span class="s1">PlainTextResponse</span><span class="s2">, </span><span class="s1">Response</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">ASGIApp</span><span class="s2">, </span><span class="s1">Message</span><span class="s2">, </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">Send</span>
+
+<span class="s1">STYLES </span><span class="s2">= </span><span class="s3">&quot;&quot;&quot; 
+p { 
+    color: #211c1c; 
+} 
+.traceback-container { 
+    border: 1px solid #038BB8; 
+} 
+.traceback-title { 
+    background-color: #038BB8; 
+    color: lemonchiffon; 
+    padding: 12px; 
+    font-size: 20px; 
+    margin-top: 0px; 
+} 
+.frame-line { 
+    padding-left: 10px; 
+    font-family: monospace; 
+} 
+.frame-filename { 
+    font-family: monospace; 
+} 
+.center-line { 
+    background-color: #038BB8; 
+    color: #f9f6e1; 
+    padding: 5px 0px 5px 5px; 
+} 
+.lineno { 
+    margin-right: 5px; 
+} 
+.frame-title { 
+    font-weight: unset; 
+    padding: 10px 10px 10px 10px; 
+    background-color: #E4F4FD; 
+    margin-right: 10px; 
+    color: #191f21; 
+    font-size: 17px; 
+    border: 1px solid #c7dce8; 
+} 
+.collapse-btn { 
+    float: right; 
+    padding: 0px 5px 1px 5px; 
+    border: solid 1px #96aebb; 
+    cursor: pointer; 
+} 
+.collapsed { 
+  display: none; 
+} 
+.source-code { 
+  font-family: courier; 
+  font-size: small; 
+  padding-bottom: 10px; 
+} 
+&quot;&quot;&quot;</span>
+
+<span class="s1">JS </span><span class="s2">= </span><span class="s3">&quot;&quot;&quot; 
+&lt;script type=&quot;text/javascript&quot;&gt; 
+    function collapse(element){ 
+        const frameId = element.getAttribute(&quot;data-frame-id&quot;); 
+        const frame = document.getElementById(frameId); 
+ 
+        if (frame.classList.contains(&quot;collapsed&quot;)){ 
+            element.innerHTML = &quot;&amp;#8210;&quot;; 
+            frame.classList.remove(&quot;collapsed&quot;); 
+        } else { 
+            element.innerHTML = &quot;+&quot;; 
+            frame.classList.add(&quot;collapsed&quot;); 
+        } 
+    } 
+&lt;/script&gt; 
+&quot;&quot;&quot;</span>
+
+<span class="s1">TEMPLATE </span><span class="s2">= </span><span class="s3">&quot;&quot;&quot; 
+&lt;html&gt; 
+    &lt;head&gt; 
+        &lt;style type='text/css'&gt; 
+            {styles} 
+        &lt;/style&gt; 
+        &lt;title&gt;Starlette Debugger&lt;/title&gt; 
+    &lt;/head&gt; 
+    &lt;body&gt; 
+        &lt;h1&gt;500 Server Error&lt;/h1&gt; 
+        &lt;h2&gt;{error}&lt;/h2&gt; 
+        &lt;div class=&quot;traceback-container&quot;&gt; 
+            &lt;p class=&quot;traceback-title&quot;&gt;Traceback&lt;/p&gt; 
+            &lt;div&gt;{exc_html}&lt;/div&gt; 
+        &lt;/div&gt; 
+        {js} 
+    &lt;/body&gt; 
+&lt;/html&gt; 
+&quot;&quot;&quot;</span>
+
+<span class="s1">FRAME_TEMPLATE </span><span class="s2">= </span><span class="s3">&quot;&quot;&quot; 
+&lt;div&gt; 
+    &lt;p class=&quot;frame-title&quot;&gt;File &lt;span class=&quot;frame-filename&quot;&gt;{frame_filename}&lt;/span&gt;, 
+    line &lt;i&gt;{frame_lineno}&lt;/i&gt;, 
+    in &lt;b&gt;{frame_name}&lt;/b&gt; 
+    &lt;span class=&quot;collapse-btn&quot; data-frame-id=&quot;{frame_filename}-{frame_lineno}&quot; onclick=&quot;collapse(this)&quot;&gt;{collapse_button}&lt;/span&gt; 
+    &lt;/p&gt; 
+    &lt;div id=&quot;{frame_filename}-{frame_lineno}&quot; class=&quot;source-code {collapsed}&quot;&gt;{code_context}&lt;/div&gt; 
+&lt;/div&gt; 
+&quot;&quot;&quot;  </span><span class="s4"># noqa: E501</span>
+
+<span class="s1">LINE </span><span class="s2">= </span><span class="s3">&quot;&quot;&quot; 
+&lt;p&gt;&lt;span class=&quot;frame-line&quot;&gt; 
+&lt;span class=&quot;lineno&quot;&gt;{lineno}.&lt;/span&gt; {line}&lt;/span&gt;&lt;/p&gt; 
+&quot;&quot;&quot;</span>
+
+<span class="s1">CENTER_LINE </span><span class="s2">= </span><span class="s3">&quot;&quot;&quot; 
+&lt;p class=&quot;center-line&quot;&gt;&lt;span class=&quot;frame-line center-line&quot;&gt; 
+&lt;span class=&quot;lineno&quot;&gt;{lineno}.&lt;/span&gt; {line}&lt;/span&gt;&lt;/p&gt; 
+&quot;&quot;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">ServerErrorMiddleware</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot; 
+    Handles returning 500 responses when a server error occurs. 
+ 
+    If 'debug' is set, then traceback responses will be returned, 
+    otherwise the designated 'handler' will be called. 
+ 
+    This middleware class should generally be used to wrap *everything* 
+    else up, so that unhandled exceptions anywhere in the stack 
+    always result in an appropriate 500 response. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">app</span><span class="s2">: </span><span class="s1">ASGIApp</span><span class="s2">,</span>
+        <span class="s1">handler</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Request</span><span class="s2">, </span><span class="s1">Exception</span><span class="s2">], </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">debug</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app </span><span class="s2">= </span><span class="s1">app</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">handler </span><span class="s2">= </span><span class="s1">handler</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">debug </span><span class="s2">= </span><span class="s1">debug</span>
+
+    <span class="s0">async def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">: </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">: </span><span class="s1">Send</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">scope</span><span class="s2">[</span><span class="s3">&quot;type&quot;</span><span class="s2">] != </span><span class="s3">&quot;http&quot;</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+            <span class="s0">return</span>
+
+        <span class="s1">response_started </span><span class="s2">= </span><span class="s0">False</span>
+
+        <span class="s0">async def </span><span class="s1">_send</span><span class="s2">(</span><span class="s1">message</span><span class="s2">: </span><span class="s1">Message</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s0">nonlocal </span><span class="s1">response_started</span><span class="s2">, </span><span class="s1">send</span>
+
+            <span class="s0">if </span><span class="s1">message</span><span class="s2">[</span><span class="s3">&quot;type&quot;</span><span class="s2">] == </span><span class="s3">&quot;http.response.start&quot;</span><span class="s2">:</span>
+                <span class="s1">response_started </span><span class="s2">= </span><span class="s0">True</span>
+            <span class="s0">await </span><span class="s1">send</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">_send</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">Exception </span><span class="s0">as </span><span class="s1">exc</span><span class="s2">:</span>
+            <span class="s1">request </span><span class="s2">= </span><span class="s1">Request</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">debug</span><span class="s2">:</span>
+                <span class="s4"># In debug mode, return traceback responses.</span>
+                <span class="s1">response </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">debug_response</span><span class="s2">(</span><span class="s1">request</span><span class="s2">, </span><span class="s1">exc</span><span class="s2">)</span>
+            <span class="s0">elif </span><span class="s1">self</span><span class="s2">.</span><span class="s1">handler </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s4"># Use our default 500 error handler.</span>
+                <span class="s1">response </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">error_response</span><span class="s2">(</span><span class="s1">request</span><span class="s2">, </span><span class="s1">exc</span><span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s4"># Use an installed 500 error handler.</span>
+                <span class="s0">if </span><span class="s1">is_async_callable</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">handler</span><span class="s2">):</span>
+                    <span class="s1">response </span><span class="s2">= </span><span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">handler</span><span class="s2">(</span><span class="s1">request</span><span class="s2">, </span><span class="s1">exc</span><span class="s2">)</span>
+                <span class="s0">else</span><span class="s2">:</span>
+                    <span class="s1">response </span><span class="s2">= </span><span class="s0">await </span><span class="s1">run_in_threadpool</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">handler</span><span class="s2">, </span><span class="s1">request</span><span class="s2">, </span><span class="s1">exc</span><span class="s2">)</span>
+
+            <span class="s0">if not </span><span class="s1">response_started</span><span class="s2">:</span>
+                <span class="s0">await </span><span class="s1">response</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+
+            <span class="s4"># We always continue to raise the exception.</span>
+            <span class="s4"># This allows servers to log the error, or allows test clients</span>
+            <span class="s4"># to optionally raise the error within the test case.</span>
+            <span class="s0">raise </span><span class="s1">exc</span>
+
+    <span class="s0">def </span><span class="s1">format_line</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">index</span><span class="s2">: </span><span class="s1">int</span><span class="s2">, </span><span class="s1">line</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">frame_lineno</span><span class="s2">: </span><span class="s1">int</span><span class="s2">, </span><span class="s1">frame_index</span><span class="s2">: </span><span class="s1">int</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s1">values </span><span class="s2">= {</span>
+            <span class="s4"># HTML escape - line could contain &lt; or &gt;</span>
+            <span class="s3">&quot;line&quot;</span><span class="s2">: </span><span class="s1">html</span><span class="s2">.</span><span class="s1">escape</span><span class="s2">(</span><span class="s1">line</span><span class="s2">).</span><span class="s1">replace</span><span class="s2">(</span><span class="s3">&quot; &quot;</span><span class="s2">, </span><span class="s3">&quot;&amp;nbsp&quot;</span><span class="s2">),</span>
+            <span class="s3">&quot;lineno&quot;</span><span class="s2">: (</span><span class="s1">frame_lineno </span><span class="s2">- </span><span class="s1">frame_index</span><span class="s2">) + </span><span class="s1">index</span><span class="s2">,</span>
+        <span class="s2">}</span>
+
+        <span class="s0">if </span><span class="s1">index </span><span class="s2">!= </span><span class="s1">frame_index</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">LINE</span><span class="s2">.</span><span class="s1">format</span><span class="s2">(**</span><span class="s1">values</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">CENTER_LINE</span><span class="s2">.</span><span class="s1">format</span><span class="s2">(**</span><span class="s1">values</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">generate_frame_html</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">frame</span><span class="s2">: </span><span class="s1">inspect</span><span class="s2">.</span><span class="s1">FrameInfo</span><span class="s2">, </span><span class="s1">is_collapsed</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s1">code_context </span><span class="s2">= </span><span class="s3">&quot;&quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">format_line</span><span class="s2">(</span>
+                <span class="s1">index</span><span class="s2">,</span>
+                <span class="s1">line</span><span class="s2">,</span>
+                <span class="s1">frame</span><span class="s2">.</span><span class="s1">lineno</span><span class="s2">,</span>
+                <span class="s1">frame</span><span class="s2">.</span><span class="s1">index</span><span class="s2">,  </span><span class="s4"># type: ignore[arg-type]</span>
+            <span class="s2">)</span>
+            <span class="s0">for </span><span class="s1">index</span><span class="s2">, </span><span class="s1">line </span><span class="s0">in </span><span class="s1">enumerate</span><span class="s2">(</span><span class="s1">frame</span><span class="s2">.</span><span class="s1">code_context </span><span class="s0">or </span><span class="s2">[])</span>
+        <span class="s2">)</span>
+
+        <span class="s1">values </span><span class="s2">= {</span>
+            <span class="s4"># HTML escape - filename could contain &lt; or &gt;, especially if it's a virtual</span>
+            <span class="s4"># file e.g. &lt;stdin&gt; in the REPL</span>
+            <span class="s3">&quot;frame_filename&quot;</span><span class="s2">: </span><span class="s1">html</span><span class="s2">.</span><span class="s1">escape</span><span class="s2">(</span><span class="s1">frame</span><span class="s2">.</span><span class="s1">filename</span><span class="s2">),</span>
+            <span class="s3">&quot;frame_lineno&quot;</span><span class="s2">: </span><span class="s1">frame</span><span class="s2">.</span><span class="s1">lineno</span><span class="s2">,</span>
+            <span class="s4"># HTML escape - if you try very hard it's possible to name a function with &lt;</span>
+            <span class="s4"># or &gt;</span>
+            <span class="s3">&quot;frame_name&quot;</span><span class="s2">: </span><span class="s1">html</span><span class="s2">.</span><span class="s1">escape</span><span class="s2">(</span><span class="s1">frame</span><span class="s2">.</span><span class="s1">function</span><span class="s2">),</span>
+            <span class="s3">&quot;code_context&quot;</span><span class="s2">: </span><span class="s1">code_context</span><span class="s2">,</span>
+            <span class="s3">&quot;collapsed&quot;</span><span class="s2">: </span><span class="s3">&quot;collapsed&quot; </span><span class="s0">if </span><span class="s1">is_collapsed </span><span class="s0">else </span><span class="s3">&quot;&quot;</span><span class="s2">,</span>
+            <span class="s3">&quot;collapse_button&quot;</span><span class="s2">: </span><span class="s3">&quot;+&quot; </span><span class="s0">if </span><span class="s1">is_collapsed </span><span class="s0">else </span><span class="s3">&quot;&amp;#8210;&quot;</span><span class="s2">,</span>
+        <span class="s2">}</span>
+        <span class="s0">return </span><span class="s1">FRAME_TEMPLATE</span><span class="s2">.</span><span class="s1">format</span><span class="s2">(**</span><span class="s1">values</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">generate_html</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">exc</span><span class="s2">: </span><span class="s1">Exception</span><span class="s2">, </span><span class="s1">limit</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s6">7</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s1">traceback_obj </span><span class="s2">= </span><span class="s1">traceback</span><span class="s2">.</span><span class="s1">TracebackException</span><span class="s2">.</span><span class="s1">from_exception</span><span class="s2">(</span><span class="s1">exc</span><span class="s2">, </span><span class="s1">capture_locals</span><span class="s2">=</span><span class="s0">True</span><span class="s2">)</span>
+
+        <span class="s1">exc_html </span><span class="s2">= </span><span class="s3">&quot;&quot;</span>
+        <span class="s1">is_collapsed </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">exc_traceback </span><span class="s2">= </span><span class="s1">exc</span><span class="s2">.</span><span class="s1">__traceback__</span>
+        <span class="s0">if </span><span class="s1">exc_traceback </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">frames </span><span class="s2">= </span><span class="s1">inspect</span><span class="s2">.</span><span class="s1">getinnerframes</span><span class="s2">(</span><span class="s1">exc_traceback</span><span class="s2">, </span><span class="s1">limit</span><span class="s2">)</span>
+            <span class="s0">for </span><span class="s1">frame </span><span class="s0">in </span><span class="s1">reversed</span><span class="s2">(</span><span class="s1">frames</span><span class="s2">):</span>
+                <span class="s1">exc_html </span><span class="s2">+= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">generate_frame_html</span><span class="s2">(</span><span class="s1">frame</span><span class="s2">, </span><span class="s1">is_collapsed</span><span class="s2">)</span>
+                <span class="s1">is_collapsed </span><span class="s2">= </span><span class="s0">True</span>
+
+        <span class="s0">if </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">version_info </span><span class="s2">&gt;= (</span><span class="s6">3</span><span class="s2">, </span><span class="s6">13</span><span class="s2">):  </span><span class="s4"># pragma: no cover</span>
+            <span class="s1">exc_type_str </span><span class="s2">= </span><span class="s1">traceback_obj</span><span class="s2">.</span><span class="s1">exc_type_str</span>
+        <span class="s0">else</span><span class="s2">:  </span><span class="s4"># pragma: no cover</span>
+            <span class="s1">exc_type_str </span><span class="s2">= </span><span class="s1">traceback_obj</span><span class="s2">.</span><span class="s1">exc_type</span><span class="s2">.</span><span class="s1">__name__</span>
+
+        <span class="s4"># escape error class and text</span>
+        <span class="s1">error </span><span class="s2">= </span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">html</span><span class="s2">.</span><span class="s1">escape</span><span class="s2">(</span><span class="s1">exc_type_str</span><span class="s2">)</span><span class="s0">}</span><span class="s3">: </span><span class="s0">{</span><span class="s1">html</span><span class="s2">.</span><span class="s1">escape</span><span class="s2">(</span><span class="s1">str</span><span class="s2">(</span><span class="s1">traceback_obj</span><span class="s2">))</span><span class="s0">}</span><span class="s3">&quot;</span>
+
+        <span class="s0">return </span><span class="s1">TEMPLATE</span><span class="s2">.</span><span class="s1">format</span><span class="s2">(</span><span class="s1">styles</span><span class="s2">=</span><span class="s1">STYLES</span><span class="s2">, </span><span class="s1">js</span><span class="s2">=</span><span class="s1">JS</span><span class="s2">, </span><span class="s1">error</span><span class="s2">=</span><span class="s1">error</span><span class="s2">, </span><span class="s1">exc_html</span><span class="s2">=</span><span class="s1">exc_html</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">generate_plain_text</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">exc</span><span class="s2">: </span><span class="s1">Exception</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s3">&quot;&quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">traceback</span><span class="s2">.</span><span class="s1">format_exception</span><span class="s2">(</span><span class="s1">type</span><span class="s2">(</span><span class="s1">exc</span><span class="s2">), </span><span class="s1">exc</span><span class="s2">, </span><span class="s1">exc</span><span class="s2">.</span><span class="s1">__traceback__</span><span class="s2">))</span>
+
+    <span class="s0">def </span><span class="s1">debug_response</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">request</span><span class="s2">: </span><span class="s1">Request</span><span class="s2">, </span><span class="s1">exc</span><span class="s2">: </span><span class="s1">Exception</span><span class="s2">) </span><span class="s1">-&gt; Response</span><span class="s2">:</span>
+        <span class="s1">accept </span><span class="s2">= </span><span class="s1">request</span><span class="s2">.</span><span class="s1">headers</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;accept&quot;</span><span class="s2">, </span><span class="s3">&quot;&quot;</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s3">&quot;text/html&quot; </span><span class="s0">in </span><span class="s1">accept</span><span class="s2">:</span>
+            <span class="s1">content </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">generate_html</span><span class="s2">(</span><span class="s1">exc</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">HTMLResponse</span><span class="s2">(</span><span class="s1">content</span><span class="s2">, </span><span class="s1">status_code</span><span class="s2">=</span><span class="s6">500</span><span class="s2">)</span>
+        <span class="s1">content </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">generate_plain_text</span><span class="s2">(</span><span class="s1">exc</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">PlainTextResponse</span><span class="s2">(</span><span class="s1">content</span><span class="s2">, </span><span class="s1">status_code</span><span class="s2">=</span><span class="s6">500</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">error_response</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">request</span><span class="s2">: </span><span class="s1">Request</span><span class="s2">, </span><span class="s1">exc</span><span class="s2">: </span><span class="s1">Exception</span><span class="s2">) </span><span class="s1">-&gt; Response</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">PlainTextResponse</span><span class="s2">(</span><span class="s3">&quot;Internal Server Error&quot;</span><span class="s2">, </span><span class="s1">status_code</span><span class="s2">=</span><span class="s6">500</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

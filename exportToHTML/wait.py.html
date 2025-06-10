@@ -1,0 +1,251 @@
+<html>
+<head>
+<title>wait.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #6aab73;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+wait.py</font>
+</center></td></tr></table>
+<pre><span class="s0"># Copyright 2016–2021 Julien Danjou</span>
+<span class="s0"># Copyright 2016 Joshua Harlow</span>
+<span class="s0"># Copyright 2013-2014 Ray Holder</span>
+<span class="s0">#</span>
+<span class="s0"># Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="s0"># you may not use this file except in compliance with the License.</span>
+<span class="s0"># You may obtain a copy of the License at</span>
+<span class="s0">#</span>
+<span class="s0"># http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="s0">#</span>
+<span class="s0"># Unless required by applicable law or agreed to in writing, software</span>
+<span class="s0"># distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="s0"># WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="s0"># See the License for the specific language governing permissions and</span>
+<span class="s0"># limitations under the License.</span>
+
+<span class="s2">import </span><span class="s1">abc</span>
+<span class="s2">import </span><span class="s1">random</span>
+<span class="s2">import </span><span class="s1">typing</span>
+
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">tenacity </span><span class="s2">import </span><span class="s1">_utils</span>
+
+<span class="s2">if </span><span class="s1">typing</span><span class="s3">.</span><span class="s1">TYPE_CHECKING</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">tenacity </span><span class="s2">import </span><span class="s1">RetryCallState</span>
+
+
+<span class="s2">class </span><span class="s1">wait_base</span><span class="s3">(</span><span class="s1">abc</span><span class="s3">.</span><span class="s1">ABC</span><span class="s3">):</span>
+    <span class="s4">&quot;&quot;&quot;Abstract base class for wait strategies.&quot;&quot;&quot;</span>
+
+    <span class="s3">@</span><span class="s1">abc</span><span class="s3">.</span><span class="s1">abstractmethod</span>
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">retry_state</span><span class="s3">: </span><span class="s5">&quot;RetryCallState&quot;</span><span class="s3">) </span><span class="s1">-&gt; float</span><span class="s3">:</span>
+        <span class="s2">pass</span>
+
+    <span class="s2">def </span><span class="s1">__add__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">other</span><span class="s3">: </span><span class="s5">&quot;wait_base&quot;</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s5">&quot;wait_combine&quot;</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">wait_combine</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">other</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">__radd__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">other</span><span class="s3">: </span><span class="s5">&quot;wait_base&quot;</span><span class="s3">) </span><span class="s1">-&gt; typing</span><span class="s3">.</span><span class="s1">Union</span><span class="s3">[</span><span class="s5">&quot;wait_combine&quot;</span><span class="s3">, </span><span class="s5">&quot;wait_base&quot;</span><span class="s3">]:</span>
+        <span class="s0"># make it possible to use multiple waits with the built-in sum function</span>
+        <span class="s2">if </span><span class="s1">other </span><span class="s3">== </span><span class="s6">0</span><span class="s3">:  </span><span class="s0"># type: ignore[comparison-overlap]</span>
+            <span class="s2">return </span><span class="s1">self</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__add__</span><span class="s3">(</span><span class="s1">other</span><span class="s3">)</span>
+
+
+<span class="s1">WaitBaseT </span><span class="s3">= </span><span class="s1">typing</span><span class="s3">.</span><span class="s1">Union</span><span class="s3">[</span><span class="s1">wait_base</span><span class="s3">, </span><span class="s1">typing</span><span class="s3">.</span><span class="s1">Callable</span><span class="s3">[[</span><span class="s5">&quot;RetryCallState&quot;</span><span class="s3">], </span><span class="s1">typing</span><span class="s3">.</span><span class="s1">Union</span><span class="s3">[</span><span class="s1">float</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]]]</span>
+
+
+<span class="s2">class </span><span class="s1">wait_fixed</span><span class="s3">(</span><span class="s1">wait_base</span><span class="s3">):</span>
+    <span class="s4">&quot;&quot;&quot;Wait strategy that waits a fixed amount of time between each retry.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">wait</span><span class="s3">: </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">time_unit_type</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">wait_fixed </span><span class="s3">= </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">to_seconds</span><span class="s3">(</span><span class="s1">wait</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">retry_state</span><span class="s3">: </span><span class="s5">&quot;RetryCallState&quot;</span><span class="s3">) </span><span class="s1">-&gt; float</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">wait_fixed</span>
+
+
+<span class="s2">class </span><span class="s1">wait_none</span><span class="s3">(</span><span class="s1">wait_fixed</span><span class="s3">):</span>
+    <span class="s4">&quot;&quot;&quot;Wait strategy that doesn't wait at all before retrying.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">super</span><span class="s3">().</span><span class="s1">__init__</span><span class="s3">(</span><span class="s6">0</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">wait_random</span><span class="s3">(</span><span class="s1">wait_base</span><span class="s3">):</span>
+    <span class="s4">&quot;&quot;&quot;Wait strategy that waits a random amount of time between min/max.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">min</span><span class="s3">: </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">time_unit_type </span><span class="s3">= </span><span class="s6">0</span><span class="s3">, </span><span class="s1">max</span><span class="s3">: </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">time_unit_type </span><span class="s3">= </span><span class="s6">1</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:  </span><span class="s0"># noqa</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">wait_random_min </span><span class="s3">= </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">to_seconds</span><span class="s3">(</span><span class="s1">min</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">wait_random_max </span><span class="s3">= </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">to_seconds</span><span class="s3">(</span><span class="s1">max</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">retry_state</span><span class="s3">: </span><span class="s5">&quot;RetryCallState&quot;</span><span class="s3">) </span><span class="s1">-&gt; float</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">wait_random_min </span><span class="s3">+ (</span><span class="s1">random</span><span class="s3">.</span><span class="s1">random</span><span class="s3">() * (</span><span class="s1">self</span><span class="s3">.</span><span class="s1">wait_random_max </span><span class="s3">- </span><span class="s1">self</span><span class="s3">.</span><span class="s1">wait_random_min</span><span class="s3">))</span>
+
+
+<span class="s2">class </span><span class="s1">wait_combine</span><span class="s3">(</span><span class="s1">wait_base</span><span class="s3">):</span>
+    <span class="s4">&quot;&quot;&quot;Combine several waiting strategies.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, *</span><span class="s1">strategies</span><span class="s3">: </span><span class="s1">wait_base</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">wait_funcs </span><span class="s3">= </span><span class="s1">strategies</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">retry_state</span><span class="s3">: </span><span class="s5">&quot;RetryCallState&quot;</span><span class="s3">) </span><span class="s1">-&gt; float</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">sum</span><span class="s3">(</span><span class="s1">x</span><span class="s3">(</span><span class="s1">retry_state</span><span class="s3">=</span><span class="s1">retry_state</span><span class="s3">) </span><span class="s2">for </span><span class="s1">x </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">wait_funcs</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">wait_chain</span><span class="s3">(</span><span class="s1">wait_base</span><span class="s3">):</span>
+    <span class="s4">&quot;&quot;&quot;Chain two or more waiting strategies. 
+ 
+    If all strategies are exhausted, the very last strategy is used 
+    thereafter. 
+ 
+    For example:: 
+ 
+        @retry(wait=wait_chain(*[wait_fixed(1) for i in range(3)] + 
+                               [wait_fixed(2) for j in range(5)] + 
+                               [wait_fixed(5) for k in range(4))) 
+        def wait_chained(): 
+            print(&quot;Wait 1s for 3 attempts, 2s for 5 attempts and 5s 
+                   thereafter.&quot;) 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, *</span><span class="s1">strategies</span><span class="s3">: </span><span class="s1">wait_base</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">strategies </span><span class="s3">= </span><span class="s1">strategies</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">retry_state</span><span class="s3">: </span><span class="s5">&quot;RetryCallState&quot;</span><span class="s3">) </span><span class="s1">-&gt; float</span><span class="s3">:</span>
+        <span class="s1">wait_func_no </span><span class="s3">= </span><span class="s1">min</span><span class="s3">(</span><span class="s1">max</span><span class="s3">(</span><span class="s1">retry_state</span><span class="s3">.</span><span class="s1">attempt_number</span><span class="s3">, </span><span class="s6">1</span><span class="s3">), </span><span class="s1">len</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">strategies</span><span class="s3">))</span>
+        <span class="s1">wait_func </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">strategies</span><span class="s3">[</span><span class="s1">wait_func_no </span><span class="s3">- </span><span class="s6">1</span><span class="s3">]</span>
+        <span class="s2">return </span><span class="s1">wait_func</span><span class="s3">(</span><span class="s1">retry_state</span><span class="s3">=</span><span class="s1">retry_state</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">wait_incrementing</span><span class="s3">(</span><span class="s1">wait_base</span><span class="s3">):</span>
+    <span class="s4">&quot;&quot;&quot;Wait an incremental amount of time after each attempt. 
+ 
+    Starting at a starting value and incrementing by a value for each attempt 
+    (and restricting the upper limit to some maximum value). 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">start</span><span class="s3">: </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">time_unit_type </span><span class="s3">= </span><span class="s6">0</span><span class="s3">,</span>
+        <span class="s1">increment</span><span class="s3">: </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">time_unit_type </span><span class="s3">= </span><span class="s6">100</span><span class="s3">,</span>
+        <span class="s1">max</span><span class="s3">: </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">time_unit_type </span><span class="s3">= </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">MAX_WAIT</span><span class="s3">,  </span><span class="s0"># noqa</span>
+    <span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">start </span><span class="s3">= </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">to_seconds</span><span class="s3">(</span><span class="s1">start</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">increment </span><span class="s3">= </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">to_seconds</span><span class="s3">(</span><span class="s1">increment</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">max </span><span class="s3">= </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">to_seconds</span><span class="s3">(</span><span class="s1">max</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">retry_state</span><span class="s3">: </span><span class="s5">&quot;RetryCallState&quot;</span><span class="s3">) </span><span class="s1">-&gt; float</span><span class="s3">:</span>
+        <span class="s1">result </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">start </span><span class="s3">+ (</span><span class="s1">self</span><span class="s3">.</span><span class="s1">increment </span><span class="s3">* (</span><span class="s1">retry_state</span><span class="s3">.</span><span class="s1">attempt_number </span><span class="s3">- </span><span class="s6">1</span><span class="s3">))</span>
+        <span class="s2">return </span><span class="s1">max</span><span class="s3">(</span><span class="s6">0</span><span class="s3">, </span><span class="s1">min</span><span class="s3">(</span><span class="s1">result</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">max</span><span class="s3">))</span>
+
+
+<span class="s2">class </span><span class="s1">wait_exponential</span><span class="s3">(</span><span class="s1">wait_base</span><span class="s3">):</span>
+    <span class="s4">&quot;&quot;&quot;Wait strategy that applies exponential backoff. 
+ 
+    It allows for a customized multiplier and an ability to restrict the 
+    upper and lower limits to some maximum and minimum value. 
+ 
+    The intervals are fixed (i.e. there is no jitter), so this strategy is 
+    suitable for balancing retries against latency when a required resource is 
+    unavailable for an unknown duration, but *not* suitable for resolving 
+    contention between multiple processes for a shared resource. Use 
+    wait_random_exponential for the latter case. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">multiplier</span><span class="s3">: </span><span class="s1">typing</span><span class="s3">.</span><span class="s1">Union</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">float</span><span class="s3">] = </span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s1">max</span><span class="s3">: </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">time_unit_type </span><span class="s3">= </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">MAX_WAIT</span><span class="s3">,  </span><span class="s0"># noqa</span>
+        <span class="s1">exp_base</span><span class="s3">: </span><span class="s1">typing</span><span class="s3">.</span><span class="s1">Union</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">float</span><span class="s3">] = </span><span class="s6">2</span><span class="s3">,</span>
+        <span class="s1">min</span><span class="s3">: </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">time_unit_type </span><span class="s3">= </span><span class="s6">0</span><span class="s3">,  </span><span class="s0"># noqa</span>
+    <span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">multiplier </span><span class="s3">= </span><span class="s1">multiplier</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">min </span><span class="s3">= </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">to_seconds</span><span class="s3">(</span><span class="s1">min</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">max </span><span class="s3">= </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">to_seconds</span><span class="s3">(</span><span class="s1">max</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">exp_base </span><span class="s3">= </span><span class="s1">exp_base</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">retry_state</span><span class="s3">: </span><span class="s5">&quot;RetryCallState&quot;</span><span class="s3">) </span><span class="s1">-&gt; float</span><span class="s3">:</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">exp </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">exp_base </span><span class="s3">** (</span><span class="s1">retry_state</span><span class="s3">.</span><span class="s1">attempt_number </span><span class="s3">- </span><span class="s6">1</span><span class="s3">)</span>
+            <span class="s1">result </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">multiplier </span><span class="s3">* </span><span class="s1">exp</span>
+        <span class="s2">except </span><span class="s1">OverflowError</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">max</span>
+        <span class="s2">return </span><span class="s1">max</span><span class="s3">(</span><span class="s1">max</span><span class="s3">(</span><span class="s6">0</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">min</span><span class="s3">), </span><span class="s1">min</span><span class="s3">(</span><span class="s1">result</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">max</span><span class="s3">))</span>
+
+
+<span class="s2">class </span><span class="s1">wait_random_exponential</span><span class="s3">(</span><span class="s1">wait_exponential</span><span class="s3">):</span>
+    <span class="s4">&quot;&quot;&quot;Random wait with exponentially widening window. 
+ 
+    An exponential backoff strategy used to mediate contention between multiple 
+    uncoordinated processes for a shared resource in distributed systems. This 
+    is the sense in which &quot;exponential backoff&quot; is meant in e.g. Ethernet 
+    networking, and corresponds to the &quot;Full Jitter&quot; algorithm described in 
+    this blog post: 
+ 
+    https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/ 
+ 
+    Each retry occurs at a random time in a geometrically expanding interval. 
+    It allows for a custom multiplier and an ability to restrict the upper 
+    limit of the random interval to some maximum value. 
+ 
+    Example:: 
+ 
+        wait_random_exponential(multiplier=0.5,  # initial window 0.5s 
+                                max=60)          # max 60s timeout 
+ 
+    When waiting for an unavailable resource to become available again, as 
+    opposed to trying to resolve contention for a shared resource, the 
+    wait_exponential strategy (which uses a fixed interval) may be preferable. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">retry_state</span><span class="s3">: </span><span class="s5">&quot;RetryCallState&quot;</span><span class="s3">) </span><span class="s1">-&gt; float</span><span class="s3">:</span>
+        <span class="s1">high </span><span class="s3">= </span><span class="s1">super</span><span class="s3">().</span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">retry_state</span><span class="s3">=</span><span class="s1">retry_state</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">random</span><span class="s3">.</span><span class="s1">uniform</span><span class="s3">(</span><span class="s6">0</span><span class="s3">, </span><span class="s1">high</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">wait_exponential_jitter</span><span class="s3">(</span><span class="s1">wait_base</span><span class="s3">):</span>
+    <span class="s4">&quot;&quot;&quot;Wait strategy that applies exponential backoff and jitter. 
+ 
+    It allows for a customized initial wait, maximum wait and jitter. 
+ 
+    This implements the strategy described here: 
+    https://cloud.google.com/storage/docs/retry-strategy 
+ 
+    The wait time is min(initial * 2**n + random.uniform(0, jitter), maximum) 
+    where n is the retry count. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+        <span class="s1">initial</span><span class="s3">: </span><span class="s1">float </span><span class="s3">= </span><span class="s6">1</span><span class="s3">,</span>
+        <span class="s1">max</span><span class="s3">: </span><span class="s1">float </span><span class="s3">= </span><span class="s1">_utils</span><span class="s3">.</span><span class="s1">MAX_WAIT</span><span class="s3">,  </span><span class="s0"># noqa</span>
+        <span class="s1">exp_base</span><span class="s3">: </span><span class="s1">float </span><span class="s3">= </span><span class="s6">2</span><span class="s3">,</span>
+        <span class="s1">jitter</span><span class="s3">: </span><span class="s1">float </span><span class="s3">= </span><span class="s6">1</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">initial </span><span class="s3">= </span><span class="s1">initial</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">max </span><span class="s3">= </span><span class="s1">max</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">exp_base </span><span class="s3">= </span><span class="s1">exp_base</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">jitter </span><span class="s3">= </span><span class="s1">jitter</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">retry_state</span><span class="s3">: </span><span class="s5">&quot;RetryCallState&quot;</span><span class="s3">) </span><span class="s1">-&gt; float</span><span class="s3">:</span>
+        <span class="s1">jitter </span><span class="s3">= </span><span class="s1">random</span><span class="s3">.</span><span class="s1">uniform</span><span class="s3">(</span><span class="s6">0</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">jitter</span><span class="s3">)</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">exp </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">exp_base </span><span class="s3">** (</span><span class="s1">retry_state</span><span class="s3">.</span><span class="s1">attempt_number </span><span class="s3">- </span><span class="s6">1</span><span class="s3">)</span>
+            <span class="s1">result </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">initial </span><span class="s3">* </span><span class="s1">exp </span><span class="s3">+ </span><span class="s1">jitter</span>
+        <span class="s2">except </span><span class="s1">OverflowError</span><span class="s3">:</span>
+            <span class="s1">result </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">max</span>
+        <span class="s2">return </span><span class="s1">max</span><span class="s3">(</span><span class="s6">0</span><span class="s3">, </span><span class="s1">min</span><span class="s3">(</span><span class="s1">result</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">max</span><span class="s3">))</span>
+</pre>
+</body>
+</html>

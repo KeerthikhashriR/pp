@@ -1,0 +1,987 @@
+<html>
+<head>
+<title>app.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #7a7e85;}
+.s4 { color: #6aab73;}
+.s5 { color: #5f826b; font-style: italic;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+app.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">logging</span>
+<span class="s0">import </span><span class="s1">os</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+<span class="s0">from </span><span class="s1">datetime </span><span class="s0">import </span><span class="s1">timedelta</span>
+<span class="s0">from </span><span class="s1">itertools </span><span class="s0">import </span><span class="s1">chain</span>
+
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">Aborter</span>
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">BadRequest</span>
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">BadRequestKeyError</span>
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">routing </span><span class="s0">import </span><span class="s1">BuildError</span>
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">routing </span><span class="s0">import </span><span class="s1">Map</span>
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">routing </span><span class="s0">import </span><span class="s1">Rule</span>
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">sansio</span><span class="s2">.</span><span class="s1">response </span><span class="s0">import </span><span class="s1">Response</span>
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">utils </span><span class="s0">import </span><span class="s1">cached_property</span>
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">utils </span><span class="s0">import </span><span class="s1">redirect </span><span class="s0">as </span><span class="s1">_wz_redirect</span>
+
+<span class="s0">from </span><span class="s2">.. </span><span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">ft</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">config </span><span class="s0">import </span><span class="s1">Config</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">config </span><span class="s0">import </span><span class="s1">ConfigAttribute</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">ctx </span><span class="s0">import </span><span class="s1">_AppCtxGlobals</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">helpers </span><span class="s0">import </span><span class="s1">_split_blueprint_path</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">helpers </span><span class="s0">import </span><span class="s1">get_debug_flag</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">json</span><span class="s2">.</span><span class="s1">provider </span><span class="s0">import </span><span class="s1">DefaultJSONProvider</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">json</span><span class="s2">.</span><span class="s1">provider </span><span class="s0">import </span><span class="s1">JSONProvider</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">logging </span><span class="s0">import </span><span class="s1">create_logger</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">templating </span><span class="s0">import </span><span class="s1">DispatchingJinjaLoader</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">templating </span><span class="s0">import </span><span class="s1">Environment</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">scaffold </span><span class="s0">import </span><span class="s1">_endpoint_from_view_func</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">scaffold </span><span class="s0">import </span><span class="s1">find_package</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">scaffold </span><span class="s0">import </span><span class="s1">Scaffold</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">scaffold </span><span class="s0">import </span><span class="s1">setupmethod</span>
+
+<span class="s0">if </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TYPE_CHECKING</span><span class="s2">:  </span><span class="s3"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">wrappers </span><span class="s0">import </span><span class="s1">Response </span><span class="s0">as </span><span class="s1">BaseResponse</span>
+
+    <span class="s0">from </span><span class="s2">..</span><span class="s1">testing </span><span class="s0">import </span><span class="s1">FlaskClient</span>
+    <span class="s0">from </span><span class="s2">..</span><span class="s1">testing </span><span class="s0">import </span><span class="s1">FlaskCliRunner</span>
+    <span class="s0">from </span><span class="s2">.</span><span class="s1">blueprints </span><span class="s0">import </span><span class="s1">Blueprint</span>
+
+<span class="s1">T_shell_context_processor </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span>
+    <span class="s4">&quot;T_shell_context_processor&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">ShellContextProcessorCallable</span>
+<span class="s2">)</span>
+<span class="s1">T_teardown </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s4">&quot;T_teardown&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">TeardownCallable</span><span class="s2">)</span>
+<span class="s1">T_template_filter </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s4">&quot;T_template_filter&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">TemplateFilterCallable</span><span class="s2">)</span>
+<span class="s1">T_template_global </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s4">&quot;T_template_global&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">TemplateGlobalCallable</span><span class="s2">)</span>
+<span class="s1">T_template_test </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s4">&quot;T_template_test&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">TemplateTestCallable</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">_make_timedelta</span><span class="s2">(</span><span class="s1">value</span><span class="s2">: </span><span class="s1">timedelta </span><span class="s2">| </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; timedelta </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">value </span><span class="s0">is None or </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">value</span><span class="s2">, </span><span class="s1">timedelta</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">value</span>
+
+    <span class="s0">return </span><span class="s1">timedelta</span><span class="s2">(</span><span class="s1">seconds</span><span class="s2">=</span><span class="s1">value</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">App</span><span class="s2">(</span><span class="s1">Scaffold</span><span class="s2">):</span>
+    <span class="s5">&quot;&quot;&quot;The flask object implements a WSGI application and acts as the central 
+    object.  It is passed the name of the module or package of the 
+    application.  Once it is created it will act as a central registry for 
+    the view functions, the URL rules, template configuration and much more. 
+ 
+    The name of the package is used to resolve resources from inside the 
+    package or the folder the module is contained in depending on if the 
+    package parameter resolves to an actual python package (a folder with 
+    an :file:`__init__.py` file inside) or a standard module (just a ``.py`` file). 
+ 
+    For more information about resource loading, see :func:`open_resource`. 
+ 
+    Usually you create a :class:`Flask` instance in your main module or 
+    in the :file:`__init__.py` file of your package like this:: 
+ 
+        from flask import Flask 
+        app = Flask(__name__) 
+ 
+    .. admonition:: About the First Parameter 
+ 
+        The idea of the first parameter is to give Flask an idea of what 
+        belongs to your application.  This name is used to find resources 
+        on the filesystem, can be used by extensions to improve debugging 
+        information and a lot more. 
+ 
+        So it's important what you provide there.  If you are using a single 
+        module, `__name__` is always the correct value.  If you however are 
+        using a package, it's usually recommended to hardcode the name of 
+        your package there. 
+ 
+        For example if your application is defined in :file:`yourapplication/app.py` 
+        you should create it with one of the two versions below:: 
+ 
+            app = Flask('yourapplication') 
+            app = Flask(__name__.split('.')[0]) 
+ 
+        Why is that?  The application will work even with `__name__`, thanks 
+        to how resources are looked up.  However it will make debugging more 
+        painful.  Certain extensions can make assumptions based on the 
+        import name of your application.  For example the Flask-SQLAlchemy 
+        extension will look for the code in your application that triggered 
+        an SQL query in debug mode.  If the import name is not properly set 
+        up, that debugging information is lost.  (For example it would only 
+        pick up SQL queries in `yourapplication.app` and not 
+        `yourapplication.views.frontend`) 
+ 
+    .. versionadded:: 0.7 
+       The `static_url_path`, `static_folder`, and `template_folder` 
+       parameters were added. 
+ 
+    .. versionadded:: 0.8 
+       The `instance_path` and `instance_relative_config` parameters were 
+       added. 
+ 
+    .. versionadded:: 0.11 
+       The `root_path` parameter was added. 
+ 
+    .. versionadded:: 1.0 
+       The ``host_matching`` and ``static_host`` parameters were added. 
+ 
+    .. versionadded:: 1.0 
+       The ``subdomain_matching`` parameter was added. Subdomain 
+       matching needs to be enabled manually now. Setting 
+       :data:`SERVER_NAME` does not implicitly enable it. 
+ 
+    :param import_name: the name of the application package 
+    :param static_url_path: can be used to specify a different path for the 
+                            static files on the web.  Defaults to the name 
+                            of the `static_folder` folder. 
+    :param static_folder: The folder with static files that is served at 
+        ``static_url_path``. Relative to the application ``root_path`` 
+        or an absolute path. Defaults to ``'static'``. 
+    :param static_host: the host to use when adding the static route. 
+        Defaults to None. Required when using ``host_matching=True`` 
+        with a ``static_folder`` configured. 
+    :param host_matching: set ``url_map.host_matching`` attribute. 
+        Defaults to False. 
+    :param subdomain_matching: consider the subdomain relative to 
+        :data:`SERVER_NAME` when matching routes. Defaults to False. 
+    :param template_folder: the folder that contains the templates that should 
+                            be used by the application.  Defaults to 
+                            ``'templates'`` folder in the root path of the 
+                            application. 
+    :param instance_path: An alternative instance path for the application. 
+                          By default the folder ``'instance'`` next to the 
+                          package or module is assumed to be the instance 
+                          path. 
+    :param instance_relative_config: if set to ``True`` relative filenames 
+                                     for loading the config are assumed to 
+                                     be relative to the instance path instead 
+                                     of the application root. 
+    :param root_path: The path to the root of the application files. 
+        This should only be set manually when it can't be detected 
+        automatically, such as for namespace packages. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">#: The class of the object assigned to :attr:`aborter`, created by</span>
+    <span class="s3">#: :meth:`create_aborter`. That object is called by</span>
+    <span class="s3">#: :func:`flask.abort` to raise HTTP errors, and can be</span>
+    <span class="s3">#: called directly as well.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: Defaults to :class:`werkzeug.exceptions.Aborter`.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: .. versionadded:: 2.2</span>
+    <span class="s1">aborter_class </span><span class="s2">= </span><span class="s1">Aborter</span>
+
+    <span class="s3">#: The class that is used for the Jinja environment.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: .. versionadded:: 0.11</span>
+    <span class="s1">jinja_environment </span><span class="s2">= </span><span class="s1">Environment</span>
+
+    <span class="s3">#: The class that is used for the :data:`~flask.g` instance.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: Example use cases for a custom class:</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: 1. Store arbitrary attributes on flask.g.</span>
+    <span class="s3">#: 2. Add a property for lazy per-request database connectors.</span>
+    <span class="s3">#: 3. Return None instead of AttributeError on unexpected attributes.</span>
+    <span class="s3">#: 4. Raise exception if an unexpected attr is set, a &quot;controlled&quot; flask.g.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: In Flask 0.9 this property was called `request_globals_class` but it</span>
+    <span class="s3">#: was changed in 0.10 to :attr:`app_ctx_globals_class` because the</span>
+    <span class="s3">#: flask.g object is now application context scoped.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: .. versionadded:: 0.10</span>
+    <span class="s1">app_ctx_globals_class </span><span class="s2">= </span><span class="s1">_AppCtxGlobals</span>
+
+    <span class="s3">#: The class that is used for the ``config`` attribute of this app.</span>
+    <span class="s3">#: Defaults to :class:`~flask.Config`.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: Example use cases for a custom class:</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: 1. Default values for certain config options.</span>
+    <span class="s3">#: 2. Access to config values through attributes in addition to keys.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: .. versionadded:: 0.11</span>
+    <span class="s1">config_class </span><span class="s2">= </span><span class="s1">Config</span>
+
+    <span class="s3">#: The testing flag.  Set this to ``True`` to enable the test mode of</span>
+    <span class="s3">#: Flask extensions (and in the future probably also Flask itself).</span>
+    <span class="s3">#: For example this might activate test helpers that have an</span>
+    <span class="s3">#: additional runtime cost which should not be enabled by default.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: If this is enabled and PROPAGATE_EXCEPTIONS is not changed from the</span>
+    <span class="s3">#: default it's implicitly enabled.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: This attribute can also be configured from the config with the</span>
+    <span class="s3">#: ``TESTING`` configuration key.  Defaults to ``False``.</span>
+    <span class="s1">testing </span><span class="s2">= </span><span class="s1">ConfigAttribute</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">](</span><span class="s4">&quot;TESTING&quot;</span><span class="s2">)</span>
+
+    <span class="s3">#: If a secret key is set, cryptographic components can use this to</span>
+    <span class="s3">#: sign cookies and other things. Set this to a complex random value</span>
+    <span class="s3">#: when you want to use the secure cookie for instance.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: This attribute can also be configured from the config with the</span>
+    <span class="s3">#: :data:`SECRET_KEY` configuration key. Defaults to ``None``.</span>
+    <span class="s1">secret_key </span><span class="s2">= </span><span class="s1">ConfigAttribute</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Union</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">, </span><span class="s0">None</span><span class="s2">]](</span><span class="s4">&quot;SECRET_KEY&quot;</span><span class="s2">)</span>
+
+    <span class="s3">#: A :class:`~datetime.timedelta` which is used to set the expiration</span>
+    <span class="s3">#: date of a permanent session.  The default is 31 days which makes a</span>
+    <span class="s3">#: permanent session survive for roughly one month.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: This attribute can also be configured from the config with the</span>
+    <span class="s3">#: ``PERMANENT_SESSION_LIFETIME`` configuration key.  Defaults to</span>
+    <span class="s3">#: ``timedelta(days=31)``</span>
+    <span class="s1">permanent_session_lifetime </span><span class="s2">= </span><span class="s1">ConfigAttribute</span><span class="s2">[</span><span class="s1">timedelta</span><span class="s2">](</span>
+        <span class="s4">&quot;PERMANENT_SESSION_LIFETIME&quot;</span><span class="s2">,</span>
+        <span class="s1">get_converter</span><span class="s2">=</span><span class="s1">_make_timedelta</span><span class="s2">,  </span><span class="s3"># type: ignore[arg-type]</span>
+    <span class="s2">)</span>
+
+    <span class="s1">json_provider_class</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">JSONProvider</span><span class="s2">] = </span><span class="s1">DefaultJSONProvider</span>
+    <span class="s4">&quot;&quot;&quot;A subclass of :class:`~flask.json.provider.JSONProvider`. An 
+    instance is created and assigned to :attr:`app.json` when creating 
+    the app. 
+ 
+    The default, :class:`~flask.json.provider.DefaultJSONProvider`, uses 
+    Python's built-in :mod:`json` library. A different provider can use 
+    a different JSON library. 
+ 
+    .. versionadded:: 2.2 
+    &quot;&quot;&quot;</span>
+
+    <span class="s3">#: Options that are passed to the Jinja environment in</span>
+    <span class="s3">#: :meth:`create_jinja_environment`. Changing these options after</span>
+    <span class="s3">#: the environment is created (accessing :attr:`jinja_env`) will</span>
+    <span class="s3">#: have no effect.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: .. versionchanged:: 1.1.0</span>
+    <span class="s3">#:     This is a ``dict`` instead of an ``ImmutableDict`` to allow</span>
+    <span class="s3">#:     easier configuration.</span>
+    <span class="s3">#:</span>
+    <span class="s1">jinja_options</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] = {}</span>
+
+    <span class="s3">#: The rule object to use for URL rules created.  This is used by</span>
+    <span class="s3">#: :meth:`add_url_rule`.  Defaults to :class:`werkzeug.routing.Rule`.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: .. versionadded:: 0.7</span>
+    <span class="s1">url_rule_class </span><span class="s2">= </span><span class="s1">Rule</span>
+
+    <span class="s3">#: The map object to use for storing the URL rules and routing</span>
+    <span class="s3">#: configuration parameters. Defaults to :class:`werkzeug.routing.Map`.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: .. versionadded:: 1.1.0</span>
+    <span class="s1">url_map_class </span><span class="s2">= </span><span class="s1">Map</span>
+
+    <span class="s3">#: The :meth:`test_client` method creates an instance of this test</span>
+    <span class="s3">#: client class. Defaults to :class:`~flask.testing.FlaskClient`.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: .. versionadded:: 0.7</span>
+    <span class="s1">test_client_class</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">FlaskClient</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+
+    <span class="s3">#: The :class:`~click.testing.CliRunner` subclass, by default</span>
+    <span class="s3">#: :class:`~flask.testing.FlaskCliRunner` that is used by</span>
+    <span class="s3">#: :meth:`test_cli_runner`. Its ``__init__`` method should take a</span>
+    <span class="s3">#: Flask app object as the first argument.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: .. versionadded:: 1.0</span>
+    <span class="s1">test_cli_runner_class</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">FlaskCliRunner</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+
+    <span class="s1">default_config</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]</span>
+    <span class="s1">response_class</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">Response</span><span class="s2">]</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">import_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">static_url_path</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">static_folder</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s1">os</span><span class="s2">.</span><span class="s1">PathLike</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s4">&quot;static&quot;</span><span class="s2">,</span>
+        <span class="s1">static_host</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">host_matching</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">subdomain_matching</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">template_folder</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s1">os</span><span class="s2">.</span><span class="s1">PathLike</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s4">&quot;templates&quot;</span><span class="s2">,</span>
+        <span class="s1">instance_path</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">instance_relative_config</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">root_path</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(</span>
+            <span class="s1">import_name</span><span class="s2">=</span><span class="s1">import_name</span><span class="s2">,</span>
+            <span class="s1">static_folder</span><span class="s2">=</span><span class="s1">static_folder</span><span class="s2">,</span>
+            <span class="s1">static_url_path</span><span class="s2">=</span><span class="s1">static_url_path</span><span class="s2">,</span>
+            <span class="s1">template_folder</span><span class="s2">=</span><span class="s1">template_folder</span><span class="s2">,</span>
+            <span class="s1">root_path</span><span class="s2">=</span><span class="s1">root_path</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">instance_path </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">instance_path </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">auto_find_instance_path</span><span class="s2">()</span>
+        <span class="s0">elif not </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">isabs</span><span class="s2">(</span><span class="s1">instance_path</span><span class="s2">):</span>
+            <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span>
+                <span class="s4">&quot;If an instance path is provided it must be absolute.&quot;</span>
+                <span class="s4">&quot; A relative path was given instead.&quot;</span>
+            <span class="s2">)</span>
+
+        <span class="s3">#: Holds the path to the instance folder.</span>
+        <span class="s3">#:</span>
+        <span class="s3">#: .. versionadded:: 0.8</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">instance_path </span><span class="s2">= </span><span class="s1">instance_path</span>
+
+        <span class="s3">#: The configuration dictionary as :class:`Config`.  This behaves</span>
+        <span class="s3">#: exactly like a regular dictionary but supports additional methods</span>
+        <span class="s3">#: to load a config from files.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">config </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">make_config</span><span class="s2">(</span><span class="s1">instance_relative_config</span><span class="s2">)</span>
+
+        <span class="s3">#: An instance of :attr:`aborter_class` created by</span>
+        <span class="s3">#: :meth:`make_aborter`. This is called by :func:`flask.abort`</span>
+        <span class="s3">#: to raise HTTP errors, and can be called directly as well.</span>
+        <span class="s3">#:</span>
+        <span class="s3">#: .. versionadded:: 2.2</span>
+        <span class="s3">#:     Moved from ``flask.abort``, which calls this object.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">aborter </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">make_aborter</span><span class="s2">()</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">json</span><span class="s2">: </span><span class="s1">JSONProvider </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">json_provider_class</span><span class="s2">(</span><span class="s1">self</span><span class="s2">)</span>
+        <span class="s4">&quot;&quot;&quot;Provides access to JSON methods. Functions in ``flask.json`` 
+        will call methods on this provider when the application context 
+        is active. Used for handling JSON requests and responses. 
+ 
+        An instance of :attr:`json_provider_class`. Can be customized by 
+        changing that attribute on a subclass, or by assigning to this 
+        attribute afterwards. 
+ 
+        The default, :class:`~flask.json.provider.DefaultJSONProvider`, 
+        uses Python's built-in :mod:`json` library. A different provider 
+        can use a different JSON library. 
+ 
+        .. versionadded:: 2.2 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3">#: A list of functions that are called by</span>
+        <span class="s3">#: :meth:`handle_url_build_error` when :meth:`.url_for` raises a</span>
+        <span class="s3">#: :exc:`~werkzeug.routing.BuildError`. Each function is called</span>
+        <span class="s3">#: with ``error``, ``endpoint`` and ``values``. If a function</span>
+        <span class="s3">#: returns ``None`` or raises a ``BuildError``, it is skipped.</span>
+        <span class="s3">#: Otherwise, its return value is returned by ``url_for``.</span>
+        <span class="s3">#:</span>
+        <span class="s3">#: .. versionadded:: 0.9</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">url_build_error_handlers</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span>
+            <span class="s1">t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Exception</span><span class="s2">, </span><span class="s1">str</span><span class="s2">, </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]], </span><span class="s1">str</span><span class="s2">]</span>
+        <span class="s2">] = []</span>
+
+        <span class="s3">#: A list of functions that are called when the application context</span>
+        <span class="s3">#: is destroyed.  Since the application context is also torn down</span>
+        <span class="s3">#: if the request ends this is the place to store code that disconnects</span>
+        <span class="s3">#: from databases.</span>
+        <span class="s3">#:</span>
+        <span class="s3">#: .. versionadded:: 0.9</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">teardown_appcontext_funcs</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">TeardownCallable</span><span class="s2">] = []</span>
+
+        <span class="s3">#: A list of shell context processor functions that should be run</span>
+        <span class="s3">#: when a shell context is created.</span>
+        <span class="s3">#:</span>
+        <span class="s3">#: .. versionadded:: 0.11</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">shell_context_processors</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">ft</span><span class="s2">.</span><span class="s1">ShellContextProcessorCallable</span><span class="s2">] = []</span>
+
+        <span class="s3">#: Maps registered blueprint names to blueprint objects. The</span>
+        <span class="s3">#: dict retains the order the blueprints were registered in.</span>
+        <span class="s3">#: Blueprints can be registered multiple times, this dict does</span>
+        <span class="s3">#: not track how often they were attached.</span>
+        <span class="s3">#:</span>
+        <span class="s3">#: .. versionadded:: 0.7</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">blueprints</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Blueprint</span><span class="s2">] = {}</span>
+
+        <span class="s3">#: a place where extensions can store application specific state.  For</span>
+        <span class="s3">#: example this is where an extension could store database engines and</span>
+        <span class="s3">#: similar things.</span>
+        <span class="s3">#:</span>
+        <span class="s3">#: The key must match the name of the extension module. For example in</span>
+        <span class="s3">#: case of a &quot;Flask-Foo&quot; extension in `flask_foo`, the key would be</span>
+        <span class="s3">#: ``'foo'``.</span>
+        <span class="s3">#:</span>
+        <span class="s3">#: .. versionadded:: 0.7</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">extensions</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] = {}</span>
+
+        <span class="s3">#: The :class:`~werkzeug.routing.Map` for this instance.  You can use</span>
+        <span class="s3">#: this to change the routing converters after the class was created</span>
+        <span class="s3">#: but before any routes are connected.  Example::</span>
+        <span class="s3">#:</span>
+        <span class="s3">#:    from werkzeug.routing import BaseConverter</span>
+        <span class="s3">#:</span>
+        <span class="s3">#:    class ListConverter(BaseConverter):</span>
+        <span class="s3">#:        def to_python(self, value):</span>
+        <span class="s3">#:            return value.split(',')</span>
+        <span class="s3">#:        def to_url(self, values):</span>
+        <span class="s3">#:            return ','.join(super(ListConverter, self).to_url(value)</span>
+        <span class="s3">#:                            for value in values)</span>
+        <span class="s3">#:</span>
+        <span class="s3">#:    app = Flask(__name__)</span>
+        <span class="s3">#:    app.url_map.converters['list'] = ListConverter</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">url_map </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">url_map_class</span><span class="s2">(</span><span class="s1">host_matching</span><span class="s2">=</span><span class="s1">host_matching</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain_matching </span><span class="s2">= </span><span class="s1">subdomain_matching</span>
+
+        <span class="s3"># tracks internally if the application already handled at least one</span>
+        <span class="s3"># request.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_got_first_request </span><span class="s2">= </span><span class="s0">False</span>
+
+    <span class="s0">def </span><span class="s1">_check_setup_finished</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">f_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_got_first_request</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">AssertionError</span><span class="s2">(</span>
+                <span class="s4">f&quot;The setup method '</span><span class="s0">{</span><span class="s1">f_name</span><span class="s0">}</span><span class="s4">' can no longer be called&quot;</span>
+                <span class="s4">&quot; on the application. It has already handled its first&quot;</span>
+                <span class="s4">&quot; request, any changes will not be applied&quot;</span>
+                <span class="s4">&quot; consistently.</span><span class="s0">\n</span><span class="s4">&quot;</span>
+                <span class="s4">&quot;Make sure all imports, decorators, functions, etc.&quot;</span>
+                <span class="s4">&quot; needed to set up the application are done before&quot;</span>
+                <span class="s4">&quot; running it.&quot;</span>
+            <span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">cached_property</span>
+    <span class="s0">def </span><span class="s1">name</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:  </span><span class="s3"># type: ignore</span>
+        <span class="s5">&quot;&quot;&quot;The name of the application.  This is usually the import name 
+        with the difference that it's guessed from the run file if the 
+        import name is main.  This name is used as a display name when 
+        Flask needs the name of the application.  It can be set and overridden 
+        to change the value. 
+ 
+        .. versionadded:: 0.8 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">import_name </span><span class="s2">== </span><span class="s4">&quot;__main__&quot;</span><span class="s2">:</span>
+            <span class="s1">fn</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">sys</span><span class="s2">.</span><span class="s1">modules</span><span class="s2">[</span><span class="s4">&quot;__main__&quot;</span><span class="s2">], </span><span class="s4">&quot;__file__&quot;</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">fn </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s4">&quot;__main__&quot;</span>
+            <span class="s0">return </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">splitext</span><span class="s2">(</span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">basename</span><span class="s2">(</span><span class="s1">fn</span><span class="s2">))[</span><span class="s6">0</span><span class="s2">]</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">import_name</span>
+
+    <span class="s2">@</span><span class="s1">cached_property</span>
+    <span class="s0">def </span><span class="s1">logger</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; logging</span><span class="s2">.</span><span class="s1">Logger</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;A standard Python :class:`~logging.Logger` for the app, with 
+        the same name as :attr:`name`. 
+ 
+        In debug mode, the logger's :attr:`~logging.Logger.level` will 
+        be set to :data:`~logging.DEBUG`. 
+ 
+        If there are no handlers configured, a default handler will be 
+        added. See :doc:`/logging` for more information. 
+ 
+        .. versionchanged:: 1.1.0 
+            The logger takes the same name as :attr:`name` rather than 
+            hard-coding ``&quot;flask.app&quot;``. 
+ 
+        .. versionchanged:: 1.0.0 
+            Behavior was simplified. The logger is always named 
+            ``&quot;flask.app&quot;``. The level is only set during configuration, 
+            it doesn't check ``app.debug`` each time. Only one format is 
+            used, not different ones depending on ``app.debug``. No 
+            handlers are removed, and a handler is only added if no 
+            handlers are already configured. 
+ 
+        .. versionadded:: 0.3 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">create_logger</span><span class="s2">(</span><span class="s1">self</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">cached_property</span>
+    <span class="s0">def </span><span class="s1">jinja_env</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; Environment</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;The Jinja environment used to load templates. 
+ 
+        The environment is created the first time this property is 
+        accessed. Changing :attr:`jinja_options` after that will have no 
+        effect. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">create_jinja_environment</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">create_jinja_environment</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; Environment</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">NotImplementedError</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">make_config</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">instance_relative</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">) </span><span class="s1">-&gt; Config</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Used to create the config attribute by the Flask constructor. 
+        The `instance_relative` parameter is passed in from the constructor 
+        of Flask (there named `instance_relative_config`) and indicates if 
+        the config should be relative to the instance path or the root path 
+        of the application. 
+ 
+        .. versionadded:: 0.8 
+        &quot;&quot;&quot;</span>
+        <span class="s1">root_path </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">root_path</span>
+        <span class="s0">if </span><span class="s1">instance_relative</span><span class="s2">:</span>
+            <span class="s1">root_path </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">instance_path</span>
+        <span class="s1">defaults </span><span class="s2">= </span><span class="s1">dict</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">default_config</span><span class="s2">)</span>
+        <span class="s1">defaults</span><span class="s2">[</span><span class="s4">&quot;DEBUG&quot;</span><span class="s2">] = </span><span class="s1">get_debug_flag</span><span class="s2">()</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config_class</span><span class="s2">(</span><span class="s1">root_path</span><span class="s2">, </span><span class="s1">defaults</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">make_aborter</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; Aborter</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Create the object to assign to :attr:`aborter`. That object 
+        is called by :func:`flask.abort` to raise HTTP errors, and can 
+        be called directly as well. 
+ 
+        By default, this creates an instance of :attr:`aborter_class`, 
+        which defaults to :class:`werkzeug.exceptions.Aborter`. 
+ 
+        .. versionadded:: 2.2 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">aborter_class</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">auto_find_instance_path</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Tries to locate the instance path if it was not provided to the 
+        constructor of the application class.  It will basically calculate 
+        the path to a folder named ``instance`` next to your main file or 
+        the package. 
+ 
+        .. versionadded:: 0.8 
+        &quot;&quot;&quot;</span>
+        <span class="s1">prefix</span><span class="s2">, </span><span class="s1">package_path </span><span class="s2">= </span><span class="s1">find_package</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">import_name</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">prefix </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">package_path</span><span class="s2">, </span><span class="s4">&quot;instance&quot;</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">prefix</span><span class="s2">, </span><span class="s4">&quot;var&quot;</span><span class="s2">, </span><span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">name</span><span class="s0">}</span><span class="s4">-instance&quot;</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">create_global_jinja_loader</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; DispatchingJinjaLoader</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Creates the loader for the Jinja2 environment.  Can be used to 
+        override just the loader and keeping the rest unchanged.  It's 
+        discouraged to override this function.  Instead one should override 
+        the :meth:`jinja_loader` function instead. 
+ 
+        The global loader dispatches between the loaders of the application 
+        and the individual blueprints. 
+ 
+        .. versionadded:: 0.7 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">DispatchingJinjaLoader</span><span class="s2">(</span><span class="s1">self</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">select_jinja_autoescape</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">filename</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Returns ``True`` if autoescaping should be active for the given 
+        template name. If no template name is given, returns `True`. 
+ 
+        .. versionchanged:: 2.2 
+            Autoescaping is now enabled by default for ``.svg`` files. 
+ 
+        .. versionadded:: 0.5 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">filename </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">return True</span>
+        <span class="s0">return </span><span class="s1">filename</span><span class="s2">.</span><span class="s1">endswith</span><span class="s2">((</span><span class="s4">&quot;.html&quot;</span><span class="s2">, </span><span class="s4">&quot;.htm&quot;</span><span class="s2">, </span><span class="s4">&quot;.xml&quot;</span><span class="s2">, </span><span class="s4">&quot;.xhtml&quot;</span><span class="s2">, </span><span class="s4">&quot;.svg&quot;</span><span class="s2">))</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">debug</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Whether debug mode is enabled. When using ``flask run`` to start the 
+        development server, an interactive debugger will be shown for unhandled 
+        exceptions, and the server will be reloaded when code changes. This maps to the 
+        :data:`DEBUG` config key. It may not behave as expected if set late. 
+ 
+        **Do not enable debug mode when deploying in production.** 
+ 
+        Default: ``False`` 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">[</span><span class="s4">&quot;DEBUG&quot;</span><span class="s2">]  </span><span class="s3"># type: ignore[no-any-return]</span>
+
+    <span class="s2">@</span><span class="s1">debug</span><span class="s2">.</span><span class="s1">setter</span>
+    <span class="s0">def </span><span class="s1">debug</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">[</span><span class="s4">&quot;DEBUG&quot;</span><span class="s2">] = </span><span class="s1">value</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">[</span><span class="s4">&quot;TEMPLATES_AUTO_RELOAD&quot;</span><span class="s2">] </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">jinja_env</span><span class="s2">.</span><span class="s1">auto_reload </span><span class="s2">= </span><span class="s1">value</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">register_blueprint</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">blueprint</span><span class="s2">: </span><span class="s1">Blueprint</span><span class="s2">, **</span><span class="s1">options</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Register a :class:`~flask.Blueprint` on the application. Keyword 
+        arguments passed to this method will override the defaults set on the 
+        blueprint. 
+ 
+        Calls the blueprint's :meth:`~flask.Blueprint.register` method after 
+        recording the blueprint in the application's :attr:`blueprints`. 
+ 
+        :param blueprint: The blueprint to register. 
+        :param url_prefix: Blueprint routes will be prefixed with this. 
+        :param subdomain: Blueprint routes will match on this subdomain. 
+        :param url_defaults: Blueprint routes will use these default values for 
+            view arguments. 
+        :param options: Additional keyword arguments are passed to 
+            :class:`~flask.blueprints.BlueprintSetupState`. They can be 
+            accessed in :meth:`~flask.Blueprint.record` callbacks. 
+ 
+        .. versionchanged:: 2.0.1 
+            The ``name`` option can be used to change the (pre-dotted) 
+            name the blueprint is registered with. This allows the same 
+            blueprint to be registered multiple times with unique names 
+            for ``url_for``. 
+ 
+        .. versionadded:: 0.7 
+        &quot;&quot;&quot;</span>
+        <span class="s1">blueprint</span><span class="s2">.</span><span class="s1">register</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">options</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">iter_blueprints</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">ValuesView</span><span class="s2">[</span><span class="s1">Blueprint</span><span class="s2">]:</span>
+        <span class="s5">&quot;&quot;&quot;Iterates over all blueprints by the order they were registered. 
+ 
+        .. versionadded:: 0.11 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">blueprints</span><span class="s2">.</span><span class="s1">values</span><span class="s2">()</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">add_url_rule</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">rule</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">endpoint</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">view_func</span><span class="s2">: </span><span class="s1">ft</span><span class="s2">.</span><span class="s1">RouteCallable </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">provide_automatic_options</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s2">**</span><span class="s1">options</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">endpoint </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">endpoint </span><span class="s2">= </span><span class="s1">_endpoint_from_view_func</span><span class="s2">(</span><span class="s1">view_func</span><span class="s2">)  </span><span class="s3"># type: ignore</span>
+        <span class="s1">options</span><span class="s2">[</span><span class="s4">&quot;endpoint&quot;</span><span class="s2">] = </span><span class="s1">endpoint</span>
+        <span class="s1">methods </span><span class="s2">= </span><span class="s1">options</span><span class="s2">.</span><span class="s1">pop</span><span class="s2">(</span><span class="s4">&quot;methods&quot;</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+
+        <span class="s3"># if the methods are not given and the view_func object knows its</span>
+        <span class="s3"># methods we can use that instead.  If neither exists, we go with</span>
+        <span class="s3"># a tuple of only ``GET`` as default.</span>
+        <span class="s0">if </span><span class="s1">methods </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">methods </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">view_func</span><span class="s2">, </span><span class="s4">&quot;methods&quot;</span><span class="s2">, </span><span class="s0">None</span><span class="s2">) </span><span class="s0">or </span><span class="s2">(</span><span class="s4">&quot;GET&quot;</span><span class="s2">,)</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">methods</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+            <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span>
+                <span class="s4">&quot;Allowed methods must be a list of strings, for&quot;</span>
+                <span class="s4">' example: @app.route(..., methods=[&quot;POST&quot;])'</span>
+            <span class="s2">)</span>
+        <span class="s1">methods </span><span class="s2">= {</span><span class="s1">item</span><span class="s2">.</span><span class="s1">upper</span><span class="s2">() </span><span class="s0">for </span><span class="s1">item </span><span class="s0">in </span><span class="s1">methods</span><span class="s2">}</span>
+
+        <span class="s3"># Methods that should always be added</span>
+        <span class="s1">required_methods</span><span class="s2">: </span><span class="s1">set</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = </span><span class="s1">set</span><span class="s2">(</span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">view_func</span><span class="s2">, </span><span class="s4">&quot;required_methods&quot;</span><span class="s2">, ()))</span>
+
+        <span class="s3"># starting with Flask 0.8 the view_func object can disable and</span>
+        <span class="s3"># force-enable the automatic options handling.</span>
+        <span class="s0">if </span><span class="s1">provide_automatic_options </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">provide_automatic_options </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span>
+                <span class="s1">view_func</span><span class="s2">, </span><span class="s4">&quot;provide_automatic_options&quot;</span><span class="s2">, </span><span class="s0">None</span>
+            <span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">provide_automatic_options </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s4">&quot;OPTIONS&quot; </span><span class="s0">not in </span><span class="s1">methods </span><span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">[</span><span class="s4">&quot;PROVIDE_AUTOMATIC_OPTIONS&quot;</span><span class="s2">]:</span>
+                <span class="s1">provide_automatic_options </span><span class="s2">= </span><span class="s0">True</span>
+                <span class="s1">required_methods</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s4">&quot;OPTIONS&quot;</span><span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">provide_automatic_options </span><span class="s2">= </span><span class="s0">False</span>
+
+        <span class="s3"># Add the required methods now.</span>
+        <span class="s1">methods </span><span class="s2">|= </span><span class="s1">required_methods</span>
+
+        <span class="s1">rule_obj </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">url_rule_class</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">, </span><span class="s1">methods</span><span class="s2">=</span><span class="s1">methods</span><span class="s2">, **</span><span class="s1">options</span><span class="s2">)</span>
+        <span class="s1">rule_obj</span><span class="s2">.</span><span class="s1">provide_automatic_options </span><span class="s2">= </span><span class="s1">provide_automatic_options  </span><span class="s3"># type: ignore[attr-defined]</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">url_map</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">rule_obj</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">view_func </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">old_func </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">view_functions</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">endpoint</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">old_func </span><span class="s0">is not None and </span><span class="s1">old_func </span><span class="s2">!= </span><span class="s1">view_func</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">AssertionError</span><span class="s2">(</span>
+                    <span class="s4">&quot;View function mapping is overwriting an existing&quot;</span>
+                    <span class="s4">f&quot; endpoint function: </span><span class="s0">{</span><span class="s1">endpoint</span><span class="s0">}</span><span class="s4">&quot;</span>
+                <span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">view_functions</span><span class="s2">[</span><span class="s1">endpoint</span><span class="s2">] = </span><span class="s1">view_func</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">template_filter</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">T_template_filter</span><span class="s2">], </span><span class="s1">T_template_filter</span><span class="s2">]:</span>
+        <span class="s5">&quot;&quot;&quot;A decorator that is used to register custom template filter. 
+        You can specify a name for the filter, otherwise the function 
+        name will be used. Example:: 
+ 
+          @app.template_filter() 
+          def reverse(s): 
+              return s[::-1] 
+ 
+        :param name: the optional name of the filter, otherwise the 
+                     function name will be used. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0">def </span><span class="s1">decorator</span><span class="s2">(</span><span class="s1">f</span><span class="s2">: </span><span class="s1">T_template_filter</span><span class="s2">) </span><span class="s1">-&gt; T_template_filter</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">add_template_filter</span><span class="s2">(</span><span class="s1">f</span><span class="s2">, </span><span class="s1">name</span><span class="s2">=</span><span class="s1">name</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">f</span>
+
+        <span class="s0">return </span><span class="s1">decorator</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">add_template_filter</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">f</span><span class="s2">: </span><span class="s1">ft</span><span class="s2">.</span><span class="s1">TemplateFilterCallable</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Register a custom template filter.  Works exactly like the 
+        :meth:`template_filter` decorator. 
+ 
+        :param name: the optional name of the filter, otherwise the 
+                     function name will be used. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">jinja_env</span><span class="s2">.</span><span class="s1">filters</span><span class="s2">[</span><span class="s1">name </span><span class="s0">or </span><span class="s1">f</span><span class="s2">.</span><span class="s1">__name__</span><span class="s2">] = </span><span class="s1">f</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">template_test</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">T_template_test</span><span class="s2">], </span><span class="s1">T_template_test</span><span class="s2">]:</span>
+        <span class="s5">&quot;&quot;&quot;A decorator that is used to register custom template test. 
+        You can specify a name for the test, otherwise the function 
+        name will be used. Example:: 
+ 
+          @app.template_test() 
+          def is_prime(n): 
+              if n == 2: 
+                  return True 
+              for i in range(2, int(math.ceil(math.sqrt(n))) + 1): 
+                  if n % i == 0: 
+                      return False 
+              return True 
+ 
+        .. versionadded:: 0.10 
+ 
+        :param name: the optional name of the test, otherwise the 
+                     function name will be used. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0">def </span><span class="s1">decorator</span><span class="s2">(</span><span class="s1">f</span><span class="s2">: </span><span class="s1">T_template_test</span><span class="s2">) </span><span class="s1">-&gt; T_template_test</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">add_template_test</span><span class="s2">(</span><span class="s1">f</span><span class="s2">, </span><span class="s1">name</span><span class="s2">=</span><span class="s1">name</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">f</span>
+
+        <span class="s0">return </span><span class="s1">decorator</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">add_template_test</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">f</span><span class="s2">: </span><span class="s1">ft</span><span class="s2">.</span><span class="s1">TemplateTestCallable</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Register a custom template test.  Works exactly like the 
+        :meth:`template_test` decorator. 
+ 
+        .. versionadded:: 0.10 
+ 
+        :param name: the optional name of the test, otherwise the 
+                     function name will be used. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">jinja_env</span><span class="s2">.</span><span class="s1">tests</span><span class="s2">[</span><span class="s1">name </span><span class="s0">or </span><span class="s1">f</span><span class="s2">.</span><span class="s1">__name__</span><span class="s2">] = </span><span class="s1">f</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">template_global</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">T_template_global</span><span class="s2">], </span><span class="s1">T_template_global</span><span class="s2">]:</span>
+        <span class="s5">&quot;&quot;&quot;A decorator that is used to register a custom template global function. 
+        You can specify a name for the global function, otherwise the function 
+        name will be used. Example:: 
+ 
+            @app.template_global() 
+            def double(n): 
+                return 2 * n 
+ 
+        .. versionadded:: 0.10 
+ 
+        :param name: the optional name of the global function, otherwise the 
+                     function name will be used. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s0">def </span><span class="s1">decorator</span><span class="s2">(</span><span class="s1">f</span><span class="s2">: </span><span class="s1">T_template_global</span><span class="s2">) </span><span class="s1">-&gt; T_template_global</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">add_template_global</span><span class="s2">(</span><span class="s1">f</span><span class="s2">, </span><span class="s1">name</span><span class="s2">=</span><span class="s1">name</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">f</span>
+
+        <span class="s0">return </span><span class="s1">decorator</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">add_template_global</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">f</span><span class="s2">: </span><span class="s1">ft</span><span class="s2">.</span><span class="s1">TemplateGlobalCallable</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Register a custom template global function. Works exactly like the 
+        :meth:`template_global` decorator. 
+ 
+        .. versionadded:: 0.10 
+ 
+        :param name: the optional name of the global function, otherwise the 
+                     function name will be used. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">jinja_env</span><span class="s2">.</span><span class="s1">globals</span><span class="s2">[</span><span class="s1">name </span><span class="s0">or </span><span class="s1">f</span><span class="s2">.</span><span class="s1">__name__</span><span class="s2">] = </span><span class="s1">f</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">teardown_appcontext</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">f</span><span class="s2">: </span><span class="s1">T_teardown</span><span class="s2">) </span><span class="s1">-&gt; T_teardown</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Registers a function to be called when the application 
+        context is popped. The application context is typically popped 
+        after the request context for each request, at the end of CLI 
+        commands, or after a manually pushed context ends. 
+ 
+        .. code-block:: python 
+ 
+            with app.app_context(): 
+                ... 
+ 
+        When the ``with`` block exits (or ``ctx.pop()`` is called), the 
+        teardown functions are called just before the app context is 
+        made inactive. Since a request context typically also manages an 
+        application context it would also be called when you pop a 
+        request context. 
+ 
+        When a teardown function was called because of an unhandled 
+        exception it will be passed an error object. If an 
+        :meth:`errorhandler` is registered, it will handle the exception 
+        and the teardown will not receive it. 
+ 
+        Teardown functions must avoid raising exceptions. If they 
+        execute code that might fail they must surround that code with a 
+        ``try``/``except`` block and log any errors. 
+ 
+        The return values of teardown functions are ignored. 
+ 
+        .. versionadded:: 0.9 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">teardown_appcontext_funcs</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">f</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">f</span>
+
+    <span class="s2">@</span><span class="s1">setupmethod</span>
+    <span class="s0">def </span><span class="s1">shell_context_processor</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">f</span><span class="s2">: </span><span class="s1">T_shell_context_processor</span>
+    <span class="s2">) </span><span class="s1">-&gt; T_shell_context_processor</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Registers a shell context processor function. 
+ 
+        .. versionadded:: 0.11 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">shell_context_processors</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">f</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">f</span>
+
+    <span class="s0">def </span><span class="s1">_find_error_handler</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">e</span><span class="s2">: </span><span class="s1">Exception</span><span class="s2">, </span><span class="s1">blueprints</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]</span>
+    <span class="s2">) </span><span class="s1">-&gt; ft</span><span class="s2">.</span><span class="s1">ErrorHandlerCallable </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Return a registered error handler for an exception in this order: 
+        blueprint handler for a specific code, app handler for a specific code, 
+        blueprint handler for an exception class, app handler for an exception 
+        class, or ``None`` if a suitable handler is not found. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">exc_class</span><span class="s2">, </span><span class="s1">code </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_get_exc_class_and_code</span><span class="s2">(</span><span class="s1">type</span><span class="s2">(</span><span class="s1">e</span><span class="s2">))</span>
+        <span class="s1">names </span><span class="s2">= (*</span><span class="s1">blueprints</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+
+        <span class="s0">for </span><span class="s1">c </span><span class="s0">in </span><span class="s2">(</span><span class="s1">code</span><span class="s2">, </span><span class="s0">None</span><span class="s2">) </span><span class="s0">if </span><span class="s1">code </span><span class="s0">is not None else </span><span class="s2">(</span><span class="s0">None</span><span class="s2">,):</span>
+            <span class="s0">for </span><span class="s1">name </span><span class="s0">in </span><span class="s1">names</span><span class="s2">:</span>
+                <span class="s1">handler_map </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">error_handler_spec</span><span class="s2">[</span><span class="s1">name</span><span class="s2">][</span><span class="s1">c</span><span class="s2">]</span>
+
+                <span class="s0">if not </span><span class="s1">handler_map</span><span class="s2">:</span>
+                    <span class="s0">continue</span>
+
+                <span class="s0">for </span><span class="s1">cls </span><span class="s0">in </span><span class="s1">exc_class</span><span class="s2">.</span><span class="s1">__mro__</span><span class="s2">:</span>
+                    <span class="s1">handler </span><span class="s2">= </span><span class="s1">handler_map</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">)</span>
+
+                    <span class="s0">if </span><span class="s1">handler </span><span class="s0">is not None</span><span class="s2">:</span>
+                        <span class="s0">return </span><span class="s1">handler</span>
+        <span class="s0">return None</span>
+
+    <span class="s0">def </span><span class="s1">trap_http_exception</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">e</span><span class="s2">: </span><span class="s1">Exception</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Checks if an HTTP exception should be trapped or not.  By default 
+        this will return ``False`` for all exceptions except for a bad request 
+        key error if ``TRAP_BAD_REQUEST_ERRORS`` is set to ``True``.  It 
+        also returns ``True`` if ``TRAP_HTTP_EXCEPTIONS`` is set to ``True``. 
+ 
+        This is called for all HTTP exceptions raised by a view function. 
+        If it returns ``True`` for any exception the error handler for this 
+        exception is not called and it shows up as regular exception in the 
+        traceback.  This is helpful for debugging implicitly raised HTTP 
+        exceptions. 
+ 
+        .. versionchanged:: 1.0 
+            Bad request errors are not trapped by default in debug mode. 
+ 
+        .. versionadded:: 0.8 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">[</span><span class="s4">&quot;TRAP_HTTP_EXCEPTIONS&quot;</span><span class="s2">]:</span>
+            <span class="s0">return True</span>
+
+        <span class="s1">trap_bad_request </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">[</span><span class="s4">&quot;TRAP_BAD_REQUEST_ERRORS&quot;</span><span class="s2">]</span>
+
+        <span class="s3"># if unset, trap key errors in debug mode</span>
+        <span class="s0">if </span><span class="s2">(</span>
+            <span class="s1">trap_bad_request </span><span class="s0">is None</span>
+            <span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">debug</span>
+            <span class="s0">and </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">e</span><span class="s2">, </span><span class="s1">BadRequestKeyError</span><span class="s2">)</span>
+        <span class="s2">):</span>
+            <span class="s0">return True</span>
+
+        <span class="s0">if </span><span class="s1">trap_bad_request</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">e</span><span class="s2">, </span><span class="s1">BadRequest</span><span class="s2">)</span>
+
+        <span class="s0">return False</span>
+
+    <span class="s0">def </span><span class="s1">should_ignore_error</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">error</span><span class="s2">: </span><span class="s1">BaseException </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;This is called to figure out if an error should be ignored 
+        or not as far as the teardown system is concerned.  If this 
+        function returns ``True`` then the teardown handlers will not be 
+        passed the error. 
+ 
+        .. versionadded:: 0.10 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return False</span>
+
+    <span class="s0">def </span><span class="s1">redirect</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">location</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">code</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s6">302</span><span class="s2">) </span><span class="s1">-&gt; BaseResponse</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Create a redirect response object. 
+ 
+        This is called by :func:`flask.redirect`, and can be called 
+        directly as well. 
+ 
+        :param location: The URL to redirect to. 
+        :param code: The status code for the redirect. 
+ 
+        .. versionadded:: 2.2 
+            Moved from ``flask.redirect``, which calls this method. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">_wz_redirect</span><span class="s2">(</span>
+            <span class="s1">location</span><span class="s2">,</span>
+            <span class="s1">code</span><span class="s2">=</span><span class="s1">code</span><span class="s2">,</span>
+            <span class="s1">Response</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">response_class</span><span class="s2">,  </span><span class="s3"># type: ignore[arg-type]</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">inject_url_defaults</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">endpoint</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">values</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Injects the URL defaults for the given endpoint directly into 
+        the values dictionary passed.  This is used internally and 
+        automatically called on URL building. 
+ 
+        .. versionadded:: 0.7 
+        &quot;&quot;&quot;</span>
+        <span class="s1">names</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">] = (</span><span class="s0">None</span><span class="s2">,)</span>
+
+        <span class="s3"># url_for may be called outside a request context, parse the</span>
+        <span class="s3"># passed endpoint instead of using request.blueprints.</span>
+        <span class="s0">if </span><span class="s4">&quot;.&quot; </span><span class="s0">in </span><span class="s1">endpoint</span><span class="s2">:</span>
+            <span class="s1">names </span><span class="s2">= </span><span class="s1">chain</span><span class="s2">(</span>
+                <span class="s1">names</span><span class="s2">, </span><span class="s1">reversed</span><span class="s2">(</span><span class="s1">_split_blueprint_path</span><span class="s2">(</span><span class="s1">endpoint</span><span class="s2">.</span><span class="s1">rpartition</span><span class="s2">(</span><span class="s4">&quot;.&quot;</span><span class="s2">)[</span><span class="s6">0</span><span class="s2">]))</span>
+            <span class="s2">)</span>
+
+        <span class="s0">for </span><span class="s1">name </span><span class="s0">in </span><span class="s1">names</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">name </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">url_default_functions</span><span class="s2">:</span>
+                <span class="s0">for </span><span class="s1">func </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">url_default_functions</span><span class="s2">[</span><span class="s1">name</span><span class="s2">]:</span>
+                    <span class="s1">func</span><span class="s2">(</span><span class="s1">endpoint</span><span class="s2">, </span><span class="s1">values</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">handle_url_build_error</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">error</span><span class="s2">: </span><span class="s1">BuildError</span><span class="s2">, </span><span class="s1">endpoint</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">values</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]</span>
+    <span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Called by :meth:`.url_for` if a 
+        :exc:`~werkzeug.routing.BuildError` was raised. If this returns 
+        a value, it will be returned by ``url_for``, otherwise the error 
+        will be re-raised. 
+ 
+        Each function in :attr:`url_build_error_handlers` is called with 
+        ``error``, ``endpoint`` and ``values``. If a function returns 
+        ``None`` or raises a ``BuildError``, it is skipped. Otherwise, 
+        its return value is returned by ``url_for``. 
+ 
+        :param error: The active ``BuildError`` being handled. 
+        :param endpoint: The endpoint being built. 
+        :param values: The keyword arguments passed to ``url_for``. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">for </span><span class="s1">handler </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">url_build_error_handlers</span><span class="s2">:</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">rv </span><span class="s2">= </span><span class="s1">handler</span><span class="s2">(</span><span class="s1">error</span><span class="s2">, </span><span class="s1">endpoint</span><span class="s2">, </span><span class="s1">values</span><span class="s2">)</span>
+            <span class="s0">except </span><span class="s1">BuildError </span><span class="s0">as </span><span class="s1">e</span><span class="s2">:</span>
+                <span class="s3"># make error available outside except block</span>
+                <span class="s1">error </span><span class="s2">= </span><span class="s1">e</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s0">if </span><span class="s1">rv </span><span class="s0">is not None</span><span class="s2">:</span>
+                    <span class="s0">return </span><span class="s1">rv</span>
+
+        <span class="s3"># Re-raise if called with an active exception, otherwise raise</span>
+        <span class="s3"># the passed in exception.</span>
+        <span class="s0">if </span><span class="s1">error </span><span class="s0">is </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">exc_info</span><span class="s2">()[</span><span class="s6">1</span><span class="s2">]:</span>
+            <span class="s0">raise</span>
+
+        <span class="s0">raise </span><span class="s1">error</span>
+</pre>
+</body>
+</html>

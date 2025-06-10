@@ -1,0 +1,157 @@
+<html>
+<head>
+<title>BdfFontFile.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #5f826b; font-style: italic;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #bcbec4;}
+.s5 { color: #6aab73;}
+.s6 { color: #2aacb8;}
+.s7 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+BdfFontFile.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># bitmap distribution font (bdf) file parser</span>
+<span class="s0">#</span>
+<span class="s0"># history:</span>
+<span class="s0"># 1996-05-16 fl   created (as bdf2pil)</span>
+<span class="s0"># 1997-08-25 fl   converted to FontFile driver</span>
+<span class="s0"># 2001-05-25 fl   removed bogus __init__ call</span>
+<span class="s0"># 2002-11-20 fl   robustification (from Kevin Cazabon, Dmitry Vasiliev)</span>
+<span class="s0"># 2003-04-22 fl   more robustification (from Graham Dumpleton)</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2003 by Secret Labs AB.</span>
+<span class="s0"># Copyright (c) 1997-2003 by Fredrik Lundh.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s2">&quot;&quot;&quot; 
+Parse X Bitmap Distribution Format (BDF) 
+&quot;&quot;&quot;</span>
+<span class="s3">from </span><span class="s1">__future__ </span><span class="s3">import </span><span class="s1">annotations</span>
+
+<span class="s3">from </span><span class="s1">typing </span><span class="s3">import </span><span class="s1">BinaryIO</span>
+
+<span class="s3">from </span><span class="s4">. </span><span class="s3">import </span><span class="s1">FontFile</span><span class="s4">, </span><span class="s1">Image</span>
+
+<span class="s1">bdf_slant </span><span class="s4">= {</span>
+    <span class="s5">&quot;R&quot;</span><span class="s4">: </span><span class="s5">&quot;Roman&quot;</span><span class="s4">,</span>
+    <span class="s5">&quot;I&quot;</span><span class="s4">: </span><span class="s5">&quot;Italic&quot;</span><span class="s4">,</span>
+    <span class="s5">&quot;O&quot;</span><span class="s4">: </span><span class="s5">&quot;Oblique&quot;</span><span class="s4">,</span>
+    <span class="s5">&quot;RI&quot;</span><span class="s4">: </span><span class="s5">&quot;Reverse Italic&quot;</span><span class="s4">,</span>
+    <span class="s5">&quot;RO&quot;</span><span class="s4">: </span><span class="s5">&quot;Reverse Oblique&quot;</span><span class="s4">,</span>
+    <span class="s5">&quot;OT&quot;</span><span class="s4">: </span><span class="s5">&quot;Other&quot;</span><span class="s4">,</span>
+<span class="s4">}</span>
+
+<span class="s1">bdf_spacing </span><span class="s4">= {</span><span class="s5">&quot;P&quot;</span><span class="s4">: </span><span class="s5">&quot;Proportional&quot;</span><span class="s4">, </span><span class="s5">&quot;M&quot;</span><span class="s4">: </span><span class="s5">&quot;Monospaced&quot;</span><span class="s4">, </span><span class="s5">&quot;C&quot;</span><span class="s4">: </span><span class="s5">&quot;Cell&quot;</span><span class="s4">}</span>
+
+
+<span class="s3">def </span><span class="s1">bdf_char</span><span class="s4">(</span>
+    <span class="s1">f</span><span class="s4">: </span><span class="s1">BinaryIO</span><span class="s4">,</span>
+<span class="s4">) </span><span class="s1">-&gt; </span><span class="s4">(</span>
+    <span class="s1">tuple</span><span class="s4">[</span>
+        <span class="s1">str</span><span class="s4">,</span>
+        <span class="s1">int</span><span class="s4">,</span>
+        <span class="s1">tuple</span><span class="s4">[</span><span class="s1">tuple</span><span class="s4">[</span><span class="s1">int</span><span class="s4">, </span><span class="s1">int</span><span class="s4">], </span><span class="s1">tuple</span><span class="s4">[</span><span class="s1">int</span><span class="s4">, </span><span class="s1">int</span><span class="s4">, </span><span class="s1">int</span><span class="s4">, </span><span class="s1">int</span><span class="s4">], </span><span class="s1">tuple</span><span class="s4">[</span><span class="s1">int</span><span class="s4">, </span><span class="s1">int</span><span class="s4">, </span><span class="s1">int</span><span class="s4">, </span><span class="s1">int</span><span class="s4">]],</span>
+        <span class="s1">Image</span><span class="s4">.</span><span class="s1">Image</span><span class="s4">,</span>
+    <span class="s4">]</span>
+    <span class="s4">| </span><span class="s3">None</span>
+<span class="s4">):</span>
+    <span class="s0"># skip to STARTCHAR</span>
+    <span class="s3">while True</span><span class="s4">:</span>
+        <span class="s1">s </span><span class="s4">= </span><span class="s1">f</span><span class="s4">.</span><span class="s1">readline</span><span class="s4">()</span>
+        <span class="s3">if not </span><span class="s1">s</span><span class="s4">:</span>
+            <span class="s3">return None</span>
+        <span class="s3">if </span><span class="s1">s</span><span class="s4">[:</span><span class="s6">9</span><span class="s4">] == </span><span class="s7">b&quot;STARTCHAR&quot;</span><span class="s4">:</span>
+            <span class="s3">break</span>
+    <span class="s1">id </span><span class="s4">= </span><span class="s1">s</span><span class="s4">[</span><span class="s6">9</span><span class="s4">:].</span><span class="s1">strip</span><span class="s4">().</span><span class="s1">decode</span><span class="s4">(</span><span class="s5">&quot;ascii&quot;</span><span class="s4">)</span>
+
+    <span class="s0"># load symbol properties</span>
+    <span class="s1">props </span><span class="s4">= {}</span>
+    <span class="s3">while True</span><span class="s4">:</span>
+        <span class="s1">s </span><span class="s4">= </span><span class="s1">f</span><span class="s4">.</span><span class="s1">readline</span><span class="s4">()</span>
+        <span class="s3">if not </span><span class="s1">s </span><span class="s3">or </span><span class="s1">s</span><span class="s4">[:</span><span class="s6">6</span><span class="s4">] == </span><span class="s7">b&quot;BITMAP&quot;</span><span class="s4">:</span>
+            <span class="s3">break</span>
+        <span class="s1">i </span><span class="s4">= </span><span class="s1">s</span><span class="s4">.</span><span class="s1">find</span><span class="s4">(</span><span class="s7">b&quot; &quot;</span><span class="s4">)</span>
+        <span class="s1">props</span><span class="s4">[</span><span class="s1">s</span><span class="s4">[:</span><span class="s1">i</span><span class="s4">].</span><span class="s1">decode</span><span class="s4">(</span><span class="s5">&quot;ascii&quot;</span><span class="s4">)] = </span><span class="s1">s</span><span class="s4">[</span><span class="s1">i </span><span class="s4">+ </span><span class="s6">1 </span><span class="s4">: -</span><span class="s6">1</span><span class="s4">].</span><span class="s1">decode</span><span class="s4">(</span><span class="s5">&quot;ascii&quot;</span><span class="s4">)</span>
+
+    <span class="s0"># load bitmap</span>
+    <span class="s1">bitmap </span><span class="s4">= </span><span class="s1">bytearray</span><span class="s4">()</span>
+    <span class="s3">while True</span><span class="s4">:</span>
+        <span class="s1">s </span><span class="s4">= </span><span class="s1">f</span><span class="s4">.</span><span class="s1">readline</span><span class="s4">()</span>
+        <span class="s3">if not </span><span class="s1">s </span><span class="s3">or </span><span class="s1">s</span><span class="s4">[:</span><span class="s6">7</span><span class="s4">] == </span><span class="s7">b&quot;ENDCHAR&quot;</span><span class="s4">:</span>
+            <span class="s3">break</span>
+        <span class="s1">bitmap </span><span class="s4">+= </span><span class="s1">s</span><span class="s4">[:-</span><span class="s6">1</span><span class="s4">]</span>
+
+    <span class="s0"># The word BBX</span>
+    <span class="s0"># followed by the width in x (BBw), height in y (BBh),</span>
+    <span class="s0"># and x and y displacement (BBxoff0, BByoff0)</span>
+    <span class="s0"># of the lower left corner from the origin of the character.</span>
+    <span class="s1">width</span><span class="s4">, </span><span class="s1">height</span><span class="s4">, </span><span class="s1">x_disp</span><span class="s4">, </span><span class="s1">y_disp </span><span class="s4">= (</span><span class="s1">int</span><span class="s4">(</span><span class="s1">p</span><span class="s4">) </span><span class="s3">for </span><span class="s1">p </span><span class="s3">in </span><span class="s1">props</span><span class="s4">[</span><span class="s5">&quot;BBX&quot;</span><span class="s4">].</span><span class="s1">split</span><span class="s4">())</span>
+
+    <span class="s0"># The word DWIDTH</span>
+    <span class="s0"># followed by the width in x and y of the character in device pixels.</span>
+    <span class="s1">dwx</span><span class="s4">, </span><span class="s1">dwy </span><span class="s4">= (</span><span class="s1">int</span><span class="s4">(</span><span class="s1">p</span><span class="s4">) </span><span class="s3">for </span><span class="s1">p </span><span class="s3">in </span><span class="s1">props</span><span class="s4">[</span><span class="s5">&quot;DWIDTH&quot;</span><span class="s4">].</span><span class="s1">split</span><span class="s4">())</span>
+
+    <span class="s1">bbox </span><span class="s4">= (</span>
+        <span class="s4">(</span><span class="s1">dwx</span><span class="s4">, </span><span class="s1">dwy</span><span class="s4">),</span>
+        <span class="s4">(</span><span class="s1">x_disp</span><span class="s4">, -</span><span class="s1">y_disp </span><span class="s4">- </span><span class="s1">height</span><span class="s4">, </span><span class="s1">width </span><span class="s4">+ </span><span class="s1">x_disp</span><span class="s4">, -</span><span class="s1">y_disp</span><span class="s4">),</span>
+        <span class="s4">(</span><span class="s6">0</span><span class="s4">, </span><span class="s6">0</span><span class="s4">, </span><span class="s1">width</span><span class="s4">, </span><span class="s1">height</span><span class="s4">),</span>
+    <span class="s4">)</span>
+
+    <span class="s3">try</span><span class="s4">:</span>
+        <span class="s1">im </span><span class="s4">= </span><span class="s1">Image</span><span class="s4">.</span><span class="s1">frombytes</span><span class="s4">(</span><span class="s5">&quot;1&quot;</span><span class="s4">, (</span><span class="s1">width</span><span class="s4">, </span><span class="s1">height</span><span class="s4">), </span><span class="s1">bitmap</span><span class="s4">, </span><span class="s5">&quot;hex&quot;</span><span class="s4">, </span><span class="s5">&quot;1&quot;</span><span class="s4">)</span>
+    <span class="s3">except </span><span class="s1">ValueError</span><span class="s4">:</span>
+        <span class="s0"># deal with zero-width characters</span>
+        <span class="s1">im </span><span class="s4">= </span><span class="s1">Image</span><span class="s4">.</span><span class="s1">new</span><span class="s4">(</span><span class="s5">&quot;1&quot;</span><span class="s4">, (</span><span class="s1">width</span><span class="s4">, </span><span class="s1">height</span><span class="s4">))</span>
+
+    <span class="s3">return </span><span class="s1">id</span><span class="s4">, </span><span class="s1">int</span><span class="s4">(</span><span class="s1">props</span><span class="s4">[</span><span class="s5">&quot;ENCODING&quot;</span><span class="s4">]), </span><span class="s1">bbox</span><span class="s4">, </span><span class="s1">im</span>
+
+
+<span class="s3">class </span><span class="s1">BdfFontFile</span><span class="s4">(</span><span class="s1">FontFile</span><span class="s4">.</span><span class="s1">FontFile</span><span class="s4">):</span>
+    <span class="s2">&quot;&quot;&quot;Font file plugin for the X11 BDF format.&quot;&quot;&quot;</span>
+
+    <span class="s3">def </span><span class="s1">__init__</span><span class="s4">(</span><span class="s1">self</span><span class="s4">, </span><span class="s1">fp</span><span class="s4">: </span><span class="s1">BinaryIO</span><span class="s4">) </span><span class="s1">-&gt; </span><span class="s3">None</span><span class="s4">:</span>
+        <span class="s1">super</span><span class="s4">().</span><span class="s1">__init__</span><span class="s4">()</span>
+
+        <span class="s1">s </span><span class="s4">= </span><span class="s1">fp</span><span class="s4">.</span><span class="s1">readline</span><span class="s4">()</span>
+        <span class="s3">if </span><span class="s1">s</span><span class="s4">[:</span><span class="s6">13</span><span class="s4">] != </span><span class="s7">b&quot;STARTFONT 2.1&quot;</span><span class="s4">:</span>
+            <span class="s1">msg </span><span class="s4">= </span><span class="s5">&quot;not a valid BDF file&quot;</span>
+            <span class="s3">raise </span><span class="s1">SyntaxError</span><span class="s4">(</span><span class="s1">msg</span><span class="s4">)</span>
+
+        <span class="s1">props </span><span class="s4">= {}</span>
+        <span class="s1">comments </span><span class="s4">= []</span>
+
+        <span class="s3">while True</span><span class="s4">:</span>
+            <span class="s1">s </span><span class="s4">= </span><span class="s1">fp</span><span class="s4">.</span><span class="s1">readline</span><span class="s4">()</span>
+            <span class="s3">if not </span><span class="s1">s </span><span class="s3">or </span><span class="s1">s</span><span class="s4">[:</span><span class="s6">13</span><span class="s4">] == </span><span class="s7">b&quot;ENDPROPERTIES&quot;</span><span class="s4">:</span>
+                <span class="s3">break</span>
+            <span class="s1">i </span><span class="s4">= </span><span class="s1">s</span><span class="s4">.</span><span class="s1">find</span><span class="s4">(</span><span class="s7">b&quot; &quot;</span><span class="s4">)</span>
+            <span class="s1">props</span><span class="s4">[</span><span class="s1">s</span><span class="s4">[:</span><span class="s1">i</span><span class="s4">].</span><span class="s1">decode</span><span class="s4">(</span><span class="s5">&quot;ascii&quot;</span><span class="s4">)] = </span><span class="s1">s</span><span class="s4">[</span><span class="s1">i </span><span class="s4">+ </span><span class="s6">1 </span><span class="s4">: -</span><span class="s6">1</span><span class="s4">].</span><span class="s1">decode</span><span class="s4">(</span><span class="s5">&quot;ascii&quot;</span><span class="s4">)</span>
+            <span class="s3">if </span><span class="s1">s</span><span class="s4">[:</span><span class="s1">i</span><span class="s4">] </span><span class="s3">in </span><span class="s4">[</span><span class="s7">b&quot;COMMENT&quot;</span><span class="s4">, </span><span class="s7">b&quot;COPYRIGHT&quot;</span><span class="s4">]:</span>
+                <span class="s3">if </span><span class="s1">s</span><span class="s4">.</span><span class="s1">find</span><span class="s4">(</span><span class="s7">b&quot;LogicalFontDescription&quot;</span><span class="s4">) &lt; </span><span class="s6">0</span><span class="s4">:</span>
+                    <span class="s1">comments</span><span class="s4">.</span><span class="s1">append</span><span class="s4">(</span><span class="s1">s</span><span class="s4">[</span><span class="s1">i </span><span class="s4">+ </span><span class="s6">1 </span><span class="s4">: -</span><span class="s6">1</span><span class="s4">].</span><span class="s1">decode</span><span class="s4">(</span><span class="s5">&quot;ascii&quot;</span><span class="s4">))</span>
+
+        <span class="s3">while True</span><span class="s4">:</span>
+            <span class="s1">c </span><span class="s4">= </span><span class="s1">bdf_char</span><span class="s4">(</span><span class="s1">fp</span><span class="s4">)</span>
+            <span class="s3">if not </span><span class="s1">c</span><span class="s4">:</span>
+                <span class="s3">break</span>
+            <span class="s1">id</span><span class="s4">, </span><span class="s1">ch</span><span class="s4">, (</span><span class="s1">xy</span><span class="s4">, </span><span class="s1">dst</span><span class="s4">, </span><span class="s1">src</span><span class="s4">), </span><span class="s1">im </span><span class="s4">= </span><span class="s1">c</span>
+            <span class="s3">if </span><span class="s6">0 </span><span class="s4">&lt;= </span><span class="s1">ch </span><span class="s4">&lt; </span><span class="s1">len</span><span class="s4">(</span><span class="s1">self</span><span class="s4">.</span><span class="s1">glyph</span><span class="s4">):</span>
+                <span class="s1">self</span><span class="s4">.</span><span class="s1">glyph</span><span class="s4">[</span><span class="s1">ch</span><span class="s4">] = </span><span class="s1">xy</span><span class="s4">, </span><span class="s1">dst</span><span class="s4">, </span><span class="s1">src</span><span class="s4">, </span><span class="s1">im</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,951 @@
+<html>
+<head>
+<title>rules.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #5f826b; font-style: italic;}
+.s4 { color: #6aab73;}
+.s5 { color: #2aacb8;}
+.s6 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+rules.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">ast</span>
+<span class="s0">import </span><span class="s1">re</span>
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+<span class="s0">from </span><span class="s1">dataclasses </span><span class="s0">import </span><span class="s1">dataclass</span>
+<span class="s0">from </span><span class="s1">string </span><span class="s0">import </span><span class="s1">Template</span>
+<span class="s0">from </span><span class="s1">types </span><span class="s0">import </span><span class="s1">CodeType</span>
+<span class="s0">from </span><span class="s1">urllib</span><span class="s2">.</span><span class="s1">parse </span><span class="s0">import </span><span class="s1">quote</span>
+
+<span class="s0">from </span><span class="s2">..</span><span class="s1">datastructures </span><span class="s0">import </span><span class="s1">iter_multi_items</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">urls </span><span class="s0">import </span><span class="s1">_urlencode</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">converters </span><span class="s0">import </span><span class="s1">ValidationError</span>
+
+<span class="s0">if </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+    <span class="s0">from </span><span class="s2">.</span><span class="s1">converters </span><span class="s0">import </span><span class="s1">BaseConverter</span>
+    <span class="s0">from </span><span class="s2">.</span><span class="s1">map </span><span class="s0">import </span><span class="s1">Map</span>
+
+
+<span class="s0">class </span><span class="s1">Weighting</span><span class="s2">(</span><span class="s1">t</span><span class="s2">.</span><span class="s1">NamedTuple</span><span class="s2">):</span>
+    <span class="s1">number_static_weights</span><span class="s2">: </span><span class="s1">int</span>
+    <span class="s1">static_weights</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">int</span><span class="s2">, </span><span class="s1">int</span><span class="s2">]]</span>
+    <span class="s1">number_argument_weights</span><span class="s2">: </span><span class="s1">int</span>
+    <span class="s1">argument_weights</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">int</span><span class="s2">]</span>
+
+
+<span class="s2">@</span><span class="s1">dataclass</span>
+<span class="s0">class </span><span class="s1">RulePart</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;A part of a rule. 
+ 
+    Rules can be represented by parts as delimited by `/` with 
+    instances of this class representing those parts. The *content* is 
+    either the raw content if *static* or a regex string to match 
+    against. The *weight* can be used to order parts when matching. 
+ 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">content</span><span class="s2">: </span><span class="s1">str</span>
+    <span class="s1">final</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">static</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">suffixed</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">weight</span><span class="s2">: </span><span class="s1">Weighting</span>
+
+
+<span class="s1">_part_re </span><span class="s2">= </span><span class="s1">re</span><span class="s2">.</span><span class="s1">compile</span><span class="s2">(</span>
+    <span class="s4">r&quot;&quot;&quot; 
+    (?: 
+        (?P&lt;slash&gt;/)                                 # a slash 
+      | 
+        (?P&lt;static&gt;[^&lt;/]+)                           # static rule data 
+      | 
+        (?: 
+          &lt; 
+            (?: 
+              (?P&lt;converter&gt;[a-zA-Z_][a-zA-Z0-9_]*)   # converter name 
+              (?:\((?P&lt;arguments&gt;.*?)\))?             # converter arguments 
+              :                                       # variable delimiter 
+            )? 
+            (?P&lt;variable&gt;[a-zA-Z_][a-zA-Z0-9_]*)      # variable name 
+           &gt; 
+        ) 
+    ) 
+    &quot;&quot;&quot;</span><span class="s2">,</span>
+    <span class="s1">re</span><span class="s2">.</span><span class="s1">VERBOSE</span><span class="s2">,</span>
+<span class="s2">)</span>
+
+<span class="s1">_simple_rule_re </span><span class="s2">= </span><span class="s1">re</span><span class="s2">.</span><span class="s1">compile</span><span class="s2">(</span><span class="s4">r&quot;&lt;([^&gt;]+)&gt;&quot;</span><span class="s2">)</span>
+<span class="s1">_converter_args_re </span><span class="s2">= </span><span class="s1">re</span><span class="s2">.</span><span class="s1">compile</span><span class="s2">(</span>
+    <span class="s4">r&quot;&quot;&quot; 
+    \s* 
+    ((?P&lt;name&gt;\w+)\s*=\s*)? 
+    (?P&lt;value&gt; 
+        True|False| 
+        \d+.\d+| 
+        \d+.| 
+        \d+| 
+        [\w\d_.]+| 
+        [urUR]?(?P&lt;stringval&gt;&quot;[^&quot;]*?&quot;|'[^']*') 
+    )\s*, 
+    &quot;&quot;&quot;</span><span class="s2">,</span>
+    <span class="s1">re</span><span class="s2">.</span><span class="s1">VERBOSE</span><span class="s2">,</span>
+<span class="s2">)</span>
+
+
+<span class="s1">_PYTHON_CONSTANTS </span><span class="s2">= {</span><span class="s4">&quot;None&quot;</span><span class="s2">: </span><span class="s0">None</span><span class="s2">, </span><span class="s4">&quot;True&quot;</span><span class="s2">: </span><span class="s0">True</span><span class="s2">, </span><span class="s4">&quot;False&quot;</span><span class="s2">: </span><span class="s0">False</span><span class="s2">}</span>
+
+
+<span class="s0">def </span><span class="s1">_find</span><span class="s2">(</span><span class="s1">value</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">target</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">: </span><span class="s1">int</span><span class="s2">) </span><span class="s1">-&gt; int</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;Find the *target* in *value* after *pos*. 
+ 
+    Returns the *value* length if *target* isn't found. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">value</span><span class="s2">.</span><span class="s1">index</span><span class="s2">(</span><span class="s1">target</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">len</span><span class="s2">(</span><span class="s1">value</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">_pythonize</span><span class="s2">(</span><span class="s1">value</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None </span><span class="s2">| </span><span class="s1">bool </span><span class="s2">| </span><span class="s1">int </span><span class="s2">| </span><span class="s1">float </span><span class="s2">| </span><span class="s1">str</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">value </span><span class="s0">in </span><span class="s1">_PYTHON_CONSTANTS</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">_PYTHON_CONSTANTS</span><span class="s2">[</span><span class="s1">value</span><span class="s2">]</span>
+    <span class="s0">for </span><span class="s1">convert </span><span class="s0">in </span><span class="s1">int</span><span class="s2">, </span><span class="s1">float</span><span class="s2">:</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">convert</span><span class="s2">(</span><span class="s1">value</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+            <span class="s0">pass</span>
+    <span class="s0">if </span><span class="s1">value</span><span class="s2">[:</span><span class="s5">1</span><span class="s2">] == </span><span class="s1">value</span><span class="s2">[-</span><span class="s5">1</span><span class="s2">:] </span><span class="s0">and </span><span class="s1">value</span><span class="s2">[</span><span class="s5">0</span><span class="s2">] </span><span class="s0">in </span><span class="s4">&quot;</span><span class="s0">\&quot;</span><span class="s4">'&quot;</span><span class="s2">:</span>
+        <span class="s1">value </span><span class="s2">= </span><span class="s1">value</span><span class="s2">[</span><span class="s5">1</span><span class="s2">:-</span><span class="s5">1</span><span class="s2">]</span>
+    <span class="s0">return </span><span class="s1">str</span><span class="s2">(</span><span class="s1">value</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">parse_converter_args</span><span class="s2">(</span><span class="s1">argstr</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; tuple</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, ...], </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]]:</span>
+    <span class="s1">argstr </span><span class="s2">+= </span><span class="s4">&quot;,&quot;</span>
+    <span class="s1">args </span><span class="s2">= []</span>
+    <span class="s1">kwargs </span><span class="s2">= {}</span>
+    <span class="s1">position </span><span class="s2">= </span><span class="s5">0</span>
+
+    <span class="s0">for </span><span class="s1">item </span><span class="s0">in </span><span class="s1">_converter_args_re</span><span class="s2">.</span><span class="s1">finditer</span><span class="s2">(</span><span class="s1">argstr</span><span class="s2">):</span>
+        <span class="s0">if </span><span class="s1">item</span><span class="s2">.</span><span class="s1">start</span><span class="s2">() != </span><span class="s1">position</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span>
+                <span class="s4">f&quot;Cannot parse converter argument '</span><span class="s0">{</span><span class="s1">argstr</span><span class="s2">[</span><span class="s1">position</span><span class="s2">:</span><span class="s1">item</span><span class="s2">.</span><span class="s1">start</span><span class="s2">()]</span><span class="s0">}</span><span class="s4">'&quot;</span>
+            <span class="s2">)</span>
+
+        <span class="s1">value </span><span class="s2">= </span><span class="s1">item</span><span class="s2">.</span><span class="s1">group</span><span class="s2">(</span><span class="s4">&quot;stringval&quot;</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">value </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">value </span><span class="s2">= </span><span class="s1">item</span><span class="s2">.</span><span class="s1">group</span><span class="s2">(</span><span class="s4">&quot;value&quot;</span><span class="s2">)</span>
+        <span class="s1">value </span><span class="s2">= </span><span class="s1">_pythonize</span><span class="s2">(</span><span class="s1">value</span><span class="s2">)</span>
+        <span class="s0">if not </span><span class="s1">item</span><span class="s2">.</span><span class="s1">group</span><span class="s2">(</span><span class="s4">&quot;name&quot;</span><span class="s2">):</span>
+            <span class="s1">args</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">value</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">name </span><span class="s2">= </span><span class="s1">item</span><span class="s2">.</span><span class="s1">group</span><span class="s2">(</span><span class="s4">&quot;name&quot;</span><span class="s2">)</span>
+            <span class="s1">kwargs</span><span class="s2">[</span><span class="s1">name</span><span class="s2">] = </span><span class="s1">value</span>
+        <span class="s1">position </span><span class="s2">= </span><span class="s1">item</span><span class="s2">.</span><span class="s1">end</span><span class="s2">()</span>
+
+    <span class="s0">return </span><span class="s1">tuple</span><span class="s2">(</span><span class="s1">args</span><span class="s2">), </span><span class="s1">kwargs</span>
+
+
+<span class="s0">class </span><span class="s1">RuleFactory</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;As soon as you have more complex URL setups it's a good idea to use rule 
+    factories to avoid repetitive tasks.  Some of them are builtin, others can 
+    be added by subclassing `RuleFactory` and overriding `get_rules`. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">get_rules</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">map</span><span class="s2">: </span><span class="s1">Map</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">Rule</span><span class="s2">]:</span>
+        <span class="s3">&quot;&quot;&quot;Subclasses of `RuleFactory` have to override this method and return 
+        an iterable of rules.&quot;&quot;&quot;</span>
+        <span class="s0">raise </span><span class="s1">NotImplementedError</span><span class="s2">()</span>
+
+
+<span class="s0">class </span><span class="s1">Subdomain</span><span class="s2">(</span><span class="s1">RuleFactory</span><span class="s2">):</span>
+    <span class="s3">&quot;&quot;&quot;All URLs provided by this factory have the subdomain set to a 
+    specific domain. For example if you want to use the subdomain for 
+    the current language this can be a good setup:: 
+ 
+        url_map = Map([ 
+            Rule('/', endpoint='#select_language'), 
+            Subdomain('&lt;string(length=2):lang_code&gt;', [ 
+                Rule('/', endpoint='index'), 
+                Rule('/about', endpoint='about'), 
+                Rule('/help', endpoint='help') 
+            ]) 
+        ]) 
+ 
+    All the rules except for the ``'#select_language'`` endpoint will now 
+    listen on a two letter long subdomain that holds the language code 
+    for the current request. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">subdomain</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">rules</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">RuleFactory</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain </span><span class="s2">= </span><span class="s1">subdomain</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">rules </span><span class="s2">= </span><span class="s1">rules</span>
+
+    <span class="s0">def </span><span class="s1">get_rules</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">map</span><span class="s2">: </span><span class="s1">Map</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">Rule</span><span class="s2">]:</span>
+        <span class="s0">for </span><span class="s1">rulefactory </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">rules</span><span class="s2">:</span>
+            <span class="s0">for </span><span class="s1">rule </span><span class="s0">in </span><span class="s1">rulefactory</span><span class="s2">.</span><span class="s1">get_rules</span><span class="s2">(</span><span class="s1">map</span><span class="s2">):</span>
+                <span class="s1">rule </span><span class="s2">= </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">empty</span><span class="s2">()</span>
+                <span class="s1">rule</span><span class="s2">.</span><span class="s1">subdomain </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain</span>
+                <span class="s0">yield </span><span class="s1">rule</span>
+
+
+<span class="s0">class </span><span class="s1">Submount</span><span class="s2">(</span><span class="s1">RuleFactory</span><span class="s2">):</span>
+    <span class="s3">&quot;&quot;&quot;Like `Subdomain` but prefixes the URL rule with a given string:: 
+ 
+        url_map = Map([ 
+            Rule('/', endpoint='index'), 
+            Submount('/blog', [ 
+                Rule('/', endpoint='blog/index'), 
+                Rule('/entry/&lt;entry_slug&gt;', endpoint='blog/show') 
+            ]) 
+        ]) 
+ 
+    Now the rule ``'blog/show'`` matches ``/blog/entry/&lt;entry_slug&gt;``. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">path</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">rules</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">RuleFactory</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">path </span><span class="s2">= </span><span class="s1">path</span><span class="s2">.</span><span class="s1">rstrip</span><span class="s2">(</span><span class="s4">&quot;/&quot;</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">rules </span><span class="s2">= </span><span class="s1">rules</span>
+
+    <span class="s0">def </span><span class="s1">get_rules</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">map</span><span class="s2">: </span><span class="s1">Map</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">Rule</span><span class="s2">]:</span>
+        <span class="s0">for </span><span class="s1">rulefactory </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">rules</span><span class="s2">:</span>
+            <span class="s0">for </span><span class="s1">rule </span><span class="s0">in </span><span class="s1">rulefactory</span><span class="s2">.</span><span class="s1">get_rules</span><span class="s2">(</span><span class="s1">map</span><span class="s2">):</span>
+                <span class="s1">rule </span><span class="s2">= </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">empty</span><span class="s2">()</span>
+                <span class="s1">rule</span><span class="s2">.</span><span class="s1">rule </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">path </span><span class="s2">+ </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">rule</span>
+                <span class="s0">yield </span><span class="s1">rule</span>
+
+
+<span class="s0">class </span><span class="s1">EndpointPrefix</span><span class="s2">(</span><span class="s1">RuleFactory</span><span class="s2">):</span>
+    <span class="s3">&quot;&quot;&quot;Prefixes all endpoints (which must be strings for this factory) with 
+    another string. This can be useful for sub applications:: 
+ 
+        url_map = Map([ 
+            Rule('/', endpoint='index'), 
+            EndpointPrefix('blog/', [Submount('/blog', [ 
+                Rule('/', endpoint='index'), 
+                Rule('/entry/&lt;entry_slug&gt;', endpoint='show') 
+            ])]) 
+        ]) 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">prefix</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">rules</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">RuleFactory</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">prefix </span><span class="s2">= </span><span class="s1">prefix</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">rules </span><span class="s2">= </span><span class="s1">rules</span>
+
+    <span class="s0">def </span><span class="s1">get_rules</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">map</span><span class="s2">: </span><span class="s1">Map</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">Rule</span><span class="s2">]:</span>
+        <span class="s0">for </span><span class="s1">rulefactory </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">rules</span><span class="s2">:</span>
+            <span class="s0">for </span><span class="s1">rule </span><span class="s0">in </span><span class="s1">rulefactory</span><span class="s2">.</span><span class="s1">get_rules</span><span class="s2">(</span><span class="s1">map</span><span class="s2">):</span>
+                <span class="s1">rule </span><span class="s2">= </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">empty</span><span class="s2">()</span>
+                <span class="s1">rule</span><span class="s2">.</span><span class="s1">endpoint </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">prefix </span><span class="s2">+ </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">endpoint</span>
+                <span class="s0">yield </span><span class="s1">rule</span>
+
+
+<span class="s0">class </span><span class="s1">RuleTemplate</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;Returns copies of the rules wrapped and expands string templates in 
+    the endpoint, rule, defaults or subdomain sections. 
+ 
+    Here a small example for such a rule template:: 
+ 
+        from werkzeug.routing import Map, Rule, RuleTemplate 
+ 
+        resource = RuleTemplate([ 
+            Rule('/$name/', endpoint='$name.list'), 
+            Rule('/$name/&lt;int:id&gt;', endpoint='$name.show') 
+        ]) 
+ 
+        url_map = Map([resource(name='user'), resource(name='page')]) 
+ 
+    When a rule template is called the keyword arguments are used to 
+    replace the placeholders in all the string parameters. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">rules</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">Rule</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">rules </span><span class="s2">= </span><span class="s1">list</span><span class="s2">(</span><span class="s1">rules</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; RuleTemplateFactory</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">RuleTemplateFactory</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">rules</span><span class="s2">, </span><span class="s1">dict</span><span class="s2">(*</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">))</span>
+
+
+<span class="s0">class </span><span class="s1">RuleTemplateFactory</span><span class="s2">(</span><span class="s1">RuleFactory</span><span class="s2">):</span>
+    <span class="s3">&quot;&quot;&quot;A factory that fills in template variables into rules.  Used by 
+    `RuleTemplate` internally. 
+ 
+    :internal: 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">rules</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">RuleFactory</span><span class="s2">], </span><span class="s1">context</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">rules </span><span class="s2">= </span><span class="s1">rules</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">context </span><span class="s2">= </span><span class="s1">context</span>
+
+    <span class="s0">def </span><span class="s1">get_rules</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">map</span><span class="s2">: </span><span class="s1">Map</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">Rule</span><span class="s2">]:</span>
+        <span class="s0">for </span><span class="s1">rulefactory </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">rules</span><span class="s2">:</span>
+            <span class="s0">for </span><span class="s1">rule </span><span class="s0">in </span><span class="s1">rulefactory</span><span class="s2">.</span><span class="s1">get_rules</span><span class="s2">(</span><span class="s1">map</span><span class="s2">):</span>
+                <span class="s1">new_defaults </span><span class="s2">= </span><span class="s1">subdomain </span><span class="s2">= </span><span class="s0">None</span>
+                <span class="s0">if </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">defaults</span><span class="s2">:</span>
+                    <span class="s1">new_defaults </span><span class="s2">= {}</span>
+                    <span class="s0">for </span><span class="s1">key</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">defaults</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+                        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">value</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+                            <span class="s1">value </span><span class="s2">= </span><span class="s1">Template</span><span class="s2">(</span><span class="s1">value</span><span class="s2">).</span><span class="s1">substitute</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">context</span><span class="s2">)</span>
+                        <span class="s1">new_defaults</span><span class="s2">[</span><span class="s1">key</span><span class="s2">] = </span><span class="s1">value</span>
+                <span class="s0">if </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">subdomain </span><span class="s0">is not None</span><span class="s2">:</span>
+                    <span class="s1">subdomain </span><span class="s2">= </span><span class="s1">Template</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">.</span><span class="s1">subdomain</span><span class="s2">).</span><span class="s1">substitute</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">context</span><span class="s2">)</span>
+                <span class="s1">new_endpoint </span><span class="s2">= </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">endpoint</span>
+                <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">new_endpoint</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+                    <span class="s1">new_endpoint </span><span class="s2">= </span><span class="s1">Template</span><span class="s2">(</span><span class="s1">new_endpoint</span><span class="s2">).</span><span class="s1">substitute</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">context</span><span class="s2">)</span>
+                <span class="s0">yield </span><span class="s1">Rule</span><span class="s2">(</span>
+                    <span class="s1">Template</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">.</span><span class="s1">rule</span><span class="s2">).</span><span class="s1">substitute</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">context</span><span class="s2">),</span>
+                    <span class="s1">new_defaults</span><span class="s2">,</span>
+                    <span class="s1">subdomain</span><span class="s2">,</span>
+                    <span class="s1">rule</span><span class="s2">.</span><span class="s1">methods</span><span class="s2">,</span>
+                    <span class="s1">rule</span><span class="s2">.</span><span class="s1">build_only</span><span class="s2">,</span>
+                    <span class="s1">new_endpoint</span><span class="s2">,</span>
+                    <span class="s1">rule</span><span class="s2">.</span><span class="s1">strict_slashes</span><span class="s2">,</span>
+                <span class="s2">)</span>
+
+
+<span class="s1">_ASTT </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s4">&quot;_ASTT&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">ast</span><span class="s2">.</span><span class="s1">AST</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">_prefix_names</span><span class="s2">(</span><span class="s1">src</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">expected_type</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">_ASTT</span><span class="s2">]) </span><span class="s1">-&gt; _ASTT</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;ast parse and prefix names with `.` to avoid collision with user vars&quot;&quot;&quot;</span>
+    <span class="s1">tree</span><span class="s2">: </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">AST </span><span class="s2">= </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">parse</span><span class="s2">(</span><span class="s1">src</span><span class="s2">).</span><span class="s1">body</span><span class="s2">[</span><span class="s5">0</span><span class="s2">]</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">tree</span><span class="s2">, </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">Expr</span><span class="s2">):</span>
+        <span class="s1">tree </span><span class="s2">= </span><span class="s1">tree</span><span class="s2">.</span><span class="s1">value</span>
+    <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">tree</span><span class="s2">, </span><span class="s1">expected_type</span><span class="s2">):</span>
+        <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span>
+            <span class="s4">f&quot;AST node is of type </span><span class="s0">{</span><span class="s1">type</span><span class="s2">(</span><span class="s1">tree</span><span class="s2">).</span><span class="s1">__name__</span><span class="s0">}</span><span class="s4">, not </span><span class="s0">{</span><span class="s1">expected_type</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">}</span><span class="s4">&quot;</span>
+        <span class="s2">)</span>
+    <span class="s0">for </span><span class="s1">node </span><span class="s0">in </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">walk</span><span class="s2">(</span><span class="s1">tree</span><span class="s2">):</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">node</span><span class="s2">, </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">Name</span><span class="s2">):</span>
+            <span class="s1">node</span><span class="s2">.</span><span class="s1">id </span><span class="s2">= </span><span class="s4">f&quot;.</span><span class="s0">{</span><span class="s1">node</span><span class="s2">.</span><span class="s1">id</span><span class="s0">}</span><span class="s4">&quot;</span>
+    <span class="s0">return </span><span class="s1">tree</span>
+
+
+<span class="s1">_CALL_CONVERTER_CODE_FMT </span><span class="s2">= </span><span class="s4">&quot;self._converters[{elem!r}].to_url()&quot;</span>
+<span class="s1">_IF_KWARGS_URL_ENCODE_CODE </span><span class="s2">= </span><span class="s4">&quot;&quot;&quot;</span><span class="s0">\ 
+</span><span class="s4">if kwargs: 
+    params = self._encode_query_vars(kwargs) 
+    q = &quot;?&quot; if params else &quot;&quot; 
+else: 
+    q = params = &quot;&quot; 
+&quot;&quot;&quot;</span>
+<span class="s1">_IF_KWARGS_URL_ENCODE_AST </span><span class="s2">= </span><span class="s1">_prefix_names</span><span class="s2">(</span><span class="s1">_IF_KWARGS_URL_ENCODE_CODE</span><span class="s2">, </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">If</span><span class="s2">)</span>
+<span class="s1">_URL_ENCODE_AST_NAMES </span><span class="s2">= (</span>
+    <span class="s1">_prefix_names</span><span class="s2">(</span><span class="s4">&quot;q&quot;</span><span class="s2">, </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">Name</span><span class="s2">),</span>
+    <span class="s1">_prefix_names</span><span class="s2">(</span><span class="s4">&quot;params&quot;</span><span class="s2">, </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">Name</span><span class="s2">),</span>
+<span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">Rule</span><span class="s2">(</span><span class="s1">RuleFactory</span><span class="s2">):</span>
+    <span class="s3">&quot;&quot;&quot;A Rule represents one URL pattern.  There are some options for `Rule` 
+    that change the way it behaves and are passed to the `Rule` constructor. 
+    Note that besides the rule-string all arguments *must* be keyword arguments 
+    in order to not break the application on Werkzeug upgrades. 
+ 
+    `string` 
+        Rule strings basically are just normal URL paths with placeholders in 
+        the format ``&lt;converter(arguments):name&gt;`` where the converter and the 
+        arguments are optional.  If no converter is defined the `default` 
+        converter is used which means `string` in the normal configuration. 
+ 
+        URL rules that end with a slash are branch URLs, others are leaves. 
+        If you have `strict_slashes` enabled (which is the default), all 
+        branch URLs that are matched without a trailing slash will trigger a 
+        redirect to the same URL with the missing slash appended. 
+ 
+        The converters are defined on the `Map`. 
+ 
+    `endpoint` 
+        The endpoint for this rule. This can be anything. A reference to a 
+        function, a string, a number etc.  The preferred way is using a string 
+        because the endpoint is used for URL generation. 
+ 
+    `defaults` 
+        An optional dict with defaults for other rules with the same endpoint. 
+        This is a bit tricky but useful if you want to have unique URLs:: 
+ 
+            url_map = Map([ 
+                Rule('/all/', defaults={'page': 1}, endpoint='all_entries'), 
+                Rule('/all/page/&lt;int:page&gt;', endpoint='all_entries') 
+            ]) 
+ 
+        If a user now visits ``http://example.com/all/page/1`` they will be 
+        redirected to ``http://example.com/all/``.  If `redirect_defaults` is 
+        disabled on the `Map` instance this will only affect the URL 
+        generation. 
+ 
+    `subdomain` 
+        The subdomain rule string for this rule. If not specified the rule 
+        only matches for the `default_subdomain` of the map.  If the map is 
+        not bound to a subdomain this feature is disabled. 
+ 
+        Can be useful if you want to have user profiles on different subdomains 
+        and all subdomains are forwarded to your application:: 
+ 
+            url_map = Map([ 
+                Rule('/', subdomain='&lt;username&gt;', endpoint='user/homepage'), 
+                Rule('/stats', subdomain='&lt;username&gt;', endpoint='user/stats') 
+            ]) 
+ 
+    `methods` 
+        A sequence of http methods this rule applies to.  If not specified, all 
+        methods are allowed. For example this can be useful if you want different 
+        endpoints for `POST` and `GET`.  If methods are defined and the path 
+        matches but the method matched against is not in this list or in the 
+        list of another rule for that path the error raised is of the type 
+        `MethodNotAllowed` rather than `NotFound`.  If `GET` is present in the 
+        list of methods and `HEAD` is not, `HEAD` is added automatically. 
+ 
+    `strict_slashes` 
+        Override the `Map` setting for `strict_slashes` only for this rule. If 
+        not specified the `Map` setting is used. 
+ 
+    `merge_slashes` 
+        Override :attr:`Map.merge_slashes` for this rule. 
+ 
+    `build_only` 
+        Set this to True and the rule will never match but will create a URL 
+        that can be build. This is useful if you have resources on a subdomain 
+        or folder that are not handled by the WSGI application (like static data) 
+ 
+    `redirect_to` 
+        If given this must be either a string or callable.  In case of a 
+        callable it's called with the url adapter that triggered the match and 
+        the values of the URL as keyword arguments and has to return the target 
+        for the redirect, otherwise it has to be a string with placeholders in 
+        rule syntax:: 
+ 
+            def foo_with_slug(adapter, id): 
+                # ask the database for the slug for the old id.  this of 
+                # course has nothing to do with werkzeug. 
+                return f'foo/{Foo.get_slug_for_id(id)}' 
+ 
+            url_map = Map([ 
+                Rule('/foo/&lt;slug&gt;', endpoint='foo'), 
+                Rule('/some/old/url/&lt;slug&gt;', redirect_to='foo/&lt;slug&gt;'), 
+                Rule('/other/old/url/&lt;int:id&gt;', redirect_to=foo_with_slug) 
+            ]) 
+ 
+        When the rule is matched the routing system will raise a 
+        `RequestRedirect` exception with the target for the redirect. 
+ 
+        Keep in mind that the URL will be joined against the URL root of the 
+        script so don't use a leading slash on the target URL unless you 
+        really mean root of that domain. 
+ 
+    `alias` 
+        If enabled this rule serves as an alias for another rule with the same 
+        endpoint and arguments. 
+ 
+    `host` 
+        If provided and the URL map has host matching enabled this can be 
+        used to provide a match rule for the whole host.  This also means 
+        that the subdomain feature is disabled. 
+ 
+    `websocket` 
+        If ``True``, this rule is only matches for WebSocket (``ws://``, 
+        ``wss://``) requests. By default, rules will only match for HTTP 
+        requests. 
+ 
+    .. versionchanged:: 2.1 
+        Percent-encoded newlines (``%0a``), which are decoded by WSGI 
+        servers, are considered when routing instead of terminating the 
+        match early. 
+ 
+    .. versionadded:: 1.0 
+        Added ``websocket``. 
+ 
+    .. versionadded:: 1.0 
+        Added ``merge_slashes``. 
+ 
+    .. versionadded:: 0.7 
+        Added ``alias`` and ``host``. 
+ 
+    .. versionchanged:: 0.6.1 
+       ``HEAD`` is added to ``methods`` if ``GET`` is present. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">string</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">defaults</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">subdomain</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">methods</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">build_only</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">endpoint</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">strict_slashes</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">merge_slashes</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">redirect_to</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[..., </span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">alias</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">host</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">websocket</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if not </span><span class="s1">string</span><span class="s2">.</span><span class="s1">startswith</span><span class="s2">(</span><span class="s4">&quot;/&quot;</span><span class="s2">):</span>
+            <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s4">f&quot;URL rule '</span><span class="s0">{</span><span class="s1">string</span><span class="s0">}</span><span class="s4">' must start with a slash.&quot;</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">rule </span><span class="s2">= </span><span class="s1">string</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">is_leaf </span><span class="s2">= </span><span class="s0">not </span><span class="s1">string</span><span class="s2">.</span><span class="s1">endswith</span><span class="s2">(</span><span class="s4">&quot;/&quot;</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">is_branch </span><span class="s2">= </span><span class="s1">string</span><span class="s2">.</span><span class="s1">endswith</span><span class="s2">(</span><span class="s4">&quot;/&quot;</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">: </span><span class="s1">Map </span><span class="s2">= </span><span class="s0">None  </span><span class="s6"># type: ignore</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">strict_slashes </span><span class="s2">= </span><span class="s1">strict_slashes</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">merge_slashes </span><span class="s2">= </span><span class="s1">merge_slashes</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain </span><span class="s2">= </span><span class="s1">subdomain</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">host </span><span class="s2">= </span><span class="s1">host</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">defaults </span><span class="s2">= </span><span class="s1">defaults</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">build_only </span><span class="s2">= </span><span class="s1">build_only</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">alias </span><span class="s2">= </span><span class="s1">alias</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">websocket </span><span class="s2">= </span><span class="s1">websocket</span>
+
+        <span class="s0">if </span><span class="s1">methods </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">methods</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+                <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span><span class="s4">&quot;'methods' should be a list of strings.&quot;</span><span class="s2">)</span>
+
+            <span class="s1">methods </span><span class="s2">= {</span><span class="s1">x</span><span class="s2">.</span><span class="s1">upper</span><span class="s2">() </span><span class="s0">for </span><span class="s1">x </span><span class="s0">in </span><span class="s1">methods</span><span class="s2">}</span>
+
+            <span class="s0">if </span><span class="s4">&quot;HEAD&quot; </span><span class="s0">not in </span><span class="s1">methods </span><span class="s0">and </span><span class="s4">&quot;GET&quot; </span><span class="s0">in </span><span class="s1">methods</span><span class="s2">:</span>
+                <span class="s1">methods</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s4">&quot;HEAD&quot;</span><span class="s2">)</span>
+
+            <span class="s0">if </span><span class="s1">websocket </span><span class="s0">and </span><span class="s1">methods </span><span class="s2">- {</span><span class="s4">&quot;GET&quot;</span><span class="s2">, </span><span class="s4">&quot;HEAD&quot;</span><span class="s2">, </span><span class="s4">&quot;OPTIONS&quot;</span><span class="s2">}:</span>
+                <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span>
+                    <span class="s4">&quot;WebSocket rules can only use 'GET', 'HEAD', and 'OPTIONS' methods.&quot;</span>
+                <span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">methods </span><span class="s2">= </span><span class="s1">methods</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">endpoint</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any </span><span class="s2">= </span><span class="s1">endpoint</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">redirect_to </span><span class="s2">= </span><span class="s1">redirect_to</span>
+
+        <span class="s0">if </span><span class="s1">defaults</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">arguments </span><span class="s2">= </span><span class="s1">set</span><span class="s2">(</span><span class="s1">map</span><span class="s2">(</span><span class="s1">str</span><span class="s2">, </span><span class="s1">defaults</span><span class="s2">))</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">arguments </span><span class="s2">= </span><span class="s1">set</span><span class="s2">()</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_converters</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">BaseConverter</span><span class="s2">] = {}</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_trace</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]] = []</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_parts</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">RulePart</span><span class="s2">] = []</span>
+
+    <span class="s0">def </span><span class="s1">empty</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; Rule</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot; 
+        Return an unbound copy of this rule. 
+ 
+        This can be useful if want to reuse an already bound URL for another 
+        map.  See ``get_empty_kwargs`` to override what keyword arguments are 
+        provided to the new copy. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">type</span><span class="s2">(</span><span class="s1">self</span><span class="s2">)(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">rule</span><span class="s2">, **</span><span class="s1">self</span><span class="s2">.</span><span class="s1">get_empty_kwargs</span><span class="s2">())</span>
+
+    <span class="s0">def </span><span class="s1">get_empty_kwargs</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]:</span>
+        <span class="s3">&quot;&quot;&quot; 
+        Provides kwargs for instantiating empty copy with empty() 
+ 
+        Use this method to provide custom keyword arguments to the subclass of 
+        ``Rule`` when calling ``some_rule.empty()``.  Helpful when the subclass 
+        has custom keyword arguments that are needed at instantiation. 
+ 
+        Must return a ``dict`` that will be provided as kwargs to the new 
+        instance of ``Rule``, following the initial ``self.rule`` value which 
+        is always provided as the first, required positional argument. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">defaults </span><span class="s2">= </span><span class="s0">None</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">defaults</span><span class="s2">:</span>
+            <span class="s1">defaults </span><span class="s2">= </span><span class="s1">dict</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">defaults</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">dict</span><span class="s2">(</span>
+            <span class="s1">defaults</span><span class="s2">=</span><span class="s1">defaults</span><span class="s2">,</span>
+            <span class="s1">subdomain</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain</span><span class="s2">,</span>
+            <span class="s1">methods</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">methods</span><span class="s2">,</span>
+            <span class="s1">build_only</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">build_only</span><span class="s2">,</span>
+            <span class="s1">endpoint</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">endpoint</span><span class="s2">,</span>
+            <span class="s1">strict_slashes</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">strict_slashes</span><span class="s2">,</span>
+            <span class="s1">redirect_to</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">redirect_to</span><span class="s2">,</span>
+            <span class="s1">alias</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">alias</span><span class="s2">,</span>
+            <span class="s1">host</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">host</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">get_rules</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">map</span><span class="s2">: </span><span class="s1">Map</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">Rule</span><span class="s2">]:</span>
+        <span class="s0">yield </span><span class="s1">self</span>
+
+    <span class="s0">def </span><span class="s1">refresh</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Rebinds and refreshes the URL.  Call this if you modified the 
+        rule in place. 
+ 
+        :internal: 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">bind</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">, </span><span class="s1">rebind</span><span class="s2">=</span><span class="s0">True</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">bind</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">map</span><span class="s2">: </span><span class="s1">Map</span><span class="s2">, </span><span class="s1">rebind</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Bind the url to a map and create a regular expression based on 
+        the information from the rule itself and the defaults from the map. 
+ 
+        :internal: 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">map </span><span class="s0">is not None and not </span><span class="s1">rebind</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s4">f&quot;url rule </span><span class="s0">{</span><span class="s1">self</span><span class="s0">!r} </span><span class="s4">already bound to map </span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s0">!r}</span><span class="s4">&quot;</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">map </span><span class="s2">= </span><span class="s1">map</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">strict_slashes </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">strict_slashes </span><span class="s2">= </span><span class="s1">map</span><span class="s2">.</span><span class="s1">strict_slashes</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">merge_slashes </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">merge_slashes </span><span class="s2">= </span><span class="s1">map</span><span class="s2">.</span><span class="s1">merge_slashes</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain </span><span class="s2">= </span><span class="s1">map</span><span class="s2">.</span><span class="s1">default_subdomain</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">compile</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">get_converter</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">variable_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">converter_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">args</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, ...],</span>
+        <span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">],</span>
+    <span class="s2">) </span><span class="s1">-&gt; BaseConverter</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Looks up the converter for the given parameter. 
+ 
+        .. versionadded:: 0.9 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">converter_name </span><span class="s0">not in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">converters</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">LookupError</span><span class="s2">(</span><span class="s4">f&quot;the converter </span><span class="s0">{</span><span class="s1">converter_name</span><span class="s0">!r} </span><span class="s4">does not exist&quot;</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">converters</span><span class="s2">[</span><span class="s1">converter_name</span><span class="s2">](</span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_encode_query_vars</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">query_vars</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s1">items</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]] = </span><span class="s1">iter_multi_items</span><span class="s2">(</span><span class="s1">query_vars</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">sort_parameters</span><span class="s2">:</span>
+            <span class="s1">items </span><span class="s2">= </span><span class="s1">sorted</span><span class="s2">(</span><span class="s1">items</span><span class="s2">, </span><span class="s1">key</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">sort_key</span><span class="s2">)</span>
+
+        <span class="s0">return </span><span class="s1">_urlencode</span><span class="s2">(</span><span class="s1">items</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_parse_rule</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">rule</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">RulePart</span><span class="s2">]:</span>
+        <span class="s1">content </span><span class="s2">= </span><span class="s4">&quot;&quot;</span>
+        <span class="s1">static </span><span class="s2">= </span><span class="s0">True</span>
+        <span class="s1">argument_weights </span><span class="s2">= []</span>
+        <span class="s1">static_weights</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">int</span><span class="s2">, </span><span class="s1">int</span><span class="s2">]] = []</span>
+        <span class="s1">final </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">convertor_number </span><span class="s2">= </span><span class="s5">0</span>
+
+        <span class="s1">pos </span><span class="s2">= </span><span class="s5">0</span>
+        <span class="s0">while </span><span class="s1">pos </span><span class="s2">&lt; </span><span class="s1">len</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">):</span>
+            <span class="s1">match </span><span class="s2">= </span><span class="s1">_part_re</span><span class="s2">.</span><span class="s1">match</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">, </span><span class="s1">pos</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">match </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s4">f&quot;malformed url rule: </span><span class="s0">{</span><span class="s1">rule</span><span class="s0">!r}</span><span class="s4">&quot;</span><span class="s2">)</span>
+
+            <span class="s1">data </span><span class="s2">= </span><span class="s1">match</span><span class="s2">.</span><span class="s1">groupdict</span><span class="s2">()</span>
+            <span class="s0">if </span><span class="s1">data</span><span class="s2">[</span><span class="s4">&quot;static&quot;</span><span class="s2">] </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s1">static_weights</span><span class="s2">.</span><span class="s1">append</span><span class="s2">((</span><span class="s1">len</span><span class="s2">(</span><span class="s1">static_weights</span><span class="s2">), -</span><span class="s1">len</span><span class="s2">(</span><span class="s1">data</span><span class="s2">[</span><span class="s4">&quot;static&quot;</span><span class="s2">])))</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_trace</span><span class="s2">.</span><span class="s1">append</span><span class="s2">((</span><span class="s0">False</span><span class="s2">, </span><span class="s1">data</span><span class="s2">[</span><span class="s4">&quot;static&quot;</span><span class="s2">]))</span>
+                <span class="s1">content </span><span class="s2">+= </span><span class="s1">data</span><span class="s2">[</span><span class="s4">&quot;static&quot;</span><span class="s2">] </span><span class="s0">if </span><span class="s1">static </span><span class="s0">else </span><span class="s1">re</span><span class="s2">.</span><span class="s1">escape</span><span class="s2">(</span><span class="s1">data</span><span class="s2">[</span><span class="s4">&quot;static&quot;</span><span class="s2">])</span>
+
+            <span class="s0">if </span><span class="s1">data</span><span class="s2">[</span><span class="s4">&quot;variable&quot;</span><span class="s2">] </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s0">if </span><span class="s1">static</span><span class="s2">:</span>
+                    <span class="s6"># Switching content to represent regex, hence the need to escape</span>
+                    <span class="s1">content </span><span class="s2">= </span><span class="s1">re</span><span class="s2">.</span><span class="s1">escape</span><span class="s2">(</span><span class="s1">content</span><span class="s2">)</span>
+                <span class="s1">static </span><span class="s2">= </span><span class="s0">False</span>
+                <span class="s1">c_args</span><span class="s2">, </span><span class="s1">c_kwargs </span><span class="s2">= </span><span class="s1">parse_converter_args</span><span class="s2">(</span><span class="s1">data</span><span class="s2">[</span><span class="s4">&quot;arguments&quot;</span><span class="s2">] </span><span class="s0">or </span><span class="s4">&quot;&quot;</span><span class="s2">)</span>
+                <span class="s1">convobj </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">get_converter</span><span class="s2">(</span>
+                    <span class="s1">data</span><span class="s2">[</span><span class="s4">&quot;variable&quot;</span><span class="s2">], </span><span class="s1">data</span><span class="s2">[</span><span class="s4">&quot;converter&quot;</span><span class="s2">] </span><span class="s0">or </span><span class="s4">&quot;default&quot;</span><span class="s2">, </span><span class="s1">c_args</span><span class="s2">, </span><span class="s1">c_kwargs</span>
+                <span class="s2">)</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_converters</span><span class="s2">[</span><span class="s1">data</span><span class="s2">[</span><span class="s4">&quot;variable&quot;</span><span class="s2">]] = </span><span class="s1">convobj</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">arguments</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">data</span><span class="s2">[</span><span class="s4">&quot;variable&quot;</span><span class="s2">])</span>
+                <span class="s0">if not </span><span class="s1">convobj</span><span class="s2">.</span><span class="s1">part_isolating</span><span class="s2">:</span>
+                    <span class="s1">final </span><span class="s2">= </span><span class="s0">True</span>
+                <span class="s1">content </span><span class="s2">+= </span><span class="s4">f&quot;(?P&lt;__werkzeug_</span><span class="s0">{</span><span class="s1">convertor_number</span><span class="s0">}</span><span class="s4">&gt;</span><span class="s0">{</span><span class="s1">convobj</span><span class="s2">.</span><span class="s1">regex</span><span class="s0">}</span><span class="s4">)&quot;</span>
+                <span class="s1">convertor_number </span><span class="s2">+= </span><span class="s5">1</span>
+                <span class="s1">argument_weights</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">convobj</span><span class="s2">.</span><span class="s1">weight</span><span class="s2">)</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_trace</span><span class="s2">.</span><span class="s1">append</span><span class="s2">((</span><span class="s0">True</span><span class="s2">, </span><span class="s1">data</span><span class="s2">[</span><span class="s4">&quot;variable&quot;</span><span class="s2">]))</span>
+
+            <span class="s0">if </span><span class="s1">data</span><span class="s2">[</span><span class="s4">&quot;slash&quot;</span><span class="s2">] </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_trace</span><span class="s2">.</span><span class="s1">append</span><span class="s2">((</span><span class="s0">False</span><span class="s2">, </span><span class="s4">&quot;/&quot;</span><span class="s2">))</span>
+                <span class="s0">if </span><span class="s1">final</span><span class="s2">:</span>
+                    <span class="s1">content </span><span class="s2">+= </span><span class="s4">&quot;/&quot;</span>
+                <span class="s0">else</span><span class="s2">:</span>
+                    <span class="s0">if not </span><span class="s1">static</span><span class="s2">:</span>
+                        <span class="s1">content </span><span class="s2">+= </span><span class="s4">r&quot;\Z&quot;</span>
+                    <span class="s1">weight </span><span class="s2">= </span><span class="s1">Weighting</span><span class="s2">(</span>
+                        <span class="s2">-</span><span class="s1">len</span><span class="s2">(</span><span class="s1">static_weights</span><span class="s2">),</span>
+                        <span class="s1">static_weights</span><span class="s2">,</span>
+                        <span class="s2">-</span><span class="s1">len</span><span class="s2">(</span><span class="s1">argument_weights</span><span class="s2">),</span>
+                        <span class="s1">argument_weights</span><span class="s2">,</span>
+                    <span class="s2">)</span>
+                    <span class="s0">yield </span><span class="s1">RulePart</span><span class="s2">(</span>
+                        <span class="s1">content</span><span class="s2">=</span><span class="s1">content</span><span class="s2">,</span>
+                        <span class="s1">final</span><span class="s2">=</span><span class="s1">final</span><span class="s2">,</span>
+                        <span class="s1">static</span><span class="s2">=</span><span class="s1">static</span><span class="s2">,</span>
+                        <span class="s1">suffixed</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+                        <span class="s1">weight</span><span class="s2">=</span><span class="s1">weight</span><span class="s2">,</span>
+                    <span class="s2">)</span>
+                    <span class="s1">content </span><span class="s2">= </span><span class="s4">&quot;&quot;</span>
+                    <span class="s1">static </span><span class="s2">= </span><span class="s0">True</span>
+                    <span class="s1">argument_weights </span><span class="s2">= []</span>
+                    <span class="s1">static_weights </span><span class="s2">= []</span>
+                    <span class="s1">final </span><span class="s2">= </span><span class="s0">False</span>
+                    <span class="s1">convertor_number </span><span class="s2">= </span><span class="s5">0</span>
+
+            <span class="s1">pos </span><span class="s2">= </span><span class="s1">match</span><span class="s2">.</span><span class="s1">end</span><span class="s2">()</span>
+
+        <span class="s1">suffixed </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s0">if </span><span class="s1">final </span><span class="s0">and </span><span class="s1">content</span><span class="s2">[-</span><span class="s5">1</span><span class="s2">] == </span><span class="s4">&quot;/&quot;</span><span class="s2">:</span>
+            <span class="s6"># If a converter is part_isolating=False (matches slashes) and ends with a</span>
+            <span class="s6"># slash, augment the regex to support slash redirects.</span>
+            <span class="s1">suffixed </span><span class="s2">= </span><span class="s0">True</span>
+            <span class="s1">content </span><span class="s2">= </span><span class="s1">content</span><span class="s2">[:-</span><span class="s5">1</span><span class="s2">] + </span><span class="s4">&quot;(?&lt;!/)(/?)&quot;</span>
+        <span class="s0">if not </span><span class="s1">static</span><span class="s2">:</span>
+            <span class="s1">content </span><span class="s2">+= </span><span class="s4">r&quot;\Z&quot;</span>
+        <span class="s1">weight </span><span class="s2">= </span><span class="s1">Weighting</span><span class="s2">(</span>
+            <span class="s2">-</span><span class="s1">len</span><span class="s2">(</span><span class="s1">static_weights</span><span class="s2">),</span>
+            <span class="s1">static_weights</span><span class="s2">,</span>
+            <span class="s2">-</span><span class="s1">len</span><span class="s2">(</span><span class="s1">argument_weights</span><span class="s2">),</span>
+            <span class="s1">argument_weights</span><span class="s2">,</span>
+        <span class="s2">)</span>
+        <span class="s0">yield </span><span class="s1">RulePart</span><span class="s2">(</span>
+            <span class="s1">content</span><span class="s2">=</span><span class="s1">content</span><span class="s2">,</span>
+            <span class="s1">final</span><span class="s2">=</span><span class="s1">final</span><span class="s2">,</span>
+            <span class="s1">static</span><span class="s2">=</span><span class="s1">static</span><span class="s2">,</span>
+            <span class="s1">suffixed</span><span class="s2">=</span><span class="s1">suffixed</span><span class="s2">,</span>
+            <span class="s1">weight</span><span class="s2">=</span><span class="s1">weight</span><span class="s2">,</span>
+        <span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">suffixed</span><span class="s2">:</span>
+            <span class="s0">yield </span><span class="s1">RulePart</span><span class="s2">(</span>
+                <span class="s1">content</span><span class="s2">=</span><span class="s4">&quot;&quot;</span><span class="s2">, </span><span class="s1">final</span><span class="s2">=</span><span class="s0">False</span><span class="s2">, </span><span class="s1">static</span><span class="s2">=</span><span class="s0">True</span><span class="s2">, </span><span class="s1">suffixed</span><span class="s2">=</span><span class="s0">False</span><span class="s2">, </span><span class="s1">weight</span><span class="s2">=</span><span class="s1">weight</span>
+            <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">compile</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Compiles the regular expression and stores it.&quot;&quot;&quot;</span>
+        <span class="s0">assert </span><span class="s1">self</span><span class="s2">.</span><span class="s1">map </span><span class="s0">is not None</span><span class="s2">, </span><span class="s4">&quot;rule not bound&quot;</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">host_matching</span><span class="s2">:</span>
+            <span class="s1">domain_rule </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">host </span><span class="s0">or </span><span class="s4">&quot;&quot;</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">domain_rule </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">subdomain </span><span class="s0">or </span><span class="s4">&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_parts </span><span class="s2">= []</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_trace </span><span class="s2">= []</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_converters </span><span class="s2">= {}</span>
+        <span class="s0">if </span><span class="s1">domain_rule </span><span class="s2">== </span><span class="s4">&quot;&quot;</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_parts </span><span class="s2">= [</span>
+                <span class="s1">RulePart</span><span class="s2">(</span>
+                    <span class="s1">content</span><span class="s2">=</span><span class="s4">&quot;&quot;</span><span class="s2">,</span>
+                    <span class="s1">final</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+                    <span class="s1">static</span><span class="s2">=</span><span class="s0">True</span><span class="s2">,</span>
+                    <span class="s1">suffixed</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+                    <span class="s1">weight</span><span class="s2">=</span><span class="s1">Weighting</span><span class="s2">(</span><span class="s5">0</span><span class="s2">, [], </span><span class="s5">0</span><span class="s2">, []),</span>
+                <span class="s2">)</span>
+            <span class="s2">]</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_parts</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_parse_rule</span><span class="s2">(</span><span class="s1">domain_rule</span><span class="s2">))</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_trace</span><span class="s2">.</span><span class="s1">append</span><span class="s2">((</span><span class="s0">False</span><span class="s2">, </span><span class="s4">&quot;|&quot;</span><span class="s2">))</span>
+        <span class="s1">rule </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">rule</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">merge_slashes</span><span class="s2">:</span>
+            <span class="s1">rule </span><span class="s2">= </span><span class="s1">re</span><span class="s2">.</span><span class="s1">sub</span><span class="s2">(</span><span class="s4">&quot;/{2,}?&quot;</span><span class="s2">, </span><span class="s4">&quot;/&quot;</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">rule</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_parts</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_parse_rule</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">))</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_build</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[..., </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]]</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_build </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_compile_builder</span><span class="s2">(</span><span class="s0">False</span><span class="s2">).</span><span class="s1">__get__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_build_unknown</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[..., </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]]</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_build_unknown </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_compile_builder</span><span class="s2">(</span><span class="s0">True</span><span class="s2">).</span><span class="s1">__get__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">staticmethod</span>
+    <span class="s0">def </span><span class="s1">_get_func_code</span><span class="s2">(</span><span class="s1">code</span><span class="s2">: </span><span class="s1">CodeType</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[..., </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]]:</span>
+        <span class="s1">globs</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] = {}</span>
+        <span class="s1">locs</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] = {}</span>
+        <span class="s1">exec</span><span class="s2">(</span><span class="s1">code</span><span class="s2">, </span><span class="s1">globs</span><span class="s2">, </span><span class="s1">locs</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">locs</span><span class="s2">[</span><span class="s1">name</span><span class="s2">]  </span><span class="s6"># type: ignore</span>
+
+    <span class="s0">def </span><span class="s1">_compile_builder</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">append_unknown</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span>
+    <span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[..., </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]]:</span>
+        <span class="s1">defaults </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">defaults </span><span class="s0">or </span><span class="s2">{}</span>
+        <span class="s1">dom_ops</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]] = []</span>
+        <span class="s1">url_ops</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]] = []</span>
+
+        <span class="s1">opl </span><span class="s2">= </span><span class="s1">dom_ops</span>
+        <span class="s0">for </span><span class="s1">is_dynamic</span><span class="s2">, </span><span class="s1">data </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_trace</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">data </span><span class="s2">== </span><span class="s4">&quot;|&quot; </span><span class="s0">and </span><span class="s1">opl </span><span class="s0">is </span><span class="s1">dom_ops</span><span class="s2">:</span>
+                <span class="s1">opl </span><span class="s2">= </span><span class="s1">url_ops</span>
+                <span class="s0">continue</span>
+            <span class="s6"># this seems like a silly case to ever come up but:</span>
+            <span class="s6"># if a default is given for a value that appears in the rule,</span>
+            <span class="s6"># resolve it to a constant ahead of time</span>
+            <span class="s0">if </span><span class="s1">is_dynamic </span><span class="s0">and </span><span class="s1">data </span><span class="s0">in </span><span class="s1">defaults</span><span class="s2">:</span>
+                <span class="s1">data </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_converters</span><span class="s2">[</span><span class="s1">data</span><span class="s2">].</span><span class="s1">to_url</span><span class="s2">(</span><span class="s1">defaults</span><span class="s2">[</span><span class="s1">data</span><span class="s2">])</span>
+                <span class="s1">opl</span><span class="s2">.</span><span class="s1">append</span><span class="s2">((</span><span class="s0">False</span><span class="s2">, </span><span class="s1">data</span><span class="s2">))</span>
+            <span class="s0">elif not </span><span class="s1">is_dynamic</span><span class="s2">:</span>
+                <span class="s6"># safe = https://url.spec.whatwg.org/#url-path-segment-string</span>
+                <span class="s1">opl</span><span class="s2">.</span><span class="s1">append</span><span class="s2">((</span><span class="s0">False</span><span class="s2">, </span><span class="s1">quote</span><span class="s2">(</span><span class="s1">data</span><span class="s2">, </span><span class="s1">safe</span><span class="s2">=</span><span class="s4">&quot;!$&amp;'()*+,/:;=@&quot;</span><span class="s2">)))</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">opl</span><span class="s2">.</span><span class="s1">append</span><span class="s2">((</span><span class="s0">True</span><span class="s2">, </span><span class="s1">data</span><span class="s2">))</span>
+
+        <span class="s0">def </span><span class="s1">_convert</span><span class="s2">(</span><span class="s1">elem</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; ast</span><span class="s2">.</span><span class="s1">Call</span><span class="s2">:</span>
+            <span class="s1">ret </span><span class="s2">= </span><span class="s1">_prefix_names</span><span class="s2">(</span><span class="s1">_CALL_CONVERTER_CODE_FMT</span><span class="s2">.</span><span class="s1">format</span><span class="s2">(</span><span class="s1">elem</span><span class="s2">=</span><span class="s1">elem</span><span class="s2">), </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">Call</span><span class="s2">)</span>
+            <span class="s1">ret</span><span class="s2">.</span><span class="s1">args </span><span class="s2">= [</span><span class="s1">ast</span><span class="s2">.</span><span class="s1">Name</span><span class="s2">(</span><span class="s1">elem</span><span class="s2">, </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">Load</span><span class="s2">())]</span>
+            <span class="s0">return </span><span class="s1">ret</span>
+
+        <span class="s0">def </span><span class="s1">_parts</span><span class="s2">(</span><span class="s1">ops</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]]) </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">ast</span><span class="s2">.</span><span class="s1">expr</span><span class="s2">]:</span>
+            <span class="s1">parts</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">ast</span><span class="s2">.</span><span class="s1">expr</span><span class="s2">] = [</span>
+                <span class="s1">_convert</span><span class="s2">(</span><span class="s1">elem</span><span class="s2">) </span><span class="s0">if </span><span class="s1">is_dynamic </span><span class="s0">else </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">Constant</span><span class="s2">(</span><span class="s1">elem</span><span class="s2">)</span>
+                <span class="s0">for </span><span class="s1">is_dynamic</span><span class="s2">, </span><span class="s1">elem </span><span class="s0">in </span><span class="s1">ops</span>
+            <span class="s2">]</span>
+            <span class="s1">parts </span><span class="s2">= </span><span class="s1">parts </span><span class="s0">or </span><span class="s2">[</span><span class="s1">ast</span><span class="s2">.</span><span class="s1">Constant</span><span class="s2">(</span><span class="s4">&quot;&quot;</span><span class="s2">)]</span>
+            <span class="s6"># constant fold</span>
+            <span class="s1">ret </span><span class="s2">= [</span><span class="s1">parts</span><span class="s2">[</span><span class="s5">0</span><span class="s2">]]</span>
+            <span class="s0">for </span><span class="s1">p </span><span class="s0">in </span><span class="s1">parts</span><span class="s2">[</span><span class="s5">1</span><span class="s2">:]:</span>
+                <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">p</span><span class="s2">, </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">Constant</span><span class="s2">) </span><span class="s0">and </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">ret</span><span class="s2">[-</span><span class="s5">1</span><span class="s2">], </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">Constant</span><span class="s2">):</span>
+                    <span class="s1">ret</span><span class="s2">[-</span><span class="s5">1</span><span class="s2">] = </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">Constant</span><span class="s2">(</span><span class="s1">ret</span><span class="s2">[-</span><span class="s5">1</span><span class="s2">].</span><span class="s1">value </span><span class="s2">+ </span><span class="s1">p</span><span class="s2">.</span><span class="s1">value</span><span class="s2">)</span>
+                <span class="s0">else</span><span class="s2">:</span>
+                    <span class="s1">ret</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">p</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">ret</span>
+
+        <span class="s1">dom_parts </span><span class="s2">= </span><span class="s1">_parts</span><span class="s2">(</span><span class="s1">dom_ops</span><span class="s2">)</span>
+        <span class="s1">url_parts </span><span class="s2">= </span><span class="s1">_parts</span><span class="s2">(</span><span class="s1">url_ops</span><span class="s2">)</span>
+        <span class="s1">body</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">ast</span><span class="s2">.</span><span class="s1">stmt</span><span class="s2">]</span>
+        <span class="s0">if not </span><span class="s1">append_unknown</span><span class="s2">:</span>
+            <span class="s1">body </span><span class="s2">= []</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">body </span><span class="s2">= [</span><span class="s1">_IF_KWARGS_URL_ENCODE_AST</span><span class="s2">]</span>
+            <span class="s1">url_parts</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">(</span><span class="s1">_URL_ENCODE_AST_NAMES</span><span class="s2">)</span>
+
+        <span class="s0">def </span><span class="s1">_join</span><span class="s2">(</span><span class="s1">parts</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">ast</span><span class="s2">.</span><span class="s1">expr</span><span class="s2">]) </span><span class="s1">-&gt; ast</span><span class="s2">.</span><span class="s1">expr</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">parts</span><span class="s2">) == </span><span class="s5">1</span><span class="s2">:  </span><span class="s6"># shortcut</span>
+                <span class="s0">return </span><span class="s1">parts</span><span class="s2">[</span><span class="s5">0</span><span class="s2">]</span>
+            <span class="s0">return </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">JoinedStr</span><span class="s2">(</span><span class="s1">parts</span><span class="s2">)</span>
+
+        <span class="s1">body</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span>
+            <span class="s1">ast</span><span class="s2">.</span><span class="s1">Return</span><span class="s2">(</span><span class="s1">ast</span><span class="s2">.</span><span class="s1">Tuple</span><span class="s2">([</span><span class="s1">_join</span><span class="s2">(</span><span class="s1">dom_parts</span><span class="s2">), </span><span class="s1">_join</span><span class="s2">(</span><span class="s1">url_parts</span><span class="s2">)], </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">Load</span><span class="s2">()))</span>
+        <span class="s2">)</span>
+
+        <span class="s1">pargs </span><span class="s2">= [</span>
+            <span class="s1">elem</span>
+            <span class="s0">for </span><span class="s1">is_dynamic</span><span class="s2">, </span><span class="s1">elem </span><span class="s0">in </span><span class="s1">dom_ops </span><span class="s2">+ </span><span class="s1">url_ops</span>
+            <span class="s0">if </span><span class="s1">is_dynamic </span><span class="s0">and </span><span class="s1">elem </span><span class="s0">not in </span><span class="s1">defaults</span>
+        <span class="s2">]</span>
+        <span class="s1">kargs </span><span class="s2">= [</span><span class="s1">str</span><span class="s2">(</span><span class="s1">k</span><span class="s2">) </span><span class="s0">for </span><span class="s1">k </span><span class="s0">in </span><span class="s1">defaults</span><span class="s2">]</span>
+
+        <span class="s1">func_ast </span><span class="s2">= </span><span class="s1">_prefix_names</span><span class="s2">(</span><span class="s4">&quot;def _(): pass&quot;</span><span class="s2">, </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">FunctionDef</span><span class="s2">)</span>
+        <span class="s1">func_ast</span><span class="s2">.</span><span class="s1">name </span><span class="s2">= </span><span class="s4">f&quot;&lt;builder:</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">rule</span><span class="s0">!r}</span><span class="s4">&gt;&quot;</span>
+        <span class="s1">func_ast</span><span class="s2">.</span><span class="s1">args</span><span class="s2">.</span><span class="s1">args</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">ast</span><span class="s2">.</span><span class="s1">arg</span><span class="s2">(</span><span class="s4">&quot;.self&quot;</span><span class="s2">, </span><span class="s0">None</span><span class="s2">))</span>
+        <span class="s0">for </span><span class="s1">arg </span><span class="s0">in </span><span class="s1">pargs </span><span class="s2">+ </span><span class="s1">kargs</span><span class="s2">:</span>
+            <span class="s1">func_ast</span><span class="s2">.</span><span class="s1">args</span><span class="s2">.</span><span class="s1">args</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">ast</span><span class="s2">.</span><span class="s1">arg</span><span class="s2">(</span><span class="s1">arg</span><span class="s2">, </span><span class="s0">None</span><span class="s2">))</span>
+        <span class="s1">func_ast</span><span class="s2">.</span><span class="s1">args</span><span class="s2">.</span><span class="s1">kwarg </span><span class="s2">= </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">arg</span><span class="s2">(</span><span class="s4">&quot;.kwargs&quot;</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+        <span class="s0">for </span><span class="s1">_ </span><span class="s0">in </span><span class="s1">kargs</span><span class="s2">:</span>
+            <span class="s1">func_ast</span><span class="s2">.</span><span class="s1">args</span><span class="s2">.</span><span class="s1">defaults</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">ast</span><span class="s2">.</span><span class="s1">Constant</span><span class="s2">(</span><span class="s4">&quot;&quot;</span><span class="s2">))</span>
+        <span class="s1">func_ast</span><span class="s2">.</span><span class="s1">body </span><span class="s2">= </span><span class="s1">body</span>
+
+        <span class="s6"># Use `ast.parse` instead of `ast.Module` for better portability, since the</span>
+        <span class="s6"># signature of `ast.Module` can change.</span>
+        <span class="s1">module </span><span class="s2">= </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">parse</span><span class="s2">(</span><span class="s4">&quot;&quot;</span><span class="s2">)</span>
+        <span class="s1">module</span><span class="s2">.</span><span class="s1">body </span><span class="s2">= [</span><span class="s1">func_ast</span><span class="s2">]</span>
+
+        <span class="s6"># mark everything as on line 1, offset 0</span>
+        <span class="s6"># less error-prone than `ast.fix_missing_locations`</span>
+        <span class="s6"># bad line numbers cause an assert to fail in debug builds</span>
+        <span class="s0">for </span><span class="s1">node </span><span class="s0">in </span><span class="s1">ast</span><span class="s2">.</span><span class="s1">walk</span><span class="s2">(</span><span class="s1">module</span><span class="s2">):</span>
+            <span class="s0">if </span><span class="s4">&quot;lineno&quot; </span><span class="s0">in </span><span class="s1">node</span><span class="s2">.</span><span class="s1">_attributes</span><span class="s2">:</span>
+                <span class="s1">node</span><span class="s2">.</span><span class="s1">lineno </span><span class="s2">= </span><span class="s5">1  </span><span class="s6"># type: ignore[attr-defined]</span>
+            <span class="s0">if </span><span class="s4">&quot;end_lineno&quot; </span><span class="s0">in </span><span class="s1">node</span><span class="s2">.</span><span class="s1">_attributes</span><span class="s2">:</span>
+                <span class="s1">node</span><span class="s2">.</span><span class="s1">end_lineno </span><span class="s2">= </span><span class="s1">node</span><span class="s2">.</span><span class="s1">lineno  </span><span class="s6"># type: ignore[attr-defined]</span>
+            <span class="s0">if </span><span class="s4">&quot;col_offset&quot; </span><span class="s0">in </span><span class="s1">node</span><span class="s2">.</span><span class="s1">_attributes</span><span class="s2">:</span>
+                <span class="s1">node</span><span class="s2">.</span><span class="s1">col_offset </span><span class="s2">= </span><span class="s5">0  </span><span class="s6"># type: ignore[attr-defined]</span>
+            <span class="s0">if </span><span class="s4">&quot;end_col_offset&quot; </span><span class="s0">in </span><span class="s1">node</span><span class="s2">.</span><span class="s1">_attributes</span><span class="s2">:</span>
+                <span class="s1">node</span><span class="s2">.</span><span class="s1">end_col_offset </span><span class="s2">= </span><span class="s1">node</span><span class="s2">.</span><span class="s1">col_offset  </span><span class="s6"># type: ignore[attr-defined]</span>
+
+        <span class="s1">code </span><span class="s2">= </span><span class="s1">compile</span><span class="s2">(</span><span class="s1">module</span><span class="s2">, </span><span class="s4">&quot;&lt;werkzeug routing&gt;&quot;</span><span class="s2">, </span><span class="s4">&quot;exec&quot;</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_get_func_code</span><span class="s2">(</span><span class="s1">code</span><span class="s2">, </span><span class="s1">func_ast</span><span class="s2">.</span><span class="s1">name</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">build</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">values</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">append_unknown</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span>
+    <span class="s2">) </span><span class="s1">-&gt; tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Assembles the relative url for that rule and the subdomain. 
+        If building doesn't work for some reasons `None` is returned. 
+ 
+        :internal: 
+        &quot;&quot;&quot;</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">append_unknown</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_build_unknown</span><span class="s2">(**</span><span class="s1">values</span><span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_build</span><span class="s2">(**</span><span class="s1">values</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">ValidationError</span><span class="s2">:</span>
+            <span class="s0">return None</span>
+
+    <span class="s0">def </span><span class="s1">provides_defaults_for</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">rule</span><span class="s2">: </span><span class="s1">Rule</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Check if this rule has defaults for a given rule. 
+ 
+        :internal: 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">bool</span><span class="s2">(</span>
+            <span class="s0">not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">build_only</span>
+            <span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">defaults</span>
+            <span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">endpoint </span><span class="s2">== </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">endpoint</span>
+            <span class="s0">and </span><span class="s1">self </span><span class="s2">!= </span><span class="s1">rule</span>
+            <span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">arguments </span><span class="s2">== </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">arguments</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">suitable_for</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">values</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">method</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Check if the dict of values has enough data for url generation. 
+ 
+        :internal: 
+        &quot;&quot;&quot;</span>
+        <span class="s6"># if a method was given explicitly and that method is not supported</span>
+        <span class="s6"># by this rule, this rule is not suitable.</span>
+        <span class="s0">if </span><span class="s2">(</span>
+            <span class="s1">method </span><span class="s0">is not None</span>
+            <span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">methods </span><span class="s0">is not None</span>
+            <span class="s0">and </span><span class="s1">method </span><span class="s0">not in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">methods</span>
+        <span class="s2">):</span>
+            <span class="s0">return False</span>
+
+        <span class="s1">defaults </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">defaults </span><span class="s0">or </span><span class="s2">()</span>
+
+        <span class="s6"># all arguments required must be either in the defaults dict or</span>
+        <span class="s6"># the value dictionary otherwise it's not suitable</span>
+        <span class="s0">for </span><span class="s1">key </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">arguments</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">key </span><span class="s0">not in </span><span class="s1">defaults </span><span class="s0">and </span><span class="s1">key </span><span class="s0">not in </span><span class="s1">values</span><span class="s2">:</span>
+                <span class="s0">return False</span>
+
+        <span class="s6"># in case defaults are given we ensure that either the value was</span>
+        <span class="s6"># skipped or the value is the same as the default value.</span>
+        <span class="s0">if </span><span class="s1">defaults</span><span class="s2">:</span>
+            <span class="s0">for </span><span class="s1">key</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">defaults</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+                <span class="s0">if </span><span class="s1">key </span><span class="s0">in </span><span class="s1">values </span><span class="s0">and </span><span class="s1">value </span><span class="s2">!= </span><span class="s1">values</span><span class="s2">[</span><span class="s1">key</span><span class="s2">]:</span>
+                    <span class="s0">return False</span>
+
+        <span class="s0">return True</span>
+
+    <span class="s0">def </span><span class="s1">build_compare_key</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; tuple</span><span class="s2">[</span><span class="s1">int</span><span class="s2">, </span><span class="s1">int</span><span class="s2">, </span><span class="s1">int</span><span class="s2">]:</span>
+        <span class="s3">&quot;&quot;&quot;The build compare key for sorting. 
+ 
+        :internal: 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s2">(</span><span class="s5">1 </span><span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">alias </span><span class="s0">else </span><span class="s5">0</span><span class="s2">, -</span><span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">arguments</span><span class="s2">), -</span><span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">defaults </span><span class="s0">or </span><span class="s2">()))</span>
+
+    <span class="s0">def </span><span class="s1">__eq__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">other</span><span class="s2">: </span><span class="s1">object</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">other</span><span class="s2">, </span><span class="s1">type</span><span class="s2">(</span><span class="s1">self</span><span class="s2">)) </span><span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_trace </span><span class="s2">== </span><span class="s1">other</span><span class="s2">.</span><span class="s1">_trace</span>
+
+    <span class="s1">__hash__ </span><span class="s2">= </span><span class="s0">None  </span><span class="s6"># type: ignore</span>
+
+    <span class="s0">def </span><span class="s1">__str__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">rule</span>
+
+    <span class="s0">def </span><span class="s1">__repr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">map </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s4">f&quot;&lt;</span><span class="s0">{</span><span class="s1">type</span><span class="s2">(</span><span class="s1">self</span><span class="s2">).</span><span class="s1">__name__</span><span class="s0">} </span><span class="s4">(unbound)&gt;&quot;</span>
+        <span class="s1">parts </span><span class="s2">= []</span>
+        <span class="s0">for </span><span class="s1">is_dynamic</span><span class="s2">, </span><span class="s1">data </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_trace</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">is_dynamic</span><span class="s2">:</span>
+                <span class="s1">parts</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s4">f&quot;&lt;</span><span class="s0">{</span><span class="s1">data</span><span class="s0">}</span><span class="s4">&gt;&quot;</span><span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">parts</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">data</span><span class="s2">)</span>
+        <span class="s1">parts_str </span><span class="s2">= </span><span class="s4">&quot;&quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">parts</span><span class="s2">).</span><span class="s1">lstrip</span><span class="s2">(</span><span class="s4">&quot;|&quot;</span><span class="s2">)</span>
+        <span class="s1">methods </span><span class="s2">= </span><span class="s4">f&quot; (</span><span class="s0">{</span><span class="s4">', '</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">methods</span><span class="s2">)</span><span class="s0">}</span><span class="s4">)&quot; </span><span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">methods </span><span class="s0">is not None else </span><span class="s4">&quot;&quot;</span>
+        <span class="s0">return </span><span class="s4">f&quot;&lt;</span><span class="s0">{</span><span class="s1">type</span><span class="s2">(</span><span class="s1">self</span><span class="s2">).</span><span class="s1">__name__</span><span class="s0">} {</span><span class="s1">parts_str</span><span class="s0">!r}{</span><span class="s1">methods</span><span class="s0">} </span><span class="s4">-&gt; </span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">endpoint</span><span class="s0">}</span><span class="s4">&gt;&quot;</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,339 @@
+<html>
+<head>
+<title>auth.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #5f826b; font-style: italic;}
+.s4 { color: #6aab73;}
+.s5 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+auth.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">base64</span>
+<span class="s0">import </span><span class="s1">binascii</span>
+<span class="s0">import </span><span class="s1">collections</span><span class="s2">.</span><span class="s1">abc </span><span class="s0">as </span><span class="s1">cabc</span>
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+
+<span class="s0">from </span><span class="s2">..</span><span class="s1">http </span><span class="s0">import </span><span class="s1">dump_header</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">http </span><span class="s0">import </span><span class="s1">parse_dict_header</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">http </span><span class="s0">import </span><span class="s1">quote_header_value</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">structures </span><span class="s0">import </span><span class="s1">CallbackDict</span>
+
+<span class="s0">if </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+    <span class="s0">import </span><span class="s1">typing_extensions </span><span class="s0">as </span><span class="s1">te</span>
+
+
+<span class="s0">class </span><span class="s1">Authorization</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;Represents the parts of an ``Authorization`` request header. 
+ 
+    :attr:`.Request.authorization` returns an instance if the header is set. 
+ 
+    An instance can be used with the test :class:`.Client` request methods' ``auth`` 
+    parameter to send the header in test requests. 
+ 
+    Depending on the auth scheme, either :attr:`parameters` or :attr:`token` will be 
+    set. The ``Basic`` scheme's token is decoded into the ``username`` and ``password`` 
+    parameters. 
+ 
+    For convenience, ``auth[&quot;key&quot;]`` and ``auth.key`` both access the key in the 
+    :attr:`parameters` dict, along with ``auth.get(&quot;key&quot;)`` and ``&quot;key&quot; in auth``. 
+ 
+    .. versionchanged:: 2.3 
+        The ``token`` parameter and attribute was added to support auth schemes that use 
+        a token instead of parameters, such as ``Bearer``. 
+ 
+    .. versionchanged:: 2.3 
+        The object is no longer a ``dict``. 
+ 
+    .. versionchanged:: 0.5 
+        The object is an immutable dict. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">auth_type</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">data</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">token</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">type </span><span class="s2">= </span><span class="s1">auth_type</span>
+        <span class="s4">&quot;&quot;&quot;The authorization scheme, like ``basic``, ``digest``, or ``bearer``.&quot;&quot;&quot;</span>
+
+        <span class="s0">if </span><span class="s1">data </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">data </span><span class="s2">= {}</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">parameters </span><span class="s2">= </span><span class="s1">data</span>
+        <span class="s4">&quot;&quot;&quot;A dict of parameters parsed from the header. Either this or :attr:`token` 
+        will have a value for a given scheme. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">token </span><span class="s2">= </span><span class="s1">token</span>
+        <span class="s4">&quot;&quot;&quot;A token parsed from the header. Either this or :attr:`parameters` will have a 
+        value for a given scheme. 
+ 
+        .. versionadded:: 2.3 
+        &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__getattr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">parameters</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">name</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">__getitem__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">parameters</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">name</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">get</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">default</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">parameters</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">key</span><span class="s2">, </span><span class="s1">default</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">__contains__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">key </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">parameters</span>
+
+    <span class="s0">def </span><span class="s1">__eq__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">other</span><span class="s2">: </span><span class="s1">object</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">other</span><span class="s2">, </span><span class="s1">Authorization</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">NotImplemented</span>
+
+        <span class="s0">return </span><span class="s2">(</span>
+            <span class="s1">other</span><span class="s2">.</span><span class="s1">type </span><span class="s2">== </span><span class="s1">self</span><span class="s2">.</span><span class="s1">type</span>
+            <span class="s0">and </span><span class="s1">other</span><span class="s2">.</span><span class="s1">token </span><span class="s2">== </span><span class="s1">self</span><span class="s2">.</span><span class="s1">token</span>
+            <span class="s0">and </span><span class="s1">other</span><span class="s2">.</span><span class="s1">parameters </span><span class="s2">== </span><span class="s1">self</span><span class="s2">.</span><span class="s1">parameters</span>
+        <span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">from_header</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; te</span><span class="s2">.</span><span class="s1">Self </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Parse an ``Authorization`` header value and return an instance, or ``None`` 
+        if the value is empty. 
+ 
+        :param value: The header value to parse. 
+ 
+        .. versionadded:: 2.3 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if not </span><span class="s1">value</span><span class="s2">:</span>
+            <span class="s0">return None</span>
+
+        <span class="s1">scheme</span><span class="s2">, </span><span class="s1">_</span><span class="s2">, </span><span class="s1">rest </span><span class="s2">= </span><span class="s1">value</span><span class="s2">.</span><span class="s1">partition</span><span class="s2">(</span><span class="s4">&quot; &quot;</span><span class="s2">)</span>
+        <span class="s1">scheme </span><span class="s2">= </span><span class="s1">scheme</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">()</span>
+        <span class="s1">rest </span><span class="s2">= </span><span class="s1">rest</span><span class="s2">.</span><span class="s1">strip</span><span class="s2">()</span>
+
+        <span class="s0">if </span><span class="s1">scheme </span><span class="s2">== </span><span class="s4">&quot;basic&quot;</span><span class="s2">:</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">username</span><span class="s2">, </span><span class="s1">_</span><span class="s2">, </span><span class="s1">password </span><span class="s2">= </span><span class="s1">base64</span><span class="s2">.</span><span class="s1">b64decode</span><span class="s2">(</span><span class="s1">rest</span><span class="s2">).</span><span class="s1">decode</span><span class="s2">().</span><span class="s1">partition</span><span class="s2">(</span><span class="s4">&quot;:&quot;</span><span class="s2">)</span>
+            <span class="s0">except </span><span class="s2">(</span><span class="s1">binascii</span><span class="s2">.</span><span class="s1">Error</span><span class="s2">, </span><span class="s1">UnicodeError</span><span class="s2">):</span>
+                <span class="s0">return None</span>
+
+            <span class="s0">return </span><span class="s1">cls</span><span class="s2">(</span><span class="s1">scheme</span><span class="s2">, {</span><span class="s4">&quot;username&quot;</span><span class="s2">: </span><span class="s1">username</span><span class="s2">, </span><span class="s4">&quot;password&quot;</span><span class="s2">: </span><span class="s1">password</span><span class="s2">})</span>
+
+        <span class="s0">if </span><span class="s4">&quot;=&quot; </span><span class="s0">in </span><span class="s1">rest</span><span class="s2">.</span><span class="s1">rstrip</span><span class="s2">(</span><span class="s4">&quot;=&quot;</span><span class="s2">):</span>
+            <span class="s5"># = that is not trailing, this is parameters.</span>
+            <span class="s0">return </span><span class="s1">cls</span><span class="s2">(</span><span class="s1">scheme</span><span class="s2">, </span><span class="s1">parse_dict_header</span><span class="s2">(</span><span class="s1">rest</span><span class="s2">), </span><span class="s0">None</span><span class="s2">)</span>
+
+        <span class="s5"># No = or only trailing =, this is a token.</span>
+        <span class="s0">return </span><span class="s1">cls</span><span class="s2">(</span><span class="s1">scheme</span><span class="s2">, </span><span class="s0">None</span><span class="s2">, </span><span class="s1">rest</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">to_header</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Produce an ``Authorization`` header value representing this data. 
+ 
+        .. versionadded:: 2.0 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">type </span><span class="s2">== </span><span class="s4">&quot;basic&quot;</span><span class="s2">:</span>
+            <span class="s1">value </span><span class="s2">= </span><span class="s1">base64</span><span class="s2">.</span><span class="s1">b64encode</span><span class="s2">(</span>
+                <span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">username</span><span class="s0">}</span><span class="s4">:</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">password</span><span class="s0">}</span><span class="s4">&quot;</span><span class="s2">.</span><span class="s1">encode</span><span class="s2">()</span>
+            <span class="s2">).</span><span class="s1">decode</span><span class="s2">(</span><span class="s4">&quot;ascii&quot;</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s4">f&quot;Basic </span><span class="s0">{</span><span class="s1">value</span><span class="s0">}</span><span class="s4">&quot;</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">token </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">type</span><span class="s2">.</span><span class="s1">title</span><span class="s2">()</span><span class="s0">} {</span><span class="s1">self</span><span class="s2">.</span><span class="s1">token</span><span class="s0">}</span><span class="s4">&quot;</span>
+
+        <span class="s0">return </span><span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">type</span><span class="s2">.</span><span class="s1">title</span><span class="s2">()</span><span class="s0">} {</span><span class="s1">dump_header</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">parameters</span><span class="s2">)</span><span class="s0">}</span><span class="s4">&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__str__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">to_header</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">__repr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s4">f&quot;&lt;</span><span class="s0">{</span><span class="s1">type</span><span class="s2">(</span><span class="s1">self</span><span class="s2">).</span><span class="s1">__name__</span><span class="s0">} {</span><span class="s1">self</span><span class="s2">.</span><span class="s1">to_header</span><span class="s2">()</span><span class="s0">}</span><span class="s4">&gt;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">WWWAuthenticate</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;Represents the parts of a ``WWW-Authenticate`` response header. 
+ 
+    Set :attr:`.Response.www_authenticate` to an instance of list of instances to set 
+    values for this header in the response. Modifying this instance will modify the 
+    header value. 
+ 
+    Depending on the auth scheme, either :attr:`parameters` or :attr:`token` should be 
+    set. The ``Basic`` scheme will encode ``username`` and ``password`` parameters to a 
+    token. 
+ 
+    For convenience, ``auth[&quot;key&quot;]`` and ``auth.key`` both act on the :attr:`parameters` 
+    dict, and can be used to get, set, or delete parameters. ``auth.get(&quot;key&quot;)`` and 
+    ``&quot;key&quot; in auth`` are also provided. 
+ 
+    .. versionchanged:: 2.3 
+        The ``token`` parameter and attribute was added to support auth schemes that use 
+        a token instead of parameters, such as ``Bearer``. 
+ 
+    .. versionchanged:: 2.3 
+        The object is no longer a ``dict``. 
+ 
+    .. versionchanged:: 2.3 
+        The ``on_update`` parameter was removed. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">auth_type</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">values</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">token</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">):</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_type </span><span class="s2">= </span><span class="s1">auth_type</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_parameters</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">] = </span><span class="s1">CallbackDict</span><span class="s2">(</span>
+            <span class="s1">values</span><span class="s2">, </span><span class="s0">lambda </span><span class="s1">_</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_trigger_on_update</span><span class="s2">()</span>
+        <span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_token </span><span class="s2">= </span><span class="s1">token</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_on_update</span><span class="s2">: </span><span class="s1">cabc</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">WWWAuthenticate</span><span class="s2">], </span><span class="s0">None</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+
+    <span class="s0">def </span><span class="s1">_trigger_on_update</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_on_update </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_on_update</span><span class="s2">(</span><span class="s1">self</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">type</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;The authorization scheme, like ``basic``, ``digest``, or ``bearer``.&quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_type</span>
+
+    <span class="s2">@</span><span class="s1">type</span><span class="s2">.</span><span class="s1">setter</span>
+    <span class="s0">def </span><span class="s1">type</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_type </span><span class="s2">= </span><span class="s1">value</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_trigger_on_update</span><span class="s2">()</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">parameters</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">]:</span>
+        <span class="s3">&quot;&quot;&quot;A dict of parameters for the header. Only one of this or :attr:`token` should 
+        have a value for a given scheme. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_parameters</span>
+
+    <span class="s2">@</span><span class="s1">parameters</span><span class="s2">.</span><span class="s1">setter</span>
+    <span class="s0">def </span><span class="s1">parameters</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_parameters </span><span class="s2">= </span><span class="s1">CallbackDict</span><span class="s2">(</span><span class="s1">value</span><span class="s2">, </span><span class="s0">lambda </span><span class="s1">_</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_trigger_on_update</span><span class="s2">())</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_trigger_on_update</span><span class="s2">()</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">token</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;A dict of parameters for the header. Only one of this or :attr:`token` should 
+        have a value for a given scheme. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_token</span>
+
+    <span class="s2">@</span><span class="s1">token</span><span class="s2">.</span><span class="s1">setter</span>
+    <span class="s0">def </span><span class="s1">token</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;A token for the header. Only one of this or :attr:`parameters` should have a 
+        value for a given scheme. 
+ 
+        .. versionadded:: 2.3 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_token </span><span class="s2">= </span><span class="s1">value</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_trigger_on_update</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">__getitem__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">parameters</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">key</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">__setitem__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">value </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">key </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">parameters</span><span class="s2">:</span>
+                <span class="s0">del </span><span class="s1">self</span><span class="s2">.</span><span class="s1">parameters</span><span class="s2">[</span><span class="s1">key</span><span class="s2">]</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">parameters</span><span class="s2">[</span><span class="s1">key</span><span class="s2">] = </span><span class="s1">value</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_trigger_on_update</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">__delitem__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">key </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">parameters</span><span class="s2">:</span>
+            <span class="s0">del </span><span class="s1">self</span><span class="s2">.</span><span class="s1">parameters</span><span class="s2">[</span><span class="s1">key</span><span class="s2">]</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_trigger_on_update</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">__getattr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">[</span><span class="s1">name</span><span class="s2">]</span>
+
+    <span class="s0">def </span><span class="s1">__setattr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">name </span><span class="s0">in </span><span class="s2">{</span><span class="s4">&quot;_type&quot;</span><span class="s2">, </span><span class="s4">&quot;_parameters&quot;</span><span class="s2">, </span><span class="s4">&quot;_token&quot;</span><span class="s2">, </span><span class="s4">&quot;_on_update&quot;</span><span class="s2">}:</span>
+            <span class="s1">super</span><span class="s2">().</span><span class="s1">__setattr__</span><span class="s2">(</span><span class="s1">name</span><span class="s2">, </span><span class="s1">value</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">[</span><span class="s1">name</span><span class="s2">] = </span><span class="s1">value</span>
+
+    <span class="s0">def </span><span class="s1">__delattr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">del </span><span class="s1">self</span><span class="s2">[</span><span class="s1">name</span><span class="s2">]</span>
+
+    <span class="s0">def </span><span class="s1">__contains__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">key </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">parameters</span>
+
+    <span class="s0">def </span><span class="s1">__eq__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">other</span><span class="s2">: </span><span class="s1">object</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">other</span><span class="s2">, </span><span class="s1">WWWAuthenticate</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">NotImplemented</span>
+
+        <span class="s0">return </span><span class="s2">(</span>
+            <span class="s1">other</span><span class="s2">.</span><span class="s1">type </span><span class="s2">== </span><span class="s1">self</span><span class="s2">.</span><span class="s1">type</span>
+            <span class="s0">and </span><span class="s1">other</span><span class="s2">.</span><span class="s1">token </span><span class="s2">== </span><span class="s1">self</span><span class="s2">.</span><span class="s1">token</span>
+            <span class="s0">and </span><span class="s1">other</span><span class="s2">.</span><span class="s1">parameters </span><span class="s2">== </span><span class="s1">self</span><span class="s2">.</span><span class="s1">parameters</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">get</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">default</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">parameters</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">key</span><span class="s2">, </span><span class="s1">default</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">from_header</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; te</span><span class="s2">.</span><span class="s1">Self </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Parse a ``WWW-Authenticate`` header value and return an instance, or ``None`` 
+        if the value is empty. 
+ 
+        :param value: The header value to parse. 
+ 
+        .. versionadded:: 2.3 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if not </span><span class="s1">value</span><span class="s2">:</span>
+            <span class="s0">return None</span>
+
+        <span class="s1">scheme</span><span class="s2">, </span><span class="s1">_</span><span class="s2">, </span><span class="s1">rest </span><span class="s2">= </span><span class="s1">value</span><span class="s2">.</span><span class="s1">partition</span><span class="s2">(</span><span class="s4">&quot; &quot;</span><span class="s2">)</span>
+        <span class="s1">scheme </span><span class="s2">= </span><span class="s1">scheme</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">()</span>
+        <span class="s1">rest </span><span class="s2">= </span><span class="s1">rest</span><span class="s2">.</span><span class="s1">strip</span><span class="s2">()</span>
+
+        <span class="s0">if </span><span class="s4">&quot;=&quot; </span><span class="s0">in </span><span class="s1">rest</span><span class="s2">.</span><span class="s1">rstrip</span><span class="s2">(</span><span class="s4">&quot;=&quot;</span><span class="s2">):</span>
+            <span class="s5"># = that is not trailing, this is parameters.</span>
+            <span class="s0">return </span><span class="s1">cls</span><span class="s2">(</span><span class="s1">scheme</span><span class="s2">, </span><span class="s1">parse_dict_header</span><span class="s2">(</span><span class="s1">rest</span><span class="s2">), </span><span class="s0">None</span><span class="s2">)</span>
+
+        <span class="s5"># No = or only trailing =, this is a token.</span>
+        <span class="s0">return </span><span class="s1">cls</span><span class="s2">(</span><span class="s1">scheme</span><span class="s2">, </span><span class="s0">None</span><span class="s2">, </span><span class="s1">rest</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">to_header</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Produce a ``WWW-Authenticate`` header value representing this data.&quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">token </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">type</span><span class="s2">.</span><span class="s1">title</span><span class="s2">()</span><span class="s0">} {</span><span class="s1">self</span><span class="s2">.</span><span class="s1">token</span><span class="s0">}</span><span class="s4">&quot;</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">type </span><span class="s2">== </span><span class="s4">&quot;digest&quot;</span><span class="s2">:</span>
+            <span class="s1">items </span><span class="s2">= []</span>
+
+            <span class="s0">for </span><span class="s1">key</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">parameters</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+                <span class="s0">if </span><span class="s1">key </span><span class="s0">in </span><span class="s2">{</span><span class="s4">&quot;realm&quot;</span><span class="s2">, </span><span class="s4">&quot;domain&quot;</span><span class="s2">, </span><span class="s4">&quot;nonce&quot;</span><span class="s2">, </span><span class="s4">&quot;opaque&quot;</span><span class="s2">, </span><span class="s4">&quot;qop&quot;</span><span class="s2">}:</span>
+                    <span class="s1">value </span><span class="s2">= </span><span class="s1">quote_header_value</span><span class="s2">(</span><span class="s1">value</span><span class="s2">, </span><span class="s1">allow_token</span><span class="s2">=</span><span class="s0">False</span><span class="s2">)</span>
+                <span class="s0">else</span><span class="s2">:</span>
+                    <span class="s1">value </span><span class="s2">= </span><span class="s1">quote_header_value</span><span class="s2">(</span><span class="s1">value</span><span class="s2">)</span>
+
+                <span class="s1">items</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">key</span><span class="s0">}</span><span class="s4">=</span><span class="s0">{</span><span class="s1">value</span><span class="s0">}</span><span class="s4">&quot;</span><span class="s2">)</span>
+
+            <span class="s0">return </span><span class="s4">f&quot;Digest </span><span class="s0">{</span><span class="s4">', '</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">items</span><span class="s2">)</span><span class="s0">}</span><span class="s4">&quot;</span>
+
+        <span class="s0">return </span><span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">type</span><span class="s2">.</span><span class="s1">title</span><span class="s2">()</span><span class="s0">} {</span><span class="s1">dump_header</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">parameters</span><span class="s2">)</span><span class="s0">}</span><span class="s4">&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__str__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">to_header</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">__repr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s4">f&quot;&lt;</span><span class="s0">{</span><span class="s1">type</span><span class="s2">(</span><span class="s1">self</span><span class="s2">).</span><span class="s1">__name__</span><span class="s0">} {</span><span class="s1">self</span><span class="s2">.</span><span class="s1">to_header</span><span class="s2">()</span><span class="s0">}</span><span class="s4">&gt;&quot;</span>
+</pre>
+</body>
+</html>

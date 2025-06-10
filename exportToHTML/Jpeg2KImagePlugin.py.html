@@ -1,0 +1,467 @@
+<html>
+<head>
+<title>Jpeg2KImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #2aacb8;}
+.s6 { color: #6aab73;}
+.s7 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+Jpeg2KImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># JPEG2000 file handling</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 2014-03-12 ajh  Created</span>
+<span class="s0"># 2021-06-30 rogermb  Extract dpi information from the 'resc' header box</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 2014 Coriolis Systems Limited</span>
+<span class="s0"># Copyright (c) 2014 Alastair Houghton</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">io</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">struct</span>
+<span class="s2">from </span><span class="s1">collections</span><span class="s3">.</span><span class="s1">abc </span><span class="s2">import </span><span class="s1">Callable</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">IO</span><span class="s3">, </span><span class="s1">cast</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">ImageFile</span><span class="s3">, </span><span class="s1">ImagePalette</span><span class="s3">, </span><span class="s1">_binary</span>
+
+
+<span class="s2">class </span><span class="s1">BoxReader</span><span class="s3">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    A small helper class to read fields stored in JPEG2000 header boxes 
+    and to easily step into and read sub-boxes. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">length</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= -</span><span class="s5">1</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">fp </span><span class="s3">= </span><span class="s1">fp</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">has_length </span><span class="s3">= </span><span class="s1">length </span><span class="s3">&gt;= </span><span class="s5">0</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">length </span><span class="s3">= </span><span class="s1">length</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">remaining_in_box </span><span class="s3">= -</span><span class="s5">1</span>
+
+    <span class="s2">def </span><span class="s1">_can_read</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">num_bytes</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">has_length </span><span class="s2">and </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">() + </span><span class="s1">num_bytes </span><span class="s3">&gt; </span><span class="s1">self</span><span class="s3">.</span><span class="s1">length</span><span class="s3">:</span>
+            <span class="s0"># Outside box: ensure we don't read past the known file length</span>
+            <span class="s2">return False</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">remaining_in_box </span><span class="s3">&gt;= </span><span class="s5">0</span><span class="s3">:</span>
+            <span class="s0"># Inside box contents: ensure read does not go past box boundaries</span>
+            <span class="s2">return </span><span class="s1">num_bytes </span><span class="s3">&lt;= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">remaining_in_box</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">return True  </span><span class="s0"># No length known, just read</span>
+
+    <span class="s2">def </span><span class="s1">_read_bytes</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">num_bytes</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; bytes</span><span class="s3">:</span>
+        <span class="s2">if not </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_can_read</span><span class="s3">(</span><span class="s1">num_bytes</span><span class="s3">):</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;Not enough data in header&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s1">data </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s1">num_bytes</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">data</span><span class="s3">) &lt; </span><span class="s1">num_bytes</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s6">f&quot;Expected to read </span><span class="s2">{</span><span class="s1">num_bytes</span><span class="s2">} </span><span class="s6">bytes but only got </span><span class="s2">{</span><span class="s1">len</span><span class="s3">(</span><span class="s1">data</span><span class="s3">)</span><span class="s2">}</span><span class="s6">.&quot;</span>
+            <span class="s2">raise </span><span class="s1">OSError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">remaining_in_box </span><span class="s3">&gt; </span><span class="s5">0</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">remaining_in_box </span><span class="s3">-= </span><span class="s1">num_bytes</span>
+        <span class="s2">return </span><span class="s1">data</span>
+
+    <span class="s2">def </span><span class="s1">read_fields</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">field_format</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">int </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">, ...]:</span>
+        <span class="s1">size </span><span class="s3">= </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">calcsize</span><span class="s3">(</span><span class="s1">field_format</span><span class="s3">)</span>
+        <span class="s1">data </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_read_bytes</span><span class="s3">(</span><span class="s1">size</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">unpack</span><span class="s3">(</span><span class="s1">field_format</span><span class="s3">, </span><span class="s1">data</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">read_boxes</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; BoxReader</span><span class="s3">:</span>
+        <span class="s1">size </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">remaining_in_box</span>
+        <span class="s1">data </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_read_bytes</span><span class="s3">(</span><span class="s1">size</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">BoxReader</span><span class="s3">(</span><span class="s1">io</span><span class="s3">.</span><span class="s1">BytesIO</span><span class="s3">(</span><span class="s1">data</span><span class="s3">), </span><span class="s1">size</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">has_next_box</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">has_length</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">() + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">remaining_in_box </span><span class="s3">&lt; </span><span class="s1">self</span><span class="s3">.</span><span class="s1">length</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">return True</span>
+
+    <span class="s2">def </span><span class="s1">next_box_type</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; bytes</span><span class="s3">:</span>
+        <span class="s0"># Skip the rest of the box if it has not been read</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">remaining_in_box </span><span class="s3">&gt; </span><span class="s5">0</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">remaining_in_box</span><span class="s3">, </span><span class="s1">os</span><span class="s3">.</span><span class="s1">SEEK_CUR</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">remaining_in_box </span><span class="s3">= -</span><span class="s5">1</span>
+
+        <span class="s0"># Read the length and type of the next box</span>
+        <span class="s1">lbox</span><span class="s3">, </span><span class="s1">tbox </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">self</span><span class="s3">.</span><span class="s1">read_fields</span><span class="s3">(</span><span class="s6">&quot;&gt;I4s&quot;</span><span class="s3">))</span>
+        <span class="s2">if </span><span class="s1">lbox </span><span class="s3">== </span><span class="s5">1</span><span class="s3">:</span>
+            <span class="s1">lbox </span><span class="s3">= </span><span class="s1">cast</span><span class="s3">(</span><span class="s1">int</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">read_fields</span><span class="s3">(</span><span class="s6">&quot;&gt;Q&quot;</span><span class="s3">)[</span><span class="s5">0</span><span class="s3">])</span>
+            <span class="s1">hlen </span><span class="s3">= </span><span class="s5">16</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">hlen </span><span class="s3">= </span><span class="s5">8</span>
+
+        <span class="s2">if </span><span class="s1">lbox </span><span class="s3">&lt; </span><span class="s1">hlen </span><span class="s2">or not </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_can_read</span><span class="s3">(</span><span class="s1">lbox </span><span class="s3">- </span><span class="s1">hlen</span><span class="s3">):</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;Invalid header length&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">remaining_in_box </span><span class="s3">= </span><span class="s1">lbox </span><span class="s3">- </span><span class="s1">hlen</span>
+        <span class="s2">return </span><span class="s1">tbox</span>
+
+
+<span class="s2">def </span><span class="s1">_parse_codestream</span><span class="s3">(</span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">]) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">], </span><span class="s1">str</span><span class="s3">]:</span>
+    <span class="s4">&quot;&quot;&quot;Parse the JPEG 2000 codestream to extract the size and component 
+    count from the SIZ marker segment, returning a PIL (size, mode) tuple.&quot;&quot;&quot;</span>
+
+    <span class="s1">hdr </span><span class="s3">= </span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">2</span><span class="s3">)</span>
+    <span class="s1">lsiz </span><span class="s3">= </span><span class="s1">_binary</span><span class="s3">.</span><span class="s1">i16be</span><span class="s3">(</span><span class="s1">hdr</span><span class="s3">)</span>
+    <span class="s1">siz </span><span class="s3">= </span><span class="s1">hdr </span><span class="s3">+ </span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s1">lsiz </span><span class="s3">- </span><span class="s5">2</span><span class="s3">)</span>
+    <span class="s1">lsiz</span><span class="s3">, </span><span class="s1">rsiz</span><span class="s3">, </span><span class="s1">xsiz</span><span class="s3">, </span><span class="s1">ysiz</span><span class="s3">, </span><span class="s1">xosiz</span><span class="s3">, </span><span class="s1">yosiz</span><span class="s3">, </span><span class="s1">_</span><span class="s3">, </span><span class="s1">_</span><span class="s3">, </span><span class="s1">_</span><span class="s3">, </span><span class="s1">_</span><span class="s3">, </span><span class="s1">csiz </span><span class="s3">= </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">unpack_from</span><span class="s3">(</span>
+        <span class="s6">&quot;&gt;HHIIIIIIIIH&quot;</span><span class="s3">, </span><span class="s1">siz</span>
+    <span class="s3">)</span>
+
+    <span class="s1">size </span><span class="s3">= (</span><span class="s1">xsiz </span><span class="s3">- </span><span class="s1">xosiz</span><span class="s3">, </span><span class="s1">ysiz </span><span class="s3">- </span><span class="s1">yosiz</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">csiz </span><span class="s3">== </span><span class="s5">1</span><span class="s3">:</span>
+        <span class="s1">ssiz </span><span class="s3">= </span><span class="s1">struct</span><span class="s3">.</span><span class="s1">unpack_from</span><span class="s3">(</span><span class="s6">&quot;&gt;B&quot;</span><span class="s3">, </span><span class="s1">siz</span><span class="s3">, </span><span class="s5">38</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s3">(</span><span class="s1">ssiz</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] &amp; </span><span class="s5">0x7F</span><span class="s3">) + </span><span class="s5">1 </span><span class="s3">&gt; </span><span class="s5">8</span><span class="s3">:</span>
+            <span class="s1">mode </span><span class="s3">= </span><span class="s6">&quot;I;16&quot;</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">mode </span><span class="s3">= </span><span class="s6">&quot;L&quot;</span>
+    <span class="s2">elif </span><span class="s1">csiz </span><span class="s3">== </span><span class="s5">2</span><span class="s3">:</span>
+        <span class="s1">mode </span><span class="s3">= </span><span class="s6">&quot;LA&quot;</span>
+    <span class="s2">elif </span><span class="s1">csiz </span><span class="s3">== </span><span class="s5">3</span><span class="s3">:</span>
+        <span class="s1">mode </span><span class="s3">= </span><span class="s6">&quot;RGB&quot;</span>
+    <span class="s2">elif </span><span class="s1">csiz </span><span class="s3">== </span><span class="s5">4</span><span class="s3">:</span>
+        <span class="s1">mode </span><span class="s3">= </span><span class="s6">&quot;RGBA&quot;</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;unable to determine J2K image mode&quot;</span>
+        <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+    <span class="s2">return </span><span class="s1">size</span><span class="s3">, </span><span class="s1">mode</span>
+
+
+<span class="s2">def </span><span class="s1">_res_to_dpi</span><span class="s3">(</span><span class="s1">num</span><span class="s3">: </span><span class="s1">int</span><span class="s3">, </span><span class="s1">denom</span><span class="s3">: </span><span class="s1">int</span><span class="s3">, </span><span class="s1">exp</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; float </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s4">&quot;&quot;&quot;Convert JPEG2000's (numerator, denominator, exponent-base-10) resolution, 
+    calculated as (num / denom) * 10^exp and stored in dots per meter, 
+    to floating-point dots per inch.&quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">denom </span><span class="s3">== </span><span class="s5">0</span><span class="s3">:</span>
+        <span class="s2">return None</span>
+    <span class="s2">return </span><span class="s3">(</span><span class="s5">254 </span><span class="s3">* </span><span class="s1">num </span><span class="s3">* (</span><span class="s5">10</span><span class="s3">**</span><span class="s1">exp</span><span class="s3">)) / (</span><span class="s5">10000 </span><span class="s3">* </span><span class="s1">denom</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_parse_jp2_header</span><span class="s3">(</span>
+    <span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">],</span>
+<span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span>
+    <span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">],</span>
+    <span class="s1">str</span><span class="s3">,</span>
+    <span class="s1">str </span><span class="s3">| </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">tuple</span><span class="s3">[</span><span class="s1">float</span><span class="s3">, </span><span class="s1">float</span><span class="s3">] | </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">ImagePalette</span><span class="s3">.</span><span class="s1">ImagePalette </span><span class="s3">| </span><span class="s2">None</span><span class="s3">,</span>
+<span class="s3">]:</span>
+    <span class="s4">&quot;&quot;&quot;Parse the JP2 header box to extract size, component count, 
+    color space information, and optionally DPI information, 
+    returning a (size, mode, mimetype, dpi) tuple.&quot;&quot;&quot;</span>
+
+    <span class="s0"># Find the JP2 header box</span>
+    <span class="s1">reader </span><span class="s3">= </span><span class="s1">BoxReader</span><span class="s3">(</span><span class="s1">fp</span><span class="s3">)</span>
+    <span class="s1">header </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s1">mimetype </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s2">while </span><span class="s1">reader</span><span class="s3">.</span><span class="s1">has_next_box</span><span class="s3">():</span>
+        <span class="s1">tbox </span><span class="s3">= </span><span class="s1">reader</span><span class="s3">.</span><span class="s1">next_box_type</span><span class="s3">()</span>
+
+        <span class="s2">if </span><span class="s1">tbox </span><span class="s3">== </span><span class="s7">b&quot;jp2h&quot;</span><span class="s3">:</span>
+            <span class="s1">header </span><span class="s3">= </span><span class="s1">reader</span><span class="s3">.</span><span class="s1">read_boxes</span><span class="s3">()</span>
+            <span class="s2">break</span>
+        <span class="s2">elif </span><span class="s1">tbox </span><span class="s3">== </span><span class="s7">b&quot;ftyp&quot;</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">reader</span><span class="s3">.</span><span class="s1">read_fields</span><span class="s3">(</span><span class="s6">&quot;&gt;4s&quot;</span><span class="s3">)[</span><span class="s5">0</span><span class="s3">] == </span><span class="s7">b&quot;jpx &quot;</span><span class="s3">:</span>
+                <span class="s1">mimetype </span><span class="s3">= </span><span class="s6">&quot;image/jpx&quot;</span>
+    <span class="s2">assert </span><span class="s1">header </span><span class="s2">is not None</span>
+
+    <span class="s1">size </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s1">mode </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s1">bpc </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s1">nc </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s1">dpi </span><span class="s3">= </span><span class="s2">None  </span><span class="s0"># 2-tuple of DPI info, or None</span>
+    <span class="s1">palette </span><span class="s3">= </span><span class="s2">None</span>
+
+    <span class="s2">while </span><span class="s1">header</span><span class="s3">.</span><span class="s1">has_next_box</span><span class="s3">():</span>
+        <span class="s1">tbox </span><span class="s3">= </span><span class="s1">header</span><span class="s3">.</span><span class="s1">next_box_type</span><span class="s3">()</span>
+
+        <span class="s2">if </span><span class="s1">tbox </span><span class="s3">== </span><span class="s7">b&quot;ihdr&quot;</span><span class="s3">:</span>
+            <span class="s1">height</span><span class="s3">, </span><span class="s1">width</span><span class="s3">, </span><span class="s1">nc</span><span class="s3">, </span><span class="s1">bpc </span><span class="s3">= </span><span class="s1">header</span><span class="s3">.</span><span class="s1">read_fields</span><span class="s3">(</span><span class="s6">&quot;&gt;IIHB&quot;</span><span class="s3">)</span>
+            <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">height</span><span class="s3">, </span><span class="s1">int</span><span class="s3">)</span>
+            <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">width</span><span class="s3">, </span><span class="s1">int</span><span class="s3">)</span>
+            <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">bpc</span><span class="s3">, </span><span class="s1">int</span><span class="s3">)</span>
+            <span class="s1">size </span><span class="s3">= (</span><span class="s1">width</span><span class="s3">, </span><span class="s1">height</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">nc </span><span class="s3">== </span><span class="s5">1 </span><span class="s2">and </span><span class="s3">(</span><span class="s1">bpc </span><span class="s3">&amp; </span><span class="s5">0x7F</span><span class="s3">) &gt; </span><span class="s5">8</span><span class="s3">:</span>
+                <span class="s1">mode </span><span class="s3">= </span><span class="s6">&quot;I;16&quot;</span>
+            <span class="s2">elif </span><span class="s1">nc </span><span class="s3">== </span><span class="s5">1</span><span class="s3">:</span>
+                <span class="s1">mode </span><span class="s3">= </span><span class="s6">&quot;L&quot;</span>
+            <span class="s2">elif </span><span class="s1">nc </span><span class="s3">== </span><span class="s5">2</span><span class="s3">:</span>
+                <span class="s1">mode </span><span class="s3">= </span><span class="s6">&quot;LA&quot;</span>
+            <span class="s2">elif </span><span class="s1">nc </span><span class="s3">== </span><span class="s5">3</span><span class="s3">:</span>
+                <span class="s1">mode </span><span class="s3">= </span><span class="s6">&quot;RGB&quot;</span>
+            <span class="s2">elif </span><span class="s1">nc </span><span class="s3">== </span><span class="s5">4</span><span class="s3">:</span>
+                <span class="s1">mode </span><span class="s3">= </span><span class="s6">&quot;RGBA&quot;</span>
+        <span class="s2">elif </span><span class="s1">tbox </span><span class="s3">== </span><span class="s7">b&quot;colr&quot; </span><span class="s2">and </span><span class="s1">nc </span><span class="s3">== </span><span class="s5">4</span><span class="s3">:</span>
+            <span class="s1">meth</span><span class="s3">, </span><span class="s1">_</span><span class="s3">, </span><span class="s1">_</span><span class="s3">, </span><span class="s1">enumcs </span><span class="s3">= </span><span class="s1">header</span><span class="s3">.</span><span class="s1">read_fields</span><span class="s3">(</span><span class="s6">&quot;&gt;BBBI&quot;</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">meth </span><span class="s3">== </span><span class="s5">1 </span><span class="s2">and </span><span class="s1">enumcs </span><span class="s3">== </span><span class="s5">12</span><span class="s3">:</span>
+                <span class="s1">mode </span><span class="s3">= </span><span class="s6">&quot;CMYK&quot;</span>
+        <span class="s2">elif </span><span class="s1">tbox </span><span class="s3">== </span><span class="s7">b&quot;pclr&quot; </span><span class="s2">and </span><span class="s1">mode </span><span class="s2">in </span><span class="s3">(</span><span class="s6">&quot;L&quot;</span><span class="s3">, </span><span class="s6">&quot;LA&quot;</span><span class="s3">):</span>
+            <span class="s1">ne</span><span class="s3">, </span><span class="s1">npc </span><span class="s3">= </span><span class="s1">header</span><span class="s3">.</span><span class="s1">read_fields</span><span class="s3">(</span><span class="s6">&quot;&gt;HB&quot;</span><span class="s3">)</span>
+            <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">ne</span><span class="s3">, </span><span class="s1">int</span><span class="s3">)</span>
+            <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">npc</span><span class="s3">, </span><span class="s1">int</span><span class="s3">)</span>
+            <span class="s1">max_bitdepth </span><span class="s3">= </span><span class="s5">0</span>
+            <span class="s2">for </span><span class="s1">bitdepth </span><span class="s2">in </span><span class="s1">header</span><span class="s3">.</span><span class="s1">read_fields</span><span class="s3">(</span><span class="s6">&quot;&gt;&quot; </span><span class="s3">+ (</span><span class="s6">&quot;B&quot; </span><span class="s3">* </span><span class="s1">npc</span><span class="s3">)):</span>
+                <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">bitdepth</span><span class="s3">, </span><span class="s1">int</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">bitdepth </span><span class="s3">&gt; </span><span class="s1">max_bitdepth</span><span class="s3">:</span>
+                    <span class="s1">max_bitdepth </span><span class="s3">= </span><span class="s1">bitdepth</span>
+            <span class="s2">if </span><span class="s1">max_bitdepth </span><span class="s3">&lt;= </span><span class="s5">8</span><span class="s3">:</span>
+                <span class="s1">palette </span><span class="s3">= </span><span class="s1">ImagePalette</span><span class="s3">.</span><span class="s1">ImagePalette</span><span class="s3">(</span><span class="s6">&quot;RGBA&quot; </span><span class="s2">if </span><span class="s1">npc </span><span class="s3">== </span><span class="s5">4 </span><span class="s2">else </span><span class="s6">&quot;RGB&quot;</span><span class="s3">)</span>
+                <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">ne</span><span class="s3">):</span>
+                    <span class="s1">color</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">int</span><span class="s3">] = []</span>
+                    <span class="s2">for </span><span class="s1">value </span><span class="s2">in </span><span class="s1">header</span><span class="s3">.</span><span class="s1">read_fields</span><span class="s3">(</span><span class="s6">&quot;&gt;&quot; </span><span class="s3">+ (</span><span class="s6">&quot;B&quot; </span><span class="s3">* </span><span class="s1">npc</span><span class="s3">)):</span>
+                        <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">value</span><span class="s3">, </span><span class="s1">int</span><span class="s3">)</span>
+                        <span class="s1">color</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">value</span><span class="s3">)</span>
+                    <span class="s1">palette</span><span class="s3">.</span><span class="s1">getcolor</span><span class="s3">(</span><span class="s1">tuple</span><span class="s3">(</span><span class="s1">color</span><span class="s3">))</span>
+                <span class="s1">mode </span><span class="s3">= </span><span class="s6">&quot;P&quot; </span><span class="s2">if </span><span class="s1">mode </span><span class="s3">== </span><span class="s6">&quot;L&quot; </span><span class="s2">else </span><span class="s6">&quot;PA&quot;</span>
+        <span class="s2">elif </span><span class="s1">tbox </span><span class="s3">== </span><span class="s7">b&quot;res &quot;</span><span class="s3">:</span>
+            <span class="s1">res </span><span class="s3">= </span><span class="s1">header</span><span class="s3">.</span><span class="s1">read_boxes</span><span class="s3">()</span>
+            <span class="s2">while </span><span class="s1">res</span><span class="s3">.</span><span class="s1">has_next_box</span><span class="s3">():</span>
+                <span class="s1">tres </span><span class="s3">= </span><span class="s1">res</span><span class="s3">.</span><span class="s1">next_box_type</span><span class="s3">()</span>
+                <span class="s2">if </span><span class="s1">tres </span><span class="s3">== </span><span class="s7">b&quot;resc&quot;</span><span class="s3">:</span>
+                    <span class="s1">vrcn</span><span class="s3">, </span><span class="s1">vrcd</span><span class="s3">, </span><span class="s1">hrcn</span><span class="s3">, </span><span class="s1">hrcd</span><span class="s3">, </span><span class="s1">vrce</span><span class="s3">, </span><span class="s1">hrce </span><span class="s3">= </span><span class="s1">res</span><span class="s3">.</span><span class="s1">read_fields</span><span class="s3">(</span><span class="s6">&quot;&gt;HHHHBB&quot;</span><span class="s3">)</span>
+                    <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">vrcn</span><span class="s3">, </span><span class="s1">int</span><span class="s3">)</span>
+                    <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">vrcd</span><span class="s3">, </span><span class="s1">int</span><span class="s3">)</span>
+                    <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">hrcn</span><span class="s3">, </span><span class="s1">int</span><span class="s3">)</span>
+                    <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">hrcd</span><span class="s3">, </span><span class="s1">int</span><span class="s3">)</span>
+                    <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">vrce</span><span class="s3">, </span><span class="s1">int</span><span class="s3">)</span>
+                    <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">hrce</span><span class="s3">, </span><span class="s1">int</span><span class="s3">)</span>
+                    <span class="s1">hres </span><span class="s3">= </span><span class="s1">_res_to_dpi</span><span class="s3">(</span><span class="s1">hrcn</span><span class="s3">, </span><span class="s1">hrcd</span><span class="s3">, </span><span class="s1">hrce</span><span class="s3">)</span>
+                    <span class="s1">vres </span><span class="s3">= </span><span class="s1">_res_to_dpi</span><span class="s3">(</span><span class="s1">vrcn</span><span class="s3">, </span><span class="s1">vrcd</span><span class="s3">, </span><span class="s1">vrce</span><span class="s3">)</span>
+                    <span class="s2">if </span><span class="s1">hres </span><span class="s2">is not None and </span><span class="s1">vres </span><span class="s2">is not None</span><span class="s3">:</span>
+                        <span class="s1">dpi </span><span class="s3">= (</span><span class="s1">hres</span><span class="s3">, </span><span class="s1">vres</span><span class="s3">)</span>
+                    <span class="s2">break</span>
+
+    <span class="s2">if </span><span class="s1">size </span><span class="s2">is None or </span><span class="s1">mode </span><span class="s2">is None</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;Malformed JP2 header&quot;</span>
+        <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+    <span class="s2">return </span><span class="s1">size</span><span class="s3">, </span><span class="s1">mode</span><span class="s3">, </span><span class="s1">mimetype</span><span class="s3">, </span><span class="s1">dpi</span><span class="s3">, </span><span class="s1">palette</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for JPEG2000 images.</span>
+
+
+<span class="s2">class </span><span class="s1">Jpeg2KImageFile</span><span class="s3">(</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">ImageFile</span><span class="s3">):</span>
+    <span class="s1">format </span><span class="s3">= </span><span class="s6">&quot;JPEG2000&quot;</span>
+    <span class="s1">format_description </span><span class="s3">= </span><span class="s6">&quot;JPEG 2000 (ISO 15444)&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">sig </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">4</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">sig </span><span class="s3">== </span><span class="s7">b&quot;</span><span class="s2">\xff\x4f\xff\x51</span><span class="s7">&quot;</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">codec </span><span class="s3">= </span><span class="s6">&quot;j2k&quot;</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_size</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s1">_parse_codestream</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">)</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_parse_comment</span><span class="s3">()</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">sig </span><span class="s3">= </span><span class="s1">sig </span><span class="s3">+ </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">8</span><span class="s3">)</span>
+
+            <span class="s2">if </span><span class="s1">sig </span><span class="s3">== </span><span class="s7">b&quot;</span><span class="s2">\x00\x00\x00\x0c</span><span class="s7">jP  </span><span class="s2">\x0d\x0a\x87\x0a</span><span class="s7">&quot;</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">codec </span><span class="s3">= </span><span class="s6">&quot;jp2&quot;</span>
+                <span class="s1">header </span><span class="s3">= </span><span class="s1">_parse_jp2_header</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">)</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">_size</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_mode</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">custom_mimetype</span><span class="s3">, </span><span class="s1">dpi</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">palette </span><span class="s3">= </span><span class="s1">header</span>
+                <span class="s2">if </span><span class="s1">dpi </span><span class="s2">is not None</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s6">&quot;dpi&quot;</span><span class="s3">] = </span><span class="s1">dpi</span>
+                <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">12</span><span class="s3">).</span><span class="s1">endswith</span><span class="s3">(</span><span class="s7">b&quot;jp2c</span><span class="s2">\xff\x4f\xff\x51</span><span class="s7">&quot;</span><span class="s3">):</span>
+                    <span class="s1">hdr </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">2</span><span class="s3">)</span>
+                    <span class="s1">length </span><span class="s3">= </span><span class="s1">_binary</span><span class="s3">.</span><span class="s1">i16be</span><span class="s3">(</span><span class="s1">hdr</span><span class="s3">)</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">length </span><span class="s3">- </span><span class="s5">2</span><span class="s3">, </span><span class="s1">os</span><span class="s3">.</span><span class="s1">SEEK_CUR</span><span class="s3">)</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">_parse_comment</span><span class="s3">()</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;not a JPEG 2000 file&quot;</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_reduce </span><span class="s3">= </span><span class="s5">0</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">layers </span><span class="s3">= </span><span class="s5">0</span>
+
+        <span class="s1">fd </span><span class="s3">= -</span><span class="s5">1</span>
+        <span class="s1">length </span><span class="s3">= -</span><span class="s5">1</span>
+
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">fd </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">fileno</span><span class="s3">()</span>
+            <span class="s1">length </span><span class="s3">= </span><span class="s1">os</span><span class="s3">.</span><span class="s1">fstat</span><span class="s3">(</span><span class="s1">fd</span><span class="s3">).</span><span class="s1">st_size</span>
+        <span class="s2">except </span><span class="s1">Exception</span><span class="s3">:</span>
+            <span class="s1">fd </span><span class="s3">= -</span><span class="s5">1</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">pos </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">()</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s5">0</span><span class="s3">, </span><span class="s1">io</span><span class="s3">.</span><span class="s1">SEEK_END</span><span class="s3">)</span>
+                <span class="s1">length </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">()</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">pos</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">Exception</span><span class="s3">:</span>
+                <span class="s1">length </span><span class="s3">= -</span><span class="s5">1</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= [</span>
+            <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span>
+                <span class="s6">&quot;jpeg2k&quot;</span><span class="s3">,</span>
+                <span class="s3">(</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">,</span>
+                <span class="s5">0</span><span class="s3">,</span>
+                <span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">codec</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_reduce</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">layers</span><span class="s3">, </span><span class="s1">fd</span><span class="s3">, </span><span class="s1">length</span><span class="s3">),</span>
+            <span class="s3">)</span>
+        <span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">_parse_comment</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">while True</span><span class="s3">:</span>
+            <span class="s1">marker </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">2</span><span class="s3">)</span>
+            <span class="s2">if not </span><span class="s1">marker</span><span class="s3">:</span>
+                <span class="s2">break</span>
+            <span class="s1">typ </span><span class="s3">= </span><span class="s1">marker</span><span class="s3">[</span><span class="s5">1</span><span class="s3">]</span>
+            <span class="s2">if </span><span class="s1">typ </span><span class="s2">in </span><span class="s3">(</span><span class="s5">0x90</span><span class="s3">, </span><span class="s5">0xD9</span><span class="s3">):</span>
+                <span class="s0"># Start of tile or end of codestream</span>
+                <span class="s2">break</span>
+            <span class="s1">hdr </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">2</span><span class="s3">)</span>
+            <span class="s1">length </span><span class="s3">= </span><span class="s1">_binary</span><span class="s3">.</span><span class="s1">i16be</span><span class="s3">(</span><span class="s1">hdr</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">typ </span><span class="s3">== </span><span class="s5">0x64</span><span class="s3">:</span>
+                <span class="s0"># Comment</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s6">&quot;comment&quot;</span><span class="s3">] = </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s1">length </span><span class="s3">- </span><span class="s5">2</span><span class="s3">)[</span><span class="s5">2</span><span class="s3">:]</span>
+                <span class="s2">break</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">length </span><span class="s3">- </span><span class="s5">2</span><span class="s3">, </span><span class="s1">os</span><span class="s3">.</span><span class="s1">SEEK_CUR</span><span class="s3">)</span>
+
+    <span class="s3">@</span><span class="s1">property  </span><span class="s0"># type: ignore[override]</span>
+    <span class="s2">def </span><span class="s1">reduce</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">,</span>
+    <span class="s3">) </span><span class="s1">-&gt; </span><span class="s3">(</span>
+        <span class="s1">Callable</span><span class="s3">[[</span><span class="s1">int </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">], </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">] | </span><span class="s2">None</span><span class="s3">], </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">]</span>
+        <span class="s3">| </span><span class="s1">int</span>
+    <span class="s3">):</span>
+        <span class="s0"># https://github.com/python-pillow/Pillow/issues/4343 found that the</span>
+        <span class="s0"># new Image 'reduce' method was shadowed by this plugin's 'reduce'</span>
+        <span class="s0"># property. This attempts to allow for both scenarios</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_reduce </span><span class="s2">or </span><span class="s1">super</span><span class="s3">().</span><span class="s1">reduce</span>
+
+    <span class="s3">@</span><span class="s1">reduce</span><span class="s3">.</span><span class="s1">setter</span>
+    <span class="s2">def </span><span class="s1">reduce</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">value</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_reduce </span><span class="s3">= </span><span class="s1">value</span>
+
+    <span class="s2">def </span><span class="s1">load</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">.</span><span class="s1">PixelAccess </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s2">and </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_reduce</span><span class="s3">:</span>
+            <span class="s1">power </span><span class="s3">= </span><span class="s5">1 </span><span class="s3">&lt;&lt; </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_reduce</span>
+            <span class="s1">adjust </span><span class="s3">= </span><span class="s1">power </span><span class="s3">&gt;&gt; </span><span class="s5">1</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= (</span>
+                <span class="s1">int</span><span class="s3">((</span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] + </span><span class="s1">adjust</span><span class="s3">) / </span><span class="s1">power</span><span class="s3">),</span>
+                <span class="s1">int</span><span class="s3">((</span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">1</span><span class="s3">] + </span><span class="s1">adjust</span><span class="s3">) / </span><span class="s1">power</span><span class="s3">),</span>
+            <span class="s3">)</span>
+
+            <span class="s0"># Update the reduce and layers settings</span>
+            <span class="s1">t </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">tile</span><span class="s3">[</span><span class="s5">0</span><span class="s3">]</span>
+            <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">t</span><span class="s3">[</span><span class="s5">3</span><span class="s3">], </span><span class="s1">tuple</span><span class="s3">)</span>
+            <span class="s1">t3 </span><span class="s3">= (</span><span class="s1">t</span><span class="s3">[</span><span class="s5">3</span><span class="s3">][</span><span class="s5">0</span><span class="s3">], </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_reduce</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">layers</span><span class="s3">, </span><span class="s1">t</span><span class="s3">[</span><span class="s5">3</span><span class="s3">][</span><span class="s5">3</span><span class="s3">], </span><span class="s1">t</span><span class="s3">[</span><span class="s5">3</span><span class="s3">][</span><span class="s5">4</span><span class="s3">])</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= [</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s1">t</span><span class="s3">[</span><span class="s5">0</span><span class="s3">], (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">t</span><span class="s3">[</span><span class="s5">2</span><span class="s3">], </span><span class="s1">t3</span><span class="s3">)]</span>
+
+        <span class="s2">return </span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">load</span><span class="s3">(</span><span class="s1">self</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_accept</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">: </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s2">return </span><span class="s3">(</span>
+        <span class="s1">prefix</span><span class="s3">[:</span><span class="s5">4</span><span class="s3">] == </span><span class="s7">b&quot;</span><span class="s2">\xff\x4f\xff\x51</span><span class="s7">&quot;</span>
+        <span class="s2">or </span><span class="s1">prefix</span><span class="s3">[:</span><span class="s5">12</span><span class="s3">] == </span><span class="s7">b&quot;</span><span class="s2">\x00\x00\x00\x0c</span><span class="s7">jP  </span><span class="s2">\x0d\x0a\x87\x0a</span><span class="s7">&quot;</span>
+    <span class="s3">)</span>
+
+
+<span class="s0"># ------------------------------------------------------------</span>
+<span class="s0"># Save support</span>
+
+
+<span class="s2">def </span><span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s0"># Get the keyword arguments</span>
+    <span class="s1">info </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span>
+
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">filename</span><span class="s3">, </span><span class="s1">str</span><span class="s3">):</span>
+        <span class="s1">filename </span><span class="s3">= </span><span class="s1">filename</span><span class="s3">.</span><span class="s1">encode</span><span class="s3">()</span>
+    <span class="s2">if </span><span class="s1">filename</span><span class="s3">.</span><span class="s1">endswith</span><span class="s3">(</span><span class="s7">b&quot;.j2k&quot;</span><span class="s3">) </span><span class="s2">or </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;no_jp2&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s3">):</span>
+        <span class="s1">kind </span><span class="s3">= </span><span class="s6">&quot;j2k&quot;</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">kind </span><span class="s3">= </span><span class="s6">&quot;jp2&quot;</span>
+
+    <span class="s1">offset </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;offset&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)</span>
+    <span class="s1">tile_offset </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;tile_offset&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)</span>
+    <span class="s1">tile_size </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;tile_size&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)</span>
+    <span class="s1">quality_mode </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;quality_mode&quot;</span><span class="s3">, </span><span class="s6">&quot;rates&quot;</span><span class="s3">)</span>
+    <span class="s1">quality_layers </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;quality_layers&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">quality_layers </span><span class="s2">is not None and not </span><span class="s3">(</span>
+        <span class="s1">isinstance</span><span class="s3">(</span><span class="s1">quality_layers</span><span class="s3">, (</span><span class="s1">list</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">))</span>
+        <span class="s2">and </span><span class="s1">all</span><span class="s3">(</span>
+            <span class="s1">isinstance</span><span class="s3">(</span><span class="s1">quality_layer</span><span class="s3">, (</span><span class="s1">int</span><span class="s3">, </span><span class="s1">float</span><span class="s3">)) </span><span class="s2">for </span><span class="s1">quality_layer </span><span class="s2">in </span><span class="s1">quality_layers</span>
+        <span class="s3">)</span>
+    <span class="s3">):</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;quality_layers must be a sequence of numbers&quot;</span>
+        <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+    <span class="s1">num_resolutions </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;num_resolutions&quot;</span><span class="s3">, </span><span class="s5">0</span><span class="s3">)</span>
+    <span class="s1">cblk_size </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;codeblock_size&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)</span>
+    <span class="s1">precinct_size </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;precinct_size&quot;</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)</span>
+    <span class="s1">irreversible </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;irreversible&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+    <span class="s1">progression </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;progression&quot;</span><span class="s3">, </span><span class="s6">&quot;LRCP&quot;</span><span class="s3">)</span>
+    <span class="s1">cinema_mode </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;cinema_mode&quot;</span><span class="s3">, </span><span class="s6">&quot;no&quot;</span><span class="s3">)</span>
+    <span class="s1">mct </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;mct&quot;</span><span class="s3">, </span><span class="s5">0</span><span class="s3">)</span>
+    <span class="s1">signed </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;signed&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+    <span class="s1">comment </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;comment&quot;</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">comment</span><span class="s3">, </span><span class="s1">str</span><span class="s3">):</span>
+        <span class="s1">comment </span><span class="s3">= </span><span class="s1">comment</span><span class="s3">.</span><span class="s1">encode</span><span class="s3">()</span>
+    <span class="s1">plt </span><span class="s3">= </span><span class="s1">info</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;plt&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+
+    <span class="s1">fd </span><span class="s3">= -</span><span class="s5">1</span>
+    <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">fp</span><span class="s3">, </span><span class="s6">&quot;fileno&quot;</span><span class="s3">):</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">fd </span><span class="s3">= </span><span class="s1">fp</span><span class="s3">.</span><span class="s1">fileno</span><span class="s3">()</span>
+        <span class="s2">except </span><span class="s1">Exception</span><span class="s3">:</span>
+            <span class="s1">fd </span><span class="s3">= -</span><span class="s5">1</span>
+
+    <span class="s1">im</span><span class="s3">.</span><span class="s1">encoderconfig </span><span class="s3">= (</span>
+        <span class="s1">offset</span><span class="s3">,</span>
+        <span class="s1">tile_offset</span><span class="s3">,</span>
+        <span class="s1">tile_size</span><span class="s3">,</span>
+        <span class="s1">quality_mode</span><span class="s3">,</span>
+        <span class="s1">quality_layers</span><span class="s3">,</span>
+        <span class="s1">num_resolutions</span><span class="s3">,</span>
+        <span class="s1">cblk_size</span><span class="s3">,</span>
+        <span class="s1">precinct_size</span><span class="s3">,</span>
+        <span class="s1">irreversible</span><span class="s3">,</span>
+        <span class="s1">progression</span><span class="s3">,</span>
+        <span class="s1">cinema_mode</span><span class="s3">,</span>
+        <span class="s1">mct</span><span class="s3">,</span>
+        <span class="s1">signed</span><span class="s3">,</span>
+        <span class="s1">fd</span><span class="s3">,</span>
+        <span class="s1">comment</span><span class="s3">,</span>
+        <span class="s1">plt</span><span class="s3">,</span>
+    <span class="s3">)</span>
+
+    <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">, [</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s6">&quot;jpeg2k&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s1">kind</span><span class="s3">)])</span>
+
+
+<span class="s0"># ------------------------------------------------------------</span>
+<span class="s0"># Registry stuff</span>
+
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_open</span><span class="s3">(</span><span class="s1">Jpeg2KImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">Jpeg2KImageFile</span><span class="s3">, </span><span class="s1">_accept</span><span class="s3">)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_save</span><span class="s3">(</span><span class="s1">Jpeg2KImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">_save</span><span class="s3">)</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_extensions</span><span class="s3">(</span>
+    <span class="s1">Jpeg2KImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, [</span><span class="s6">&quot;.jp2&quot;</span><span class="s3">, </span><span class="s6">&quot;.j2k&quot;</span><span class="s3">, </span><span class="s6">&quot;.jpc&quot;</span><span class="s3">, </span><span class="s6">&quot;.jpf&quot;</span><span class="s3">, </span><span class="s6">&quot;.jpx&quot;</span><span class="s3">, </span><span class="s6">&quot;.j2c&quot;</span><span class="s3">]</span>
+<span class="s3">)</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_mime</span><span class="s3">(</span><span class="s1">Jpeg2KImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s6">&quot;image/jp2&quot;</span><span class="s3">)</span>
+</pre>
+</body>
+</html>

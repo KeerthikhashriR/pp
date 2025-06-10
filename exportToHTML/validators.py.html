@@ -1,0 +1,791 @@
+<html>
+<head>
+<title>validators.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+.s5 { color: #6aab73;}
+.s6 { color: #5f826b; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+validators.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">math</span>
+<span class="s0">import </span><span class="s1">re</span>
+<span class="s0">from </span><span class="s1">collections </span><span class="s0">import </span><span class="s1">OrderedDict</span><span class="s2">, </span><span class="s1">deque</span>
+<span class="s0">from </span><span class="s1">collections</span><span class="s2">.</span><span class="s1">abc </span><span class="s0">import </span><span class="s1">Hashable </span><span class="s0">as </span><span class="s1">CollectionsHashable</span>
+<span class="s0">from </span><span class="s1">datetime </span><span class="s0">import </span><span class="s1">date</span><span class="s2">, </span><span class="s1">datetime</span><span class="s2">, </span><span class="s1">time</span><span class="s2">, </span><span class="s1">timedelta</span>
+<span class="s0">from </span><span class="s1">decimal </span><span class="s0">import </span><span class="s1">Decimal</span><span class="s2">, </span><span class="s1">DecimalException</span>
+<span class="s0">from </span><span class="s1">enum </span><span class="s0">import </span><span class="s1">Enum</span><span class="s2">, </span><span class="s1">IntEnum</span>
+<span class="s0">from </span><span class="s1">ipaddress </span><span class="s0">import </span><span class="s1">IPv4Address</span><span class="s2">, </span><span class="s1">IPv4Interface</span><span class="s2">, </span><span class="s1">IPv4Network</span><span class="s2">, </span><span class="s1">IPv6Address</span><span class="s2">, </span><span class="s1">IPv6Interface</span><span class="s2">, </span><span class="s1">IPv6Network</span>
+<span class="s0">from </span><span class="s1">pathlib </span><span class="s0">import </span><span class="s1">Path</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s2">(</span>
+    <span class="s1">TYPE_CHECKING</span><span class="s2">,</span>
+    <span class="s1">Any</span><span class="s2">,</span>
+    <span class="s1">Callable</span><span class="s2">,</span>
+    <span class="s1">Deque</span><span class="s2">,</span>
+    <span class="s1">Dict</span><span class="s2">,</span>
+    <span class="s1">ForwardRef</span><span class="s2">,</span>
+    <span class="s1">FrozenSet</span><span class="s2">,</span>
+    <span class="s1">Generator</span><span class="s2">,</span>
+    <span class="s1">Hashable</span><span class="s2">,</span>
+    <span class="s1">List</span><span class="s2">,</span>
+    <span class="s1">NamedTuple</span><span class="s2">,</span>
+    <span class="s1">Pattern</span><span class="s2">,</span>
+    <span class="s1">Set</span><span class="s2">,</span>
+    <span class="s1">Tuple</span><span class="s2">,</span>
+    <span class="s1">Type</span><span class="s2">,</span>
+    <span class="s1">TypeVar</span><span class="s2">,</span>
+    <span class="s1">Union</span><span class="s2">,</span>
+<span class="s2">)</span>
+<span class="s0">from </span><span class="s1">uuid </span><span class="s0">import </span><span class="s1">UUID</span>
+<span class="s0">from </span><span class="s1">warnings </span><span class="s0">import </span><span class="s1">warn</span>
+
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1 </span><span class="s0">import </span><span class="s1">errors</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">datetime_parse </span><span class="s0">import </span><span class="s1">parse_date</span><span class="s2">, </span><span class="s1">parse_datetime</span><span class="s2">, </span><span class="s1">parse_duration</span><span class="s2">, </span><span class="s1">parse_time</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">typing </span><span class="s0">import </span><span class="s2">(</span>
+    <span class="s1">AnyCallable</span><span class="s2">,</span>
+    <span class="s1">all_literal_values</span><span class="s2">,</span>
+    <span class="s1">display_as_type</span><span class="s2">,</span>
+    <span class="s1">get_class</span><span class="s2">,</span>
+    <span class="s1">is_callable_type</span><span class="s2">,</span>
+    <span class="s1">is_literal_type</span><span class="s2">,</span>
+    <span class="s1">is_namedtuple</span><span class="s2">,</span>
+    <span class="s1">is_none_type</span><span class="s2">,</span>
+    <span class="s1">is_typeddict</span><span class="s2">,</span>
+<span class="s2">)</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">utils </span><span class="s0">import </span><span class="s1">almost_equal_floats</span><span class="s2">, </span><span class="s1">lenient_issubclass</span><span class="s2">, </span><span class="s1">sequence_like</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+    <span class="s0">from </span><span class="s1">typing_extensions </span><span class="s0">import </span><span class="s1">Literal</span><span class="s2">, </span><span class="s1">TypedDict</span>
+
+    <span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">config </span><span class="s0">import </span><span class="s1">BaseConfig</span>
+    <span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">fields </span><span class="s0">import </span><span class="s1">ModelField</span>
+    <span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">ConstrainedDecimal</span><span class="s2">, </span><span class="s1">ConstrainedFloat</span><span class="s2">, </span><span class="s1">ConstrainedInt</span>
+
+    <span class="s1">ConstrainedNumber </span><span class="s2">= </span><span class="s1">Union</span><span class="s2">[</span><span class="s1">ConstrainedDecimal</span><span class="s2">, </span><span class="s1">ConstrainedFloat</span><span class="s2">, </span><span class="s1">ConstrainedInt</span><span class="s2">]</span>
+    <span class="s1">AnyOrderedDict </span><span class="s2">= </span><span class="s1">OrderedDict</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]</span>
+    <span class="s1">Number </span><span class="s2">= </span><span class="s1">Union</span><span class="s2">[</span><span class="s1">int</span><span class="s2">, </span><span class="s1">float</span><span class="s2">, </span><span class="s1">Decimal</span><span class="s2">]</span>
+    <span class="s1">StrBytes </span><span class="s2">= </span><span class="s1">Union</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">]</span>
+
+
+<span class="s0">def </span><span class="s1">str_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Union</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">Enum</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">v</span><span class="s2">.</span><span class="s1">value</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">v</span>
+    <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, (</span><span class="s1">float</span><span class="s2">, </span><span class="s1">int</span><span class="s2">, </span><span class="s1">Decimal</span><span class="s2">)):</span>
+        <span class="s3"># is there anything else we want to add here? If you think so, create an issue.</span>
+        <span class="s0">return </span><span class="s1">str</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, (</span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">bytearray</span><span class="s2">)):</span>
+        <span class="s0">return </span><span class="s1">v</span><span class="s2">.</span><span class="s1">decode</span><span class="s2">()</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">StrError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">strict_str_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Union</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">str</span><span class="s2">) </span><span class="s0">and not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">Enum</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+    <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">StrError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">bytes_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Union</span><span class="s2">[</span><span class="s1">bytes</span><span class="s2">]:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+    <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">bytearray</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">bytes</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span><span class="s2">.</span><span class="s1">encode</span><span class="s2">()</span>
+    <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, (</span><span class="s1">float</span><span class="s2">, </span><span class="s1">int</span><span class="s2">, </span><span class="s1">Decimal</span><span class="s2">)):</span>
+        <span class="s0">return </span><span class="s1">str</span><span class="s2">(</span><span class="s1">v</span><span class="s2">).</span><span class="s1">encode</span><span class="s2">()</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">BytesError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">strict_bytes_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Union</span><span class="s2">[</span><span class="s1">bytes</span><span class="s2">]:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+    <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">bytearray</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">bytes</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">BytesError</span><span class="s2">()</span>
+
+
+<span class="s1">BOOL_FALSE </span><span class="s2">= {</span><span class="s4">0</span><span class="s2">, </span><span class="s5">'0'</span><span class="s2">, </span><span class="s5">'off'</span><span class="s2">, </span><span class="s5">'f'</span><span class="s2">, </span><span class="s5">'false'</span><span class="s2">, </span><span class="s5">'n'</span><span class="s2">, </span><span class="s5">'no'</span><span class="s2">}</span>
+<span class="s1">BOOL_TRUE </span><span class="s2">= {</span><span class="s4">1</span><span class="s2">, </span><span class="s5">'1'</span><span class="s2">, </span><span class="s5">'on'</span><span class="s2">, </span><span class="s5">'t'</span><span class="s2">, </span><span class="s5">'true'</span><span class="s2">, </span><span class="s5">'y'</span><span class="s2">, </span><span class="s5">'yes'</span><span class="s2">}</span>
+
+
+<span class="s0">def </span><span class="s1">bool_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">v </span><span class="s0">is True or </span><span class="s1">v </span><span class="s0">is False</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">v</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">):</span>
+        <span class="s1">v </span><span class="s2">= </span><span class="s1">v</span><span class="s2">.</span><span class="s1">decode</span><span class="s2">()</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+        <span class="s1">v </span><span class="s2">= </span><span class="s1">v</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">()</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">v </span><span class="s0">in </span><span class="s1">BOOL_TRUE</span><span class="s2">:</span>
+            <span class="s0">return True</span>
+        <span class="s0">if </span><span class="s1">v </span><span class="s0">in </span><span class="s1">BOOL_FALSE</span><span class="s2">:</span>
+            <span class="s0">return False</span>
+    <span class="s0">except </span><span class="s1">TypeError</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">BoolError</span><span class="s2">()</span>
+    <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">BoolError</span><span class="s2">()</span>
+
+
+<span class="s3"># matches the default limit cpython, see https://github.com/python/cpython/pull/96500</span>
+<span class="s1">max_str_int </span><span class="s2">= </span><span class="s4">4_300</span>
+
+
+<span class="s0">def </span><span class="s1">int_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; int</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">int</span><span class="s2">) </span><span class="s0">and not </span><span class="s2">(</span><span class="s1">v </span><span class="s0">is True or </span><span class="s1">v </span><span class="s0">is False</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+
+    <span class="s3"># see https://github.com/pydantic/pydantic/issues/1477 and in turn, https://github.com/python/cpython/issues/95778</span>
+    <span class="s3"># this check should be unnecessary once patch releases are out for 3.7, 3.8, 3.9 and 3.10</span>
+    <span class="s3"># but better to check here until then.</span>
+    <span class="s3"># NOTICE: this does not fully protect user from the DOS risk since the standard library JSON implementation</span>
+    <span class="s3"># (and other std lib modules like xml) use `int()` and are likely called before this, the best workaround is to</span>
+    <span class="s3"># 1. update to the latest patch release of python once released, 2. use a different JSON library like ujson</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, (</span><span class="s1">str</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">bytearray</span><span class="s2">)) </span><span class="s0">and </span><span class="s1">len</span><span class="s2">(</span><span class="s1">v</span><span class="s2">) &gt; </span><span class="s1">max_str_int</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">IntegerError</span><span class="s2">()</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">int</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s2">(</span><span class="s1">TypeError</span><span class="s2">, </span><span class="s1">ValueError</span><span class="s2">, </span><span class="s1">OverflowError</span><span class="s2">):</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">IntegerError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">strict_int_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; int</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">int</span><span class="s2">) </span><span class="s0">and not </span><span class="s2">(</span><span class="s1">v </span><span class="s0">is True or </span><span class="s1">v </span><span class="s0">is False</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+    <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">IntegerError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">float_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; float</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">float</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">float</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s2">(</span><span class="s1">TypeError</span><span class="s2">, </span><span class="s1">ValueError</span><span class="s2">):</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">FloatError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">strict_float_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; float</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">float</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+    <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">FloatError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">float_finite_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s5">'Number'</span><span class="s2">, </span><span class="s1">field</span><span class="s2">: </span><span class="s5">'ModelField'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">: </span><span class="s5">'BaseConfig'</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s5">'Number'</span><span class="s2">:</span>
+    <span class="s1">allow_inf_nan </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">field</span><span class="s2">.</span><span class="s1">type_</span><span class="s2">, </span><span class="s5">'allow_inf_nan'</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">allow_inf_nan </span><span class="s0">is None</span><span class="s2">:</span>
+        <span class="s1">allow_inf_nan </span><span class="s2">= </span><span class="s1">config</span><span class="s2">.</span><span class="s1">allow_inf_nan</span>
+
+    <span class="s0">if </span><span class="s1">allow_inf_nan </span><span class="s0">is False and </span><span class="s2">(</span><span class="s1">math</span><span class="s2">.</span><span class="s1">isnan</span><span class="s2">(</span><span class="s1">v</span><span class="s2">) </span><span class="s0">or </span><span class="s1">math</span><span class="s2">.</span><span class="s1">isinf</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)):</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">NumberNotFiniteError</span><span class="s2">()</span>
+    <span class="s0">return </span><span class="s1">v</span>
+
+
+<span class="s0">def </span><span class="s1">number_multiple_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s5">'Number'</span><span class="s2">, </span><span class="s1">field</span><span class="s2">: </span><span class="s5">'ModelField'</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s5">'Number'</span><span class="s2">:</span>
+    <span class="s1">field_type</span><span class="s2">: </span><span class="s1">ConstrainedNumber </span><span class="s2">= </span><span class="s1">field</span><span class="s2">.</span><span class="s1">type_</span>
+    <span class="s0">if </span><span class="s1">field_type</span><span class="s2">.</span><span class="s1">multiple_of </span><span class="s0">is not None</span><span class="s2">:</span>
+        <span class="s1">mod </span><span class="s2">= </span><span class="s1">float</span><span class="s2">(</span><span class="s1">v</span><span class="s2">) / </span><span class="s1">float</span><span class="s2">(</span><span class="s1">field_type</span><span class="s2">.</span><span class="s1">multiple_of</span><span class="s2">) % </span><span class="s4">1</span>
+        <span class="s0">if not </span><span class="s1">almost_equal_floats</span><span class="s2">(</span><span class="s1">mod</span><span class="s2">, </span><span class="s4">0.0</span><span class="s2">) </span><span class="s0">and not </span><span class="s1">almost_equal_floats</span><span class="s2">(</span><span class="s1">mod</span><span class="s2">, </span><span class="s4">1.0</span><span class="s2">):</span>
+            <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">NumberNotMultipleError</span><span class="s2">(</span><span class="s1">multiple_of</span><span class="s2">=</span><span class="s1">field_type</span><span class="s2">.</span><span class="s1">multiple_of</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">v</span>
+
+
+<span class="s0">def </span><span class="s1">number_size_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s5">'Number'</span><span class="s2">, </span><span class="s1">field</span><span class="s2">: </span><span class="s5">'ModelField'</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s5">'Number'</span><span class="s2">:</span>
+    <span class="s1">field_type</span><span class="s2">: </span><span class="s1">ConstrainedNumber </span><span class="s2">= </span><span class="s1">field</span><span class="s2">.</span><span class="s1">type_</span>
+    <span class="s0">if </span><span class="s1">field_type</span><span class="s2">.</span><span class="s1">gt </span><span class="s0">is not None and not </span><span class="s1">v </span><span class="s2">&gt; </span><span class="s1">field_type</span><span class="s2">.</span><span class="s1">gt</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">NumberNotGtError</span><span class="s2">(</span><span class="s1">limit_value</span><span class="s2">=</span><span class="s1">field_type</span><span class="s2">.</span><span class="s1">gt</span><span class="s2">)</span>
+    <span class="s0">elif </span><span class="s1">field_type</span><span class="s2">.</span><span class="s1">ge </span><span class="s0">is not None and not </span><span class="s1">v </span><span class="s2">&gt;= </span><span class="s1">field_type</span><span class="s2">.</span><span class="s1">ge</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">NumberNotGeError</span><span class="s2">(</span><span class="s1">limit_value</span><span class="s2">=</span><span class="s1">field_type</span><span class="s2">.</span><span class="s1">ge</span><span class="s2">)</span>
+
+    <span class="s0">if </span><span class="s1">field_type</span><span class="s2">.</span><span class="s1">lt </span><span class="s0">is not None and not </span><span class="s1">v </span><span class="s2">&lt; </span><span class="s1">field_type</span><span class="s2">.</span><span class="s1">lt</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">NumberNotLtError</span><span class="s2">(</span><span class="s1">limit_value</span><span class="s2">=</span><span class="s1">field_type</span><span class="s2">.</span><span class="s1">lt</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">field_type</span><span class="s2">.</span><span class="s1">le </span><span class="s0">is not None and not </span><span class="s1">v </span><span class="s2">&lt;= </span><span class="s1">field_type</span><span class="s2">.</span><span class="s1">le</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">NumberNotLeError</span><span class="s2">(</span><span class="s1">limit_value</span><span class="s2">=</span><span class="s1">field_type</span><span class="s2">.</span><span class="s1">le</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">v</span>
+
+
+<span class="s0">def </span><span class="s1">constant_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s5">'Any'</span><span class="s2">, </span><span class="s1">field</span><span class="s2">: </span><span class="s5">'ModelField'</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s5">'Any'</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot;Validate ``const`` fields. 
+ 
+    The value provided for a ``const`` field must be equal to the default value 
+    of the field. This is to support the keyword of the same name in JSON 
+    Schema. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">v </span><span class="s2">!= </span><span class="s1">field</span><span class="s2">.</span><span class="s1">default</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">WrongConstantError</span><span class="s2">(</span><span class="s1">given</span><span class="s2">=</span><span class="s1">v</span><span class="s2">, </span><span class="s1">permitted</span><span class="s2">=[</span><span class="s1">field</span><span class="s2">.</span><span class="s1">default</span><span class="s2">])</span>
+
+    <span class="s0">return </span><span class="s1">v</span>
+
+
+<span class="s0">def </span><span class="s1">anystr_length_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s5">'StrBytes'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">: </span><span class="s5">'BaseConfig'</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s5">'StrBytes'</span><span class="s2">:</span>
+    <span class="s1">v_len </span><span class="s2">= </span><span class="s1">len</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+
+    <span class="s1">min_length </span><span class="s2">= </span><span class="s1">config</span><span class="s2">.</span><span class="s1">min_anystr_length</span>
+    <span class="s0">if </span><span class="s1">v_len </span><span class="s2">&lt; </span><span class="s1">min_length</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">AnyStrMinLengthError</span><span class="s2">(</span><span class="s1">limit_value</span><span class="s2">=</span><span class="s1">min_length</span><span class="s2">)</span>
+
+    <span class="s1">max_length </span><span class="s2">= </span><span class="s1">config</span><span class="s2">.</span><span class="s1">max_anystr_length</span>
+    <span class="s0">if </span><span class="s1">max_length </span><span class="s0">is not None and </span><span class="s1">v_len </span><span class="s2">&gt; </span><span class="s1">max_length</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">AnyStrMaxLengthError</span><span class="s2">(</span><span class="s1">limit_value</span><span class="s2">=</span><span class="s1">max_length</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">v</span>
+
+
+<span class="s0">def </span><span class="s1">anystr_strip_whitespace</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s5">'StrBytes'</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s5">'StrBytes'</span><span class="s2">:</span>
+    <span class="s0">return </span><span class="s1">v</span><span class="s2">.</span><span class="s1">strip</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">anystr_upper</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s5">'StrBytes'</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s5">'StrBytes'</span><span class="s2">:</span>
+    <span class="s0">return </span><span class="s1">v</span><span class="s2">.</span><span class="s1">upper</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">anystr_lower</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s5">'StrBytes'</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s5">'StrBytes'</span><span class="s2">:</span>
+    <span class="s0">return </span><span class="s1">v</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">ordered_dict_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s5">'AnyOrderedDict'</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">OrderedDict</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">OrderedDict</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s2">(</span><span class="s1">TypeError</span><span class="s2">, </span><span class="s1">ValueError</span><span class="s2">):</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">DictError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">dict_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Dict</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">dict</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">dict</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s2">(</span><span class="s1">TypeError</span><span class="s2">, </span><span class="s1">ValueError</span><span class="s2">):</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">DictError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">list_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; List</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">]:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">list</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+    <span class="s0">elif </span><span class="s1">sequence_like</span><span class="s2">(</span><span class="s1">v</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">list</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">ListError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">tuple_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...]:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">tuple</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+    <span class="s0">elif </span><span class="s1">sequence_like</span><span class="s2">(</span><span class="s1">v</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">tuple</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">TupleError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">set_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Set</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">]:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">set</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+    <span class="s0">elif </span><span class="s1">sequence_like</span><span class="s2">(</span><span class="s1">v</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">set</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">SetError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">frozenset_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; FrozenSet</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">]:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">frozenset</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+    <span class="s0">elif </span><span class="s1">sequence_like</span><span class="s2">(</span><span class="s1">v</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">frozenset</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">FrozenSetError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">deque_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Deque</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">]:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">deque</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+    <span class="s0">elif </span><span class="s1">sequence_like</span><span class="s2">(</span><span class="s1">v</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">deque</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">DequeError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">enum_member_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">field</span><span class="s2">: </span><span class="s5">'ModelField'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">: </span><span class="s5">'BaseConfig'</span><span class="s2">) </span><span class="s1">-&gt; Enum</span><span class="s2">:</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s1">enum_v </span><span class="s2">= </span><span class="s1">field</span><span class="s2">.</span><span class="s1">type_</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+        <span class="s3"># field.type_ should be an enum, so will be iterable</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">EnumMemberError</span><span class="s2">(</span><span class="s1">enum_values</span><span class="s2">=</span><span class="s1">list</span><span class="s2">(</span><span class="s1">field</span><span class="s2">.</span><span class="s1">type_</span><span class="s2">))</span>
+    <span class="s0">return </span><span class="s1">enum_v</span><span class="s2">.</span><span class="s1">value </span><span class="s0">if </span><span class="s1">config</span><span class="s2">.</span><span class="s1">use_enum_values </span><span class="s0">else </span><span class="s1">enum_v</span>
+
+
+<span class="s0">def </span><span class="s1">uuid_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">field</span><span class="s2">: </span><span class="s5">'ModelField'</span><span class="s2">) </span><span class="s1">-&gt; UUID</span><span class="s2">:</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+            <span class="s1">v </span><span class="s2">= </span><span class="s1">UUID</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+        <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, (</span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">bytearray</span><span class="s2">)):</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">v </span><span class="s2">= </span><span class="s1">UUID</span><span class="s2">(</span><span class="s1">v</span><span class="s2">.</span><span class="s1">decode</span><span class="s2">())</span>
+            <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+                <span class="s3"># 16 bytes in big-endian order as the bytes argument fail</span>
+                <span class="s3"># the above check</span>
+                <span class="s1">v </span><span class="s2">= </span><span class="s1">UUID</span><span class="s2">(</span><span class="s1">bytes</span><span class="s2">=</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">UUIDError</span><span class="s2">()</span>
+
+    <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">UUID</span><span class="s2">):</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">UUIDError</span><span class="s2">()</span>
+
+    <span class="s1">required_version </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">field</span><span class="s2">.</span><span class="s1">type_</span><span class="s2">, </span><span class="s5">'_required_version'</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">required_version </span><span class="s0">and </span><span class="s1">v</span><span class="s2">.</span><span class="s1">version </span><span class="s2">!= </span><span class="s1">required_version</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">UUIDVersionError</span><span class="s2">(</span><span class="s1">required_version</span><span class="s2">=</span><span class="s1">required_version</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">v</span>
+
+
+<span class="s0">def </span><span class="s1">decimal_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Decimal</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">Decimal</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+    <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, (</span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">bytearray</span><span class="s2">)):</span>
+        <span class="s1">v </span><span class="s2">= </span><span class="s1">v</span><span class="s2">.</span><span class="s1">decode</span><span class="s2">()</span>
+
+    <span class="s1">v </span><span class="s2">= </span><span class="s1">str</span><span class="s2">(</span><span class="s1">v</span><span class="s2">).</span><span class="s1">strip</span><span class="s2">()</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s1">v </span><span class="s2">= </span><span class="s1">Decimal</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">DecimalException</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">DecimalError</span><span class="s2">()</span>
+
+    <span class="s0">if not </span><span class="s1">v</span><span class="s2">.</span><span class="s1">is_finite</span><span class="s2">():</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">DecimalIsNotFiniteError</span><span class="s2">()</span>
+
+    <span class="s0">return </span><span class="s1">v</span>
+
+
+<span class="s0">def </span><span class="s1">hashable_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Hashable</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">Hashable</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+
+    <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">HashableError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">ip_v4_address_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; IPv4Address</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">IPv4Address</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">IPv4Address</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">IPv4AddressError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">ip_v6_address_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; IPv6Address</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">IPv6Address</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">IPv6Address</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">IPv6AddressError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">ip_v4_network_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; IPv4Network</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Assume IPv4Network initialised with a default ``strict`` argument 
+ 
+    See more: 
+    https://docs.python.org/library/ipaddress.html#ipaddress.IPv4Network 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">IPv4Network</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">IPv4Network</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">IPv4NetworkError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">ip_v6_network_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; IPv6Network</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Assume IPv6Network initialised with a default ``strict`` argument 
+ 
+    See more: 
+    https://docs.python.org/library/ipaddress.html#ipaddress.IPv6Network 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">IPv6Network</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">IPv6Network</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">IPv6NetworkError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">ip_v4_interface_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; IPv4Interface</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">IPv4Interface</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">IPv4Interface</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">IPv4InterfaceError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">ip_v6_interface_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; IPv6Interface</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">IPv6Interface</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">IPv6Interface</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">IPv6InterfaceError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">path_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Path</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">Path</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">Path</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">TypeError</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">PathError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">path_exists_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Path</span><span class="s2">:</span>
+    <span class="s0">if not </span><span class="s1">v</span><span class="s2">.</span><span class="s1">exists</span><span class="s2">():</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">PathNotExistsError</span><span class="s2">(</span><span class="s1">path</span><span class="s2">=</span><span class="s1">v</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">v</span>
+
+
+<span class="s0">def </span><span class="s1">callable_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; AnyCallable</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Perform a simple check if the value is callable. 
+ 
+    Note: complete matching of argument type hints and return types is not performed 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">callable</span><span class="s2">(</span><span class="s1">v</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+
+    <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">CallableError</span><span class="s2">(</span><span class="s1">value</span><span class="s2">=</span><span class="s1">v</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">enum_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Enum</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">Enum</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+
+    <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">EnumError</span><span class="s2">(</span><span class="s1">value</span><span class="s2">=</span><span class="s1">v</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">int_enum_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; IntEnum</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">IntEnum</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+
+    <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">IntEnumError</span><span class="s2">(</span><span class="s1">value</span><span class="s2">=</span><span class="s1">v</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">make_literal_validator</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Callable</span><span class="s2">[[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">Any</span><span class="s2">]:</span>
+    <span class="s1">permitted_choices </span><span class="s2">= </span><span class="s1">all_literal_values</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">)</span>
+
+    <span class="s3"># To have a O(1) complexity and still return one of the values set inside the `Literal`,</span>
+    <span class="s3"># we create a dict with the set values (a set causes some problems with the way intersection works).</span>
+    <span class="s3"># In some cases the set value and checked value can indeed be different (see `test_literal_validator_str_enum`)</span>
+    <span class="s1">allowed_choices </span><span class="s2">= {</span><span class="s1">v</span><span class="s2">: </span><span class="s1">v </span><span class="s0">for </span><span class="s1">v </span><span class="s0">in </span><span class="s1">permitted_choices</span><span class="s2">}</span>
+
+    <span class="s0">def </span><span class="s1">literal_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">allowed_choices</span><span class="s2">[</span><span class="s1">v</span><span class="s2">]</span>
+        <span class="s0">except </span><span class="s2">(</span><span class="s1">KeyError</span><span class="s2">, </span><span class="s1">TypeError</span><span class="s2">):</span>
+            <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">WrongConstantError</span><span class="s2">(</span><span class="s1">given</span><span class="s2">=</span><span class="s1">v</span><span class="s2">, </span><span class="s1">permitted</span><span class="s2">=</span><span class="s1">permitted_choices</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">literal_validator</span>
+
+
+<span class="s0">def </span><span class="s1">constr_length_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s5">'StrBytes'</span><span class="s2">, </span><span class="s1">field</span><span class="s2">: </span><span class="s5">'ModelField'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">: </span><span class="s5">'BaseConfig'</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s5">'StrBytes'</span><span class="s2">:</span>
+    <span class="s1">v_len </span><span class="s2">= </span><span class="s1">len</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+
+    <span class="s1">min_length </span><span class="s2">= </span><span class="s1">field</span><span class="s2">.</span><span class="s1">type_</span><span class="s2">.</span><span class="s1">min_length </span><span class="s0">if </span><span class="s1">field</span><span class="s2">.</span><span class="s1">type_</span><span class="s2">.</span><span class="s1">min_length </span><span class="s0">is not None else </span><span class="s1">config</span><span class="s2">.</span><span class="s1">min_anystr_length</span>
+    <span class="s0">if </span><span class="s1">v_len </span><span class="s2">&lt; </span><span class="s1">min_length</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">AnyStrMinLengthError</span><span class="s2">(</span><span class="s1">limit_value</span><span class="s2">=</span><span class="s1">min_length</span><span class="s2">)</span>
+
+    <span class="s1">max_length </span><span class="s2">= </span><span class="s1">field</span><span class="s2">.</span><span class="s1">type_</span><span class="s2">.</span><span class="s1">max_length </span><span class="s0">if </span><span class="s1">field</span><span class="s2">.</span><span class="s1">type_</span><span class="s2">.</span><span class="s1">max_length </span><span class="s0">is not None else </span><span class="s1">config</span><span class="s2">.</span><span class="s1">max_anystr_length</span>
+    <span class="s0">if </span><span class="s1">max_length </span><span class="s0">is not None and </span><span class="s1">v_len </span><span class="s2">&gt; </span><span class="s1">max_length</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">AnyStrMaxLengthError</span><span class="s2">(</span><span class="s1">limit_value</span><span class="s2">=</span><span class="s1">max_length</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">v</span>
+
+
+<span class="s0">def </span><span class="s1">constr_strip_whitespace</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s5">'StrBytes'</span><span class="s2">, </span><span class="s1">field</span><span class="s2">: </span><span class="s5">'ModelField'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">: </span><span class="s5">'BaseConfig'</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s5">'StrBytes'</span><span class="s2">:</span>
+    <span class="s1">strip_whitespace </span><span class="s2">= </span><span class="s1">field</span><span class="s2">.</span><span class="s1">type_</span><span class="s2">.</span><span class="s1">strip_whitespace </span><span class="s0">or </span><span class="s1">config</span><span class="s2">.</span><span class="s1">anystr_strip_whitespace</span>
+    <span class="s0">if </span><span class="s1">strip_whitespace</span><span class="s2">:</span>
+        <span class="s1">v </span><span class="s2">= </span><span class="s1">v</span><span class="s2">.</span><span class="s1">strip</span><span class="s2">()</span>
+
+    <span class="s0">return </span><span class="s1">v</span>
+
+
+<span class="s0">def </span><span class="s1">constr_upper</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s5">'StrBytes'</span><span class="s2">, </span><span class="s1">field</span><span class="s2">: </span><span class="s5">'ModelField'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">: </span><span class="s5">'BaseConfig'</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s5">'StrBytes'</span><span class="s2">:</span>
+    <span class="s1">upper </span><span class="s2">= </span><span class="s1">field</span><span class="s2">.</span><span class="s1">type_</span><span class="s2">.</span><span class="s1">to_upper </span><span class="s0">or </span><span class="s1">config</span><span class="s2">.</span><span class="s1">anystr_upper</span>
+    <span class="s0">if </span><span class="s1">upper</span><span class="s2">:</span>
+        <span class="s1">v </span><span class="s2">= </span><span class="s1">v</span><span class="s2">.</span><span class="s1">upper</span><span class="s2">()</span>
+
+    <span class="s0">return </span><span class="s1">v</span>
+
+
+<span class="s0">def </span><span class="s1">constr_lower</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s5">'StrBytes'</span><span class="s2">, </span><span class="s1">field</span><span class="s2">: </span><span class="s5">'ModelField'</span><span class="s2">, </span><span class="s1">config</span><span class="s2">: </span><span class="s5">'BaseConfig'</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s5">'StrBytes'</span><span class="s2">:</span>
+    <span class="s1">lower </span><span class="s2">= </span><span class="s1">field</span><span class="s2">.</span><span class="s1">type_</span><span class="s2">.</span><span class="s1">to_lower </span><span class="s0">or </span><span class="s1">config</span><span class="s2">.</span><span class="s1">anystr_lower</span>
+    <span class="s0">if </span><span class="s1">lower</span><span class="s2">:</span>
+        <span class="s1">v </span><span class="s2">= </span><span class="s1">v</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">()</span>
+    <span class="s0">return </span><span class="s1">v</span>
+
+
+<span class="s0">def </span><span class="s1">validate_json</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">config</span><span class="s2">: </span><span class="s5">'BaseConfig'</span><span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">v </span><span class="s0">is None</span><span class="s2">:</span>
+        <span class="s3"># pass None through to other validators</span>
+        <span class="s0">return </span><span class="s1">v</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">config</span><span class="s2">.</span><span class="s1">json_loads</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)  </span><span class="s3"># type: ignore</span>
+    <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">JsonError</span><span class="s2">()</span>
+    <span class="s0">except </span><span class="s1">TypeError</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">JsonTypeError</span><span class="s2">()</span>
+
+
+<span class="s1">T </span><span class="s2">= </span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s5">'T'</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">make_arbitrary_type_validator</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s1">T</span><span class="s2">]) </span><span class="s1">-&gt; Callable</span><span class="s2">[[</span><span class="s1">T</span><span class="s2">], </span><span class="s1">T</span><span class="s2">]:</span>
+    <span class="s0">def </span><span class="s1">arbitrary_type_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; T</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">type_</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">v</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">ArbitraryTypeError</span><span class="s2">(</span><span class="s1">expected_arbitrary_type</span><span class="s2">=</span><span class="s1">type_</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">arbitrary_type_validator</span>
+
+
+<span class="s0">def </span><span class="s1">make_class_validator</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s1">T</span><span class="s2">]) </span><span class="s1">-&gt; Callable</span><span class="s2">[[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">Type</span><span class="s2">[</span><span class="s1">T</span><span class="s2">]]:</span>
+    <span class="s0">def </span><span class="s1">class_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Type</span><span class="s2">[</span><span class="s1">T</span><span class="s2">]:</span>
+        <span class="s0">if </span><span class="s1">lenient_issubclass</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">type_</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">v</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">SubclassError</span><span class="s2">(</span><span class="s1">expected_class</span><span class="s2">=</span><span class="s1">type_</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">class_validator</span>
+
+
+<span class="s0">def </span><span class="s1">any_class_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Type</span><span class="s2">[</span><span class="s1">T</span><span class="s2">]:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">type</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+    <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">ClassError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">none_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s5">'Literal[None]'</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">v </span><span class="s0">is None</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">v</span>
+    <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">NotNoneError</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">pattern_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Pattern</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">Pattern</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">v</span>
+
+    <span class="s1">str_value </span><span class="s2">= </span><span class="s1">str_validator</span><span class="s2">(</span><span class="s1">v</span><span class="s2">)</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">re</span><span class="s2">.</span><span class="s1">compile</span><span class="s2">(</span><span class="s1">str_value</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">re</span><span class="s2">.</span><span class="s1">error</span><span class="s2">:</span>
+        <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">PatternError</span><span class="s2">()</span>
+
+
+<span class="s1">NamedTupleT </span><span class="s2">= </span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s5">'NamedTupleT'</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">NamedTuple</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">make_namedtuple_validator</span><span class="s2">(</span>
+    <span class="s1">namedtuple_cls</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s1">NamedTupleT</span><span class="s2">], </span><span class="s1">config</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s5">'BaseConfig'</span><span class="s2">]</span>
+<span class="s2">) </span><span class="s1">-&gt; Callable</span><span class="s2">[[</span><span class="s1">Tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...]], </span><span class="s1">NamedTupleT</span><span class="s2">]:</span>
+    <span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">annotated_types </span><span class="s0">import </span><span class="s1">create_model_from_namedtuple</span>
+
+    <span class="s1">NamedTupleModel </span><span class="s2">= </span><span class="s1">create_model_from_namedtuple</span><span class="s2">(</span>
+        <span class="s1">namedtuple_cls</span><span class="s2">,</span>
+        <span class="s1">__config__</span><span class="s2">=</span><span class="s1">config</span><span class="s2">,</span>
+        <span class="s1">__module__</span><span class="s2">=</span><span class="s1">namedtuple_cls</span><span class="s2">.</span><span class="s1">__module__</span><span class="s2">,</span>
+    <span class="s2">)</span>
+    <span class="s1">namedtuple_cls</span><span class="s2">.</span><span class="s1">__pydantic_model__ </span><span class="s2">= </span><span class="s1">NamedTupleModel  </span><span class="s3"># type: ignore[attr-defined]</span>
+
+    <span class="s0">def </span><span class="s1">namedtuple_validator</span><span class="s2">(</span><span class="s1">values</span><span class="s2">: </span><span class="s1">Tuple</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">, ...]) </span><span class="s1">-&gt; NamedTupleT</span><span class="s2">:</span>
+        <span class="s1">annotations </span><span class="s2">= </span><span class="s1">NamedTupleModel</span><span class="s2">.</span><span class="s1">__annotations__</span>
+
+        <span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">values</span><span class="s2">) &gt; </span><span class="s1">len</span><span class="s2">(</span><span class="s1">annotations</span><span class="s2">):</span>
+            <span class="s0">raise </span><span class="s1">errors</span><span class="s2">.</span><span class="s1">ListMaxLengthError</span><span class="s2">(</span><span class="s1">limit_value</span><span class="s2">=</span><span class="s1">len</span><span class="s2">(</span><span class="s1">annotations</span><span class="s2">))</span>
+
+        <span class="s1">dict_values</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] = </span><span class="s1">dict</span><span class="s2">(</span><span class="s1">zip</span><span class="s2">(</span><span class="s1">annotations</span><span class="s2">, </span><span class="s1">values</span><span class="s2">))</span>
+        <span class="s1">validated_dict_values</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] = </span><span class="s1">dict</span><span class="s2">(</span><span class="s1">NamedTupleModel</span><span class="s2">(**</span><span class="s1">dict_values</span><span class="s2">))</span>
+        <span class="s0">return </span><span class="s1">namedtuple_cls</span><span class="s2">(**</span><span class="s1">validated_dict_values</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">namedtuple_validator</span>
+
+
+<span class="s0">def </span><span class="s1">make_typeddict_validator</span><span class="s2">(</span>
+    <span class="s1">typeddict_cls</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s5">'TypedDict'</span><span class="s2">], </span><span class="s1">config</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s5">'BaseConfig'</span><span class="s2">]  </span><span class="s3"># type: ignore[valid-type]</span>
+<span class="s2">) </span><span class="s1">-&gt; Callable</span><span class="s2">[[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]]:</span>
+    <span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">annotated_types </span><span class="s0">import </span><span class="s1">create_model_from_typeddict</span>
+
+    <span class="s1">TypedDictModel </span><span class="s2">= </span><span class="s1">create_model_from_typeddict</span><span class="s2">(</span>
+        <span class="s1">typeddict_cls</span><span class="s2">,</span>
+        <span class="s1">__config__</span><span class="s2">=</span><span class="s1">config</span><span class="s2">,</span>
+        <span class="s1">__module__</span><span class="s2">=</span><span class="s1">typeddict_cls</span><span class="s2">.</span><span class="s1">__module__</span><span class="s2">,</span>
+    <span class="s2">)</span>
+    <span class="s1">typeddict_cls</span><span class="s2">.</span><span class="s1">__pydantic_model__ </span><span class="s2">= </span><span class="s1">TypedDictModel  </span><span class="s3"># type: ignore[attr-defined]</span>
+
+    <span class="s0">def </span><span class="s1">typeddict_validator</span><span class="s2">(</span><span class="s1">values</span><span class="s2">: </span><span class="s5">'TypedDict'</span><span class="s2">) </span><span class="s1">-&gt; Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]:  </span><span class="s3"># type: ignore[valid-type]</span>
+        <span class="s0">return </span><span class="s1">TypedDictModel</span><span class="s2">.</span><span class="s1">parse_obj</span><span class="s2">(</span><span class="s1">values</span><span class="s2">).</span><span class="s1">dict</span><span class="s2">(</span><span class="s1">exclude_unset</span><span class="s2">=</span><span class="s0">True</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">typeddict_validator</span>
+
+
+<span class="s0">class </span><span class="s1">IfConfig</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">validator</span><span class="s2">: </span><span class="s1">AnyCallable</span><span class="s2">, *</span><span class="s1">config_attr_names</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">ignored_value</span><span class="s2">: </span><span class="s1">Any </span><span class="s2">= </span><span class="s0">False</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">validator </span><span class="s2">= </span><span class="s1">validator</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">config_attr_names </span><span class="s2">= </span><span class="s1">config_attr_names</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">ignored_value </span><span class="s2">= </span><span class="s1">ignored_value</span>
+
+    <span class="s0">def </span><span class="s1">check</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">config</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s5">'BaseConfig'</span><span class="s2">]) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">any</span><span class="s2">(</span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">config</span><span class="s2">, </span><span class="s1">name</span><span class="s2">) </span><span class="s0">not in </span><span class="s2">{</span><span class="s0">None</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">ignored_value</span><span class="s2">} </span><span class="s0">for </span><span class="s1">name </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config_attr_names</span><span class="s2">)</span>
+
+
+<span class="s3"># order is important here, for example: bool is a subclass of int so has to come first, datetime before date same,</span>
+<span class="s3"># IPv4Interface before IPv4Address, etc</span>
+<span class="s1">_VALIDATORS</span><span class="s2">: </span><span class="s1">List</span><span class="s2">[</span><span class="s1">Tuple</span><span class="s2">[</span><span class="s1">Type</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">List</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">]]] = [</span>
+    <span class="s2">(</span><span class="s1">IntEnum</span><span class="s2">, [</span><span class="s1">int_validator</span><span class="s2">, </span><span class="s1">enum_member_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">Enum</span><span class="s2">, [</span><span class="s1">enum_member_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span>
+        <span class="s1">str</span><span class="s2">,</span>
+        <span class="s2">[</span>
+            <span class="s1">str_validator</span><span class="s2">,</span>
+            <span class="s1">IfConfig</span><span class="s2">(</span><span class="s1">anystr_strip_whitespace</span><span class="s2">, </span><span class="s5">'anystr_strip_whitespace'</span><span class="s2">),</span>
+            <span class="s1">IfConfig</span><span class="s2">(</span><span class="s1">anystr_upper</span><span class="s2">, </span><span class="s5">'anystr_upper'</span><span class="s2">),</span>
+            <span class="s1">IfConfig</span><span class="s2">(</span><span class="s1">anystr_lower</span><span class="s2">, </span><span class="s5">'anystr_lower'</span><span class="s2">),</span>
+            <span class="s1">IfConfig</span><span class="s2">(</span><span class="s1">anystr_length_validator</span><span class="s2">, </span><span class="s5">'min_anystr_length'</span><span class="s2">, </span><span class="s5">'max_anystr_length'</span><span class="s2">),</span>
+        <span class="s2">],</span>
+    <span class="s2">),</span>
+    <span class="s2">(</span>
+        <span class="s1">bytes</span><span class="s2">,</span>
+        <span class="s2">[</span>
+            <span class="s1">bytes_validator</span><span class="s2">,</span>
+            <span class="s1">IfConfig</span><span class="s2">(</span><span class="s1">anystr_strip_whitespace</span><span class="s2">, </span><span class="s5">'anystr_strip_whitespace'</span><span class="s2">),</span>
+            <span class="s1">IfConfig</span><span class="s2">(</span><span class="s1">anystr_upper</span><span class="s2">, </span><span class="s5">'anystr_upper'</span><span class="s2">),</span>
+            <span class="s1">IfConfig</span><span class="s2">(</span><span class="s1">anystr_lower</span><span class="s2">, </span><span class="s5">'anystr_lower'</span><span class="s2">),</span>
+            <span class="s1">IfConfig</span><span class="s2">(</span><span class="s1">anystr_length_validator</span><span class="s2">, </span><span class="s5">'min_anystr_length'</span><span class="s2">, </span><span class="s5">'max_anystr_length'</span><span class="s2">),</span>
+        <span class="s2">],</span>
+    <span class="s2">),</span>
+    <span class="s2">(</span><span class="s1">bool</span><span class="s2">, [</span><span class="s1">bool_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">int</span><span class="s2">, [</span><span class="s1">int_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">float</span><span class="s2">, [</span><span class="s1">float_validator</span><span class="s2">, </span><span class="s1">IfConfig</span><span class="s2">(</span><span class="s1">float_finite_validator</span><span class="s2">, </span><span class="s5">'allow_inf_nan'</span><span class="s2">, </span><span class="s1">ignored_value</span><span class="s2">=</span><span class="s0">True</span><span class="s2">)]),</span>
+    <span class="s2">(</span><span class="s1">Path</span><span class="s2">, [</span><span class="s1">path_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">datetime</span><span class="s2">, [</span><span class="s1">parse_datetime</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">date</span><span class="s2">, [</span><span class="s1">parse_date</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">time</span><span class="s2">, [</span><span class="s1">parse_time</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">timedelta</span><span class="s2">, [</span><span class="s1">parse_duration</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">OrderedDict</span><span class="s2">, [</span><span class="s1">ordered_dict_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">dict</span><span class="s2">, [</span><span class="s1">dict_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">list</span><span class="s2">, [</span><span class="s1">list_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">tuple</span><span class="s2">, [</span><span class="s1">tuple_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">set</span><span class="s2">, [</span><span class="s1">set_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">frozenset</span><span class="s2">, [</span><span class="s1">frozenset_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">deque</span><span class="s2">, [</span><span class="s1">deque_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">UUID</span><span class="s2">, [</span><span class="s1">uuid_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">Decimal</span><span class="s2">, [</span><span class="s1">decimal_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">IPv4Interface</span><span class="s2">, [</span><span class="s1">ip_v4_interface_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">IPv6Interface</span><span class="s2">, [</span><span class="s1">ip_v6_interface_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">IPv4Address</span><span class="s2">, [</span><span class="s1">ip_v4_address_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">IPv6Address</span><span class="s2">, [</span><span class="s1">ip_v6_address_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">IPv4Network</span><span class="s2">, [</span><span class="s1">ip_v4_network_validator</span><span class="s2">]),</span>
+    <span class="s2">(</span><span class="s1">IPv6Network</span><span class="s2">, [</span><span class="s1">ip_v6_network_validator</span><span class="s2">]),</span>
+<span class="s2">]</span>
+
+
+<span class="s0">def </span><span class="s1">find_validators</span><span class="s2">(  </span><span class="s3"># noqa: C901 (ignore complexity)</span>
+    <span class="s1">type_</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">], </span><span class="s1">config</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s5">'BaseConfig'</span><span class="s2">]</span>
+<span class="s2">) </span><span class="s1">-&gt; Generator</span><span class="s2">[</span><span class="s1">AnyCallable</span><span class="s2">, </span><span class="s0">None</span><span class="s2">, </span><span class="s0">None</span><span class="s2">]:</span>
+    <span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">dataclasses </span><span class="s0">import </span><span class="s1">is_builtin_dataclass</span><span class="s2">, </span><span class="s1">make_dataclass_validator</span>
+
+    <span class="s0">if </span><span class="s1">type_ </span><span class="s0">is </span><span class="s1">Any </span><span class="s0">or </span><span class="s1">type_ </span><span class="s0">is </span><span class="s1">object</span><span class="s2">:</span>
+        <span class="s0">return</span>
+    <span class="s1">type_type </span><span class="s2">= </span><span class="s1">type_</span><span class="s2">.</span><span class="s1">__class__</span>
+    <span class="s0">if </span><span class="s1">type_type </span><span class="s2">== </span><span class="s1">ForwardRef </span><span class="s0">or </span><span class="s1">type_type </span><span class="s2">== </span><span class="s1">TypeVar</span><span class="s2">:</span>
+        <span class="s0">return</span>
+
+    <span class="s0">if </span><span class="s1">is_none_type</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">):</span>
+        <span class="s0">yield </span><span class="s1">none_validator</span>
+        <span class="s0">return</span>
+    <span class="s0">if </span><span class="s1">type_ </span><span class="s0">is </span><span class="s1">Pattern </span><span class="s0">or </span><span class="s1">type_ </span><span class="s0">is </span><span class="s1">re</span><span class="s2">.</span><span class="s1">Pattern</span><span class="s2">:</span>
+        <span class="s0">yield </span><span class="s1">pattern_validator</span>
+        <span class="s0">return</span>
+    <span class="s0">if </span><span class="s1">type_ </span><span class="s0">is </span><span class="s1">Hashable </span><span class="s0">or </span><span class="s1">type_ </span><span class="s0">is </span><span class="s1">CollectionsHashable</span><span class="s2">:</span>
+        <span class="s0">yield </span><span class="s1">hashable_validator</span>
+        <span class="s0">return</span>
+    <span class="s0">if </span><span class="s1">is_callable_type</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">):</span>
+        <span class="s0">yield </span><span class="s1">callable_validator</span>
+        <span class="s0">return</span>
+    <span class="s0">if </span><span class="s1">is_literal_type</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">):</span>
+        <span class="s0">yield </span><span class="s1">make_literal_validator</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">)</span>
+        <span class="s0">return</span>
+    <span class="s0">if </span><span class="s1">is_builtin_dataclass</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">):</span>
+        <span class="s0">yield from </span><span class="s1">make_dataclass_validator</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">, </span><span class="s1">config</span><span class="s2">)</span>
+        <span class="s0">return</span>
+    <span class="s0">if </span><span class="s1">type_ </span><span class="s0">is </span><span class="s1">Enum</span><span class="s2">:</span>
+        <span class="s0">yield </span><span class="s1">enum_validator</span>
+        <span class="s0">return</span>
+    <span class="s0">if </span><span class="s1">type_ </span><span class="s0">is </span><span class="s1">IntEnum</span><span class="s2">:</span>
+        <span class="s0">yield </span><span class="s1">int_enum_validator</span>
+        <span class="s0">return</span>
+    <span class="s0">if </span><span class="s1">is_namedtuple</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">):</span>
+        <span class="s0">yield </span><span class="s1">tuple_validator</span>
+        <span class="s0">yield </span><span class="s1">make_namedtuple_validator</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">, </span><span class="s1">config</span><span class="s2">)</span>
+        <span class="s0">return</span>
+    <span class="s0">if </span><span class="s1">is_typeddict</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">):</span>
+        <span class="s0">yield </span><span class="s1">make_typeddict_validator</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">, </span><span class="s1">config</span><span class="s2">)</span>
+        <span class="s0">return</span>
+
+    <span class="s1">class_ </span><span class="s2">= </span><span class="s1">get_class</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">class_ </span><span class="s0">is not None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">class_ </span><span class="s0">is not </span><span class="s1">Any </span><span class="s0">and </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">class_</span><span class="s2">, </span><span class="s1">type</span><span class="s2">):</span>
+            <span class="s0">yield </span><span class="s1">make_class_validator</span><span class="s2">(</span><span class="s1">class_</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">yield </span><span class="s1">any_class_validator</span>
+        <span class="s0">return</span>
+
+    <span class="s0">for </span><span class="s1">val_type</span><span class="s2">, </span><span class="s1">validators </span><span class="s0">in </span><span class="s1">_VALIDATORS</span><span class="s2">:</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">issubclass</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">, </span><span class="s1">val_type</span><span class="s2">):</span>
+                <span class="s0">for </span><span class="s1">v </span><span class="s0">in </span><span class="s1">validators</span><span class="s2">:</span>
+                    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">IfConfig</span><span class="s2">):</span>
+                        <span class="s0">if </span><span class="s1">v</span><span class="s2">.</span><span class="s1">check</span><span class="s2">(</span><span class="s1">config</span><span class="s2">):</span>
+                            <span class="s0">yield </span><span class="s1">v</span><span class="s2">.</span><span class="s1">validator</span>
+                    <span class="s0">else</span><span class="s2">:</span>
+                        <span class="s0">yield </span><span class="s1">v</span>
+                <span class="s0">return</span>
+        <span class="s0">except </span><span class="s1">TypeError</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s5">f'error checking inheritance of </span><span class="s0">{</span><span class="s1">type_</span><span class="s0">!r} </span><span class="s5">(type: </span><span class="s0">{</span><span class="s1">display_as_type</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">)</span><span class="s0">}</span><span class="s5">)'</span><span class="s2">)</span>
+
+    <span class="s0">if </span><span class="s1">config</span><span class="s2">.</span><span class="s1">arbitrary_types_allowed</span><span class="s2">:</span>
+        <span class="s0">yield </span><span class="s1">make_arbitrary_type_validator</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">, </span><span class="s5">'__pydantic_core_schema__'</span><span class="s2">):</span>
+            <span class="s1">warn</span><span class="s2">(</span><span class="s5">f'Mixing V1 and V2 models is not supported. `</span><span class="s0">{</span><span class="s1">type_</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">}</span><span class="s5">` is a V2 model.'</span><span class="s2">, </span><span class="s1">UserWarning</span><span class="s2">)</span>
+        <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s5">f'no validator found for </span><span class="s0">{</span><span class="s1">type_</span><span class="s0">}</span><span class="s5">, see `arbitrary_types_allowed` in Config'</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

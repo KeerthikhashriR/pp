@@ -1,0 +1,166 @@
+<html>
+<head>
+<title>proxy_headers.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #5f826b; font-style: italic;}
+.s4 { color: #6aab73;}
+.s5 { color: #2aacb8;}
+.s6 { color: #a5c261;}
+.s7 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+proxy_headers.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">ipaddress</span>
+
+<span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">_types </span><span class="s0">import </span><span class="s1">ASGI3Application</span><span class="s2">, </span><span class="s1">ASGIReceiveCallable</span><span class="s2">, </span><span class="s1">ASGISendCallable</span><span class="s2">, </span><span class="s1">Scope</span>
+
+
+<span class="s0">class </span><span class="s1">ProxyHeadersMiddleware</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;Middleware for handling known proxy headers 
+ 
+    This middleware can be used when a known proxy is fronting the application, 
+    and is trusted to be properly setting the `X-Forwarded-Proto` and 
+    `X-Forwarded-For` headers with the connecting client information. 
+ 
+    Modifies the `client` and `scheme` information so that they reference 
+    the connecting client, rather that the connecting proxy. 
+ 
+    References: 
+    - &lt;https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers#Proxies&gt; 
+    - &lt;https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-For&gt; 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">app</span><span class="s2">: </span><span class="s1">ASGI3Application</span><span class="s2">, </span><span class="s1">trusted_hosts</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s1">str </span><span class="s2">= </span><span class="s4">&quot;127.0.0.1&quot;</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app </span><span class="s2">= </span><span class="s1">app</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">trusted_hosts </span><span class="s2">= </span><span class="s1">_TrustedHosts</span><span class="s2">(</span><span class="s1">trusted_hosts</span><span class="s2">)</span>
+
+    <span class="s0">async def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">: </span><span class="s1">ASGIReceiveCallable</span><span class="s2">, </span><span class="s1">send</span><span class="s2">: </span><span class="s1">ASGISendCallable</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">scope</span><span class="s2">[</span><span class="s4">&quot;type&quot;</span><span class="s2">] == </span><span class="s4">&quot;lifespan&quot;</span><span class="s2">:</span>
+            <span class="s0">return await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+
+        <span class="s1">client_addr </span><span class="s2">= </span><span class="s1">scope</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;client&quot;</span><span class="s2">)</span>
+        <span class="s1">client_host </span><span class="s2">= </span><span class="s1">client_addr</span><span class="s2">[</span><span class="s5">0</span><span class="s2">] </span><span class="s0">if </span><span class="s1">client_addr </span><span class="s0">else None</span>
+
+        <span class="s0">if </span><span class="s1">client_host </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">trusted_hosts</span><span class="s2">:</span>
+            <span class="s1">headers </span><span class="s2">= </span><span class="s1">dict</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">[</span><span class="s4">&quot;headers&quot;</span><span class="s2">])</span>
+
+            <span class="s0">if </span><span class="s6">b&quot;x-forwarded-proto&quot; </span><span class="s0">in </span><span class="s1">headers</span><span class="s2">:</span>
+                <span class="s1">x_forwarded_proto </span><span class="s2">= </span><span class="s1">headers</span><span class="s2">[</span><span class="s6">b&quot;x-forwarded-proto&quot;</span><span class="s2">].</span><span class="s1">decode</span><span class="s2">(</span><span class="s4">&quot;latin1&quot;</span><span class="s2">).</span><span class="s1">strip</span><span class="s2">()</span>
+
+                <span class="s0">if </span><span class="s1">x_forwarded_proto </span><span class="s0">in </span><span class="s2">{</span><span class="s4">&quot;http&quot;</span><span class="s2">, </span><span class="s4">&quot;https&quot;</span><span class="s2">, </span><span class="s4">&quot;ws&quot;</span><span class="s2">, </span><span class="s4">&quot;wss&quot;</span><span class="s2">}:</span>
+                    <span class="s0">if </span><span class="s1">scope</span><span class="s2">[</span><span class="s4">&quot;type&quot;</span><span class="s2">] == </span><span class="s4">&quot;websocket&quot;</span><span class="s2">:</span>
+                        <span class="s1">scope</span><span class="s2">[</span><span class="s4">&quot;scheme&quot;</span><span class="s2">] = </span><span class="s1">x_forwarded_proto</span><span class="s2">.</span><span class="s1">replace</span><span class="s2">(</span><span class="s4">&quot;http&quot;</span><span class="s2">, </span><span class="s4">&quot;ws&quot;</span><span class="s2">)</span>
+                    <span class="s0">else</span><span class="s2">:</span>
+                        <span class="s1">scope</span><span class="s2">[</span><span class="s4">&quot;scheme&quot;</span><span class="s2">] = </span><span class="s1">x_forwarded_proto</span>
+
+            <span class="s0">if </span><span class="s6">b&quot;x-forwarded-for&quot; </span><span class="s0">in </span><span class="s1">headers</span><span class="s2">:</span>
+                <span class="s1">x_forwarded_for </span><span class="s2">= </span><span class="s1">headers</span><span class="s2">[</span><span class="s6">b&quot;x-forwarded-for&quot;</span><span class="s2">].</span><span class="s1">decode</span><span class="s2">(</span><span class="s4">&quot;latin1&quot;</span><span class="s2">)</span>
+                <span class="s1">host </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">trusted_hosts</span><span class="s2">.</span><span class="s1">get_trusted_client_host</span><span class="s2">(</span><span class="s1">x_forwarded_for</span><span class="s2">)</span>
+
+                <span class="s0">if </span><span class="s1">host</span><span class="s2">:</span>
+                    <span class="s7"># If the x-forwarded-for header is empty then host is an empty string.</span>
+                    <span class="s7"># Only set the client if we actually got something usable.</span>
+                    <span class="s7"># See: https://github.com/encode/uvicorn/issues/1068</span>
+
+                    <span class="s7"># We've lost the connecting client's port information by now,</span>
+                    <span class="s7"># so only include the host.</span>
+                    <span class="s1">port </span><span class="s2">= </span><span class="s5">0</span>
+                    <span class="s1">scope</span><span class="s2">[</span><span class="s4">&quot;client&quot;</span><span class="s2">] = (</span><span class="s1">host</span><span class="s2">, </span><span class="s1">port</span><span class="s2">)</span>
+
+        <span class="s0">return await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">_parse_raw_hosts</span><span class="s2">(</span><span class="s1">value</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s0">return </span><span class="s2">[</span><span class="s1">item</span><span class="s2">.</span><span class="s1">strip</span><span class="s2">() </span><span class="s0">for </span><span class="s1">item </span><span class="s0">in </span><span class="s1">value</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s4">&quot;,&quot;</span><span class="s2">)]</span>
+
+
+<span class="s0">class </span><span class="s1">_TrustedHosts</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;Container for trusted hosts and networks&quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">trusted_hosts</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">always_trust</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s1">trusted_hosts </span><span class="s0">in </span><span class="s2">(</span><span class="s4">&quot;*&quot;</span><span class="s2">, [</span><span class="s4">&quot;*&quot;</span><span class="s2">])</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">trusted_literals</span><span class="s2">: </span><span class="s1">set</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = </span><span class="s1">set</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">trusted_hosts</span><span class="s2">: </span><span class="s1">set</span><span class="s2">[</span><span class="s1">ipaddress</span><span class="s2">.</span><span class="s1">IPv4Address </span><span class="s2">| </span><span class="s1">ipaddress</span><span class="s2">.</span><span class="s1">IPv6Address</span><span class="s2">] = </span><span class="s1">set</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">trusted_networks</span><span class="s2">: </span><span class="s1">set</span><span class="s2">[</span><span class="s1">ipaddress</span><span class="s2">.</span><span class="s1">IPv4Network </span><span class="s2">| </span><span class="s1">ipaddress</span><span class="s2">.</span><span class="s1">IPv6Network</span><span class="s2">] = </span><span class="s1">set</span><span class="s2">()</span>
+
+        <span class="s7"># Notes:</span>
+        <span class="s7"># - We separate hosts from literals as there are many ways to write</span>
+        <span class="s7">#   an IPv6 Address so we need to compare by object.</span>
+        <span class="s7"># - We don't convert IP Address to single host networks (e.g. /32 / 128) as</span>
+        <span class="s7">#   it more efficient to do an address lookup in a set than check for</span>
+        <span class="s7">#   membership in each network.</span>
+        <span class="s7"># - We still allow literals as it might be possible that we receive a</span>
+        <span class="s7">#   something that isn't an IP Address e.g. a unix socket.</span>
+
+        <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">always_trust</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">trusted_hosts</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+                <span class="s1">trusted_hosts </span><span class="s2">= </span><span class="s1">_parse_raw_hosts</span><span class="s2">(</span><span class="s1">trusted_hosts</span><span class="s2">)</span>
+
+            <span class="s0">for </span><span class="s1">host </span><span class="s0">in </span><span class="s1">trusted_hosts</span><span class="s2">:</span>
+                <span class="s7"># Note: because we always convert invalid IP types to literals it</span>
+                <span class="s7"># is not possible for the user to know they provided a malformed IP</span>
+                <span class="s7"># type - this may lead to unexpected / difficult to debug behaviour.</span>
+
+                <span class="s0">if </span><span class="s4">&quot;/&quot; </span><span class="s0">in </span><span class="s1">host</span><span class="s2">:</span>
+                    <span class="s7"># Looks like a network</span>
+                    <span class="s0">try</span><span class="s2">:</span>
+                        <span class="s1">self</span><span class="s2">.</span><span class="s1">trusted_networks</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">ipaddress</span><span class="s2">.</span><span class="s1">ip_network</span><span class="s2">(</span><span class="s1">host</span><span class="s2">))</span>
+                    <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+                        <span class="s7"># Was not a valid IP Network</span>
+                        <span class="s1">self</span><span class="s2">.</span><span class="s1">trusted_literals</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">host</span><span class="s2">)</span>
+                <span class="s0">else</span><span class="s2">:</span>
+                    <span class="s0">try</span><span class="s2">:</span>
+                        <span class="s1">self</span><span class="s2">.</span><span class="s1">trusted_hosts</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">ipaddress</span><span class="s2">.</span><span class="s1">ip_address</span><span class="s2">(</span><span class="s1">host</span><span class="s2">))</span>
+                    <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+                        <span class="s7"># Was not a valid IP Address</span>
+                        <span class="s1">self</span><span class="s2">.</span><span class="s1">trusted_literals</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">host</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">__contains__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">host</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">always_trust</span><span class="s2">:</span>
+            <span class="s0">return True</span>
+
+        <span class="s0">if not </span><span class="s1">host</span><span class="s2">:</span>
+            <span class="s0">return False</span>
+
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">ip </span><span class="s2">= </span><span class="s1">ipaddress</span><span class="s2">.</span><span class="s1">ip_address</span><span class="s2">(</span><span class="s1">host</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">ip </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">trusted_hosts</span><span class="s2">:</span>
+                <span class="s0">return True</span>
+            <span class="s0">return </span><span class="s1">any</span><span class="s2">(</span><span class="s1">ip </span><span class="s0">in </span><span class="s1">net </span><span class="s0">for </span><span class="s1">net </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">trusted_networks</span><span class="s2">)</span>
+
+        <span class="s0">except </span><span class="s1">ValueError</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">host </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">trusted_literals</span>
+
+    <span class="s0">def </span><span class="s1">get_trusted_client_host</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">x_forwarded_for</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Extract the client host from x_forwarded_for header 
+ 
+        In general this is the first &quot;untrusted&quot; host in the forwarded for list. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">x_forwarded_for_hosts </span><span class="s2">= </span><span class="s1">_parse_raw_hosts</span><span class="s2">(</span><span class="s1">x_forwarded_for</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">always_trust</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">x_forwarded_for_hosts</span><span class="s2">[</span><span class="s5">0</span><span class="s2">]</span>
+
+        <span class="s7"># Note: each proxy appends to the header list so check it in reverse order</span>
+        <span class="s0">for </span><span class="s1">host </span><span class="s0">in </span><span class="s1">reversed</span><span class="s2">(</span><span class="s1">x_forwarded_for_hosts</span><span class="s2">):</span>
+            <span class="s0">if </span><span class="s1">host </span><span class="s0">not in </span><span class="s1">self</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">host</span>
+
+        <span class="s7"># All hosts are trusted meaning that the client was also a trusted proxy</span>
+        <span class="s7"># See https://github.com/encode/uvicorn/issues/1068#issuecomment-855371576</span>
+        <span class="s0">return </span><span class="s1">x_forwarded_for_hosts</span><span class="s2">[</span><span class="s5">0</span><span class="s2">]</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,122 @@
+<html>
+<head>
+<title>_utils.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+.s5 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_utils.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">functools</span>
+<span class="s0">import </span><span class="s1">inspect</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">import </span><span class="s1">typing</span>
+<span class="s0">from </span><span class="s1">contextlib </span><span class="s0">import </span><span class="s1">contextmanager</span>
+
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">Scope</span>
+
+<span class="s0">if </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">version_info </span><span class="s2">&gt;= (</span><span class="s3">3</span><span class="s2">, </span><span class="s3">10</span><span class="s2">):  </span><span class="s4"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">TypeGuard</span>
+<span class="s0">else</span><span class="s2">:  </span><span class="s4"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s1">typing_extensions </span><span class="s0">import </span><span class="s1">TypeGuard</span>
+
+<span class="s1">has_exceptiongroups </span><span class="s2">= </span><span class="s0">True</span>
+<span class="s0">if </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">version_info </span><span class="s2">&lt; (</span><span class="s3">3</span><span class="s2">, </span><span class="s3">11</span><span class="s2">):  </span><span class="s4"># pragma: no cover</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">from </span><span class="s1">exceptiongroup </span><span class="s0">import </span><span class="s1">BaseExceptionGroup  </span><span class="s4"># type: ignore[unused-ignore,import-not-found]</span>
+    <span class="s0">except </span><span class="s1">ImportError</span><span class="s2">:</span>
+        <span class="s1">has_exceptiongroups </span><span class="s2">= </span><span class="s0">False</span>
+
+<span class="s1">T </span><span class="s2">= </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s5">&quot;T&quot;</span><span class="s2">)</span>
+<span class="s1">AwaitableCallable </span><span class="s2">= </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[..., </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Awaitable</span><span class="s2">[</span><span class="s1">T</span><span class="s2">]]</span>
+
+
+<span class="s2">@</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">overload</span>
+<span class="s0">def </span><span class="s1">is_async_callable</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">: </span><span class="s1">AwaitableCallable</span><span class="s2">[</span><span class="s1">T</span><span class="s2">]) </span><span class="s1">-&gt; TypeGuard</span><span class="s2">[</span><span class="s1">AwaitableCallable</span><span class="s2">[</span><span class="s1">T</span><span class="s2">]]: ...</span>
+
+
+<span class="s2">@</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">overload</span>
+<span class="s0">def </span><span class="s1">is_async_callable</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; TypeGuard</span><span class="s2">[</span><span class="s1">AwaitableCallable</span><span class="s2">[</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]]: ...</span>
+
+
+<span class="s0">def </span><span class="s1">is_async_callable</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">:</span>
+    <span class="s0">while </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, </span><span class="s1">functools</span><span class="s2">.</span><span class="s1">partial</span><span class="s2">):</span>
+        <span class="s1">obj </span><span class="s2">= </span><span class="s1">obj</span><span class="s2">.</span><span class="s1">func</span>
+
+    <span class="s0">return </span><span class="s1">inspect</span><span class="s2">.</span><span class="s1">iscoroutinefunction</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">) </span><span class="s0">or </span><span class="s2">(</span><span class="s1">callable</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">) </span><span class="s0">and </span><span class="s1">inspect</span><span class="s2">.</span><span class="s1">iscoroutinefunction</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">.</span><span class="s1">__call__</span><span class="s2">))</span>
+
+
+<span class="s1">T_co </span><span class="s2">= </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s5">&quot;T_co&quot;</span><span class="s2">, </span><span class="s1">covariant</span><span class="s2">=</span><span class="s0">True</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">AwaitableOrContextManager</span><span class="s2">(</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Awaitable</span><span class="s2">[</span><span class="s1">T_co</span><span class="s2">], </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">AsyncContextManager</span><span class="s2">[</span><span class="s1">T_co</span><span class="s2">], </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Protocol</span><span class="s2">[</span><span class="s1">T_co</span><span class="s2">]): ...</span>
+
+
+<span class="s0">class </span><span class="s1">SupportsAsyncClose</span><span class="s2">(</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Protocol</span><span class="s2">):</span>
+    <span class="s0">async def </span><span class="s1">close</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">: ...  </span><span class="s4"># pragma: no cover</span>
+
+
+<span class="s1">SupportsAsyncCloseType </span><span class="s2">= </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s5">&quot;SupportsAsyncCloseType&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">SupportsAsyncClose</span><span class="s2">, </span><span class="s1">covariant</span><span class="s2">=</span><span class="s0">False</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">AwaitableOrContextManagerWrapper</span><span class="s2">(</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Generic</span><span class="s2">[</span><span class="s1">SupportsAsyncCloseType</span><span class="s2">]):</span>
+    <span class="s1">__slots__ </span><span class="s2">= (</span><span class="s5">&quot;aw&quot;</span><span class="s2">, </span><span class="s5">&quot;entered&quot;</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">aw</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Awaitable</span><span class="s2">[</span><span class="s1">SupportsAsyncCloseType</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">aw </span><span class="s2">= </span><span class="s1">aw</span>
+
+    <span class="s0">def </span><span class="s1">__await__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Generator</span><span class="s2">[</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, </span><span class="s0">None</span><span class="s2">, </span><span class="s1">SupportsAsyncCloseType</span><span class="s2">]:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">aw</span><span class="s2">.</span><span class="s1">__await__</span><span class="s2">()</span>
+
+    <span class="s0">async def </span><span class="s1">__aenter__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; SupportsAsyncCloseType</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">entered </span><span class="s2">= </span><span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">aw</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">entered</span>
+
+    <span class="s0">async def </span><span class="s1">__aexit__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None </span><span class="s2">| </span><span class="s1">bool</span><span class="s2">:</span>
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">entered</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+        <span class="s0">return None</span>
+
+
+<span class="s2">@</span><span class="s1">contextmanager</span>
+<span class="s0">def </span><span class="s1">collapse_excgroups</span><span class="s2">() </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Generator</span><span class="s2">[</span><span class="s0">None</span><span class="s2">, </span><span class="s0">None</span><span class="s2">, </span><span class="s0">None</span><span class="s2">]:</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">yield</span>
+    <span class="s0">except </span><span class="s1">BaseException </span><span class="s0">as </span><span class="s1">exc</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">has_exceptiongroups</span><span class="s2">:  </span><span class="s4"># pragma: no cover</span>
+            <span class="s0">while </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">exc</span><span class="s2">, </span><span class="s1">BaseExceptionGroup</span><span class="s2">) </span><span class="s0">and </span><span class="s1">len</span><span class="s2">(</span><span class="s1">exc</span><span class="s2">.</span><span class="s1">exceptions</span><span class="s2">) == </span><span class="s3">1</span><span class="s2">:</span>
+                <span class="s1">exc </span><span class="s2">= </span><span class="s1">exc</span><span class="s2">.</span><span class="s1">exceptions</span><span class="s2">[</span><span class="s3">0</span><span class="s2">]</span>
+
+        <span class="s0">raise </span><span class="s1">exc</span>
+
+
+<span class="s0">def </span><span class="s1">get_route_path</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+    <span class="s1">path</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s1">scope</span><span class="s2">[</span><span class="s5">&quot;path&quot;</span><span class="s2">]</span>
+    <span class="s1">root_path </span><span class="s2">= </span><span class="s1">scope</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;root_path&quot;</span><span class="s2">, </span><span class="s5">&quot;&quot;</span><span class="s2">)</span>
+    <span class="s0">if not </span><span class="s1">root_path</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">path</span>
+
+    <span class="s0">if not </span><span class="s1">path</span><span class="s2">.</span><span class="s1">startswith</span><span class="s2">(</span><span class="s1">root_path</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">path</span>
+
+    <span class="s0">if </span><span class="s1">path </span><span class="s2">== </span><span class="s1">root_path</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s5">&quot;&quot;</span>
+
+    <span class="s0">if </span><span class="s1">path</span><span class="s2">[</span><span class="s1">len</span><span class="s2">(</span><span class="s1">root_path</span><span class="s2">)] == </span><span class="s5">&quot;/&quot;</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">path</span><span class="s2">[</span><span class="s1">len</span><span class="s2">(</span><span class="s1">root_path</span><span class="s2">) :]</span>
+
+    <span class="s0">return </span><span class="s1">path</span>
+</pre>
+</body>
+</html>

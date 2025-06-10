@@ -1,0 +1,145 @@
+<html>
+<head>
+<title>endpoints.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #2aacb8;}
+.s6 { color: #5f826b; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+endpoints.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">json</span>
+<span class="s0">import </span><span class="s1">typing</span>
+
+<span class="s0">from </span><span class="s1">starlette </span><span class="s0">import </span><span class="s1">status</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">_utils </span><span class="s0">import </span><span class="s1">is_async_callable</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">concurrency </span><span class="s0">import </span><span class="s1">run_in_threadpool</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">HTTPException</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">requests </span><span class="s0">import </span><span class="s1">Request</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">responses </span><span class="s0">import </span><span class="s1">PlainTextResponse</span><span class="s2">, </span><span class="s1">Response</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">Message</span><span class="s2">, </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">Send</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">websockets </span><span class="s0">import </span><span class="s1">WebSocket</span>
+
+
+<span class="s0">class </span><span class="s1">HTTPEndpoint</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">: </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">: </span><span class="s1">Send</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">assert </span><span class="s1">scope</span><span class="s2">[</span><span class="s3">&quot;type&quot;</span><span class="s2">] == </span><span class="s3">&quot;http&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">scope </span><span class="s2">= </span><span class="s1">scope</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">receive </span><span class="s2">= </span><span class="s1">receive</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">send </span><span class="s2">= </span><span class="s1">send</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_allowed_methods </span><span class="s2">= [</span>
+            <span class="s1">method</span>
+            <span class="s0">for </span><span class="s1">method </span><span class="s0">in </span><span class="s2">(</span><span class="s3">&quot;GET&quot;</span><span class="s2">, </span><span class="s3">&quot;HEAD&quot;</span><span class="s2">, </span><span class="s3">&quot;POST&quot;</span><span class="s2">, </span><span class="s3">&quot;PUT&quot;</span><span class="s2">, </span><span class="s3">&quot;PATCH&quot;</span><span class="s2">, </span><span class="s3">&quot;DELETE&quot;</span><span class="s2">, </span><span class="s3">&quot;OPTIONS&quot;</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">method</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">(), </span><span class="s0">None</span><span class="s2">) </span><span class="s0">is not None</span>
+        <span class="s2">]</span>
+
+    <span class="s0">def </span><span class="s1">__await__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Generator</span><span class="s2">[</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, </span><span class="s0">None</span><span class="s2">, </span><span class="s0">None</span><span class="s2">]:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">dispatch</span><span class="s2">().</span><span class="s1">__await__</span><span class="s2">()</span>
+
+    <span class="s0">async def </span><span class="s1">dispatch</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">request </span><span class="s2">= </span><span class="s1">Request</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">)</span>
+        <span class="s1">handler_name </span><span class="s2">= </span><span class="s3">&quot;get&quot; </span><span class="s0">if </span><span class="s1">request</span><span class="s2">.</span><span class="s1">method </span><span class="s2">== </span><span class="s3">&quot;HEAD&quot; </span><span class="s0">and not </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s3">&quot;head&quot;</span><span class="s2">) </span><span class="s0">else </span><span class="s1">request</span><span class="s2">.</span><span class="s1">method</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">()</span>
+
+        <span class="s1">handler</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Request</span><span class="s2">], </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] = </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">handler_name</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">method_not_allowed</span><span class="s2">)</span>
+        <span class="s1">is_async </span><span class="s2">= </span><span class="s1">is_async_callable</span><span class="s2">(</span><span class="s1">handler</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">is_async</span><span class="s2">:</span>
+            <span class="s1">response </span><span class="s2">= </span><span class="s0">await </span><span class="s1">handler</span><span class="s2">(</span><span class="s1">request</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">response </span><span class="s2">= </span><span class="s0">await </span><span class="s1">run_in_threadpool</span><span class="s2">(</span><span class="s1">handler</span><span class="s2">, </span><span class="s1">request</span><span class="s2">)</span>
+        <span class="s0">await </span><span class="s1">response</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">)</span>
+
+    <span class="s0">async def </span><span class="s1">method_not_allowed</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">request</span><span class="s2">: </span><span class="s1">Request</span><span class="s2">) </span><span class="s1">-&gt; Response</span><span class="s2">:</span>
+        <span class="s4"># If we're running inside a starlette application then raise an</span>
+        <span class="s4"># exception, so that the configurable exception handler can deal with</span>
+        <span class="s4"># returning the response. For plain ASGI apps, just return the response.</span>
+        <span class="s1">headers </span><span class="s2">= {</span><span class="s3">&quot;Allow&quot;</span><span class="s2">: </span><span class="s3">&quot;, &quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_allowed_methods</span><span class="s2">)}</span>
+        <span class="s0">if </span><span class="s3">&quot;app&quot; </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">HTTPException</span><span class="s2">(</span><span class="s1">status_code</span><span class="s2">=</span><span class="s5">405</span><span class="s2">, </span><span class="s1">headers</span><span class="s2">=</span><span class="s1">headers</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">PlainTextResponse</span><span class="s2">(</span><span class="s3">&quot;Method Not Allowed&quot;</span><span class="s2">, </span><span class="s1">status_code</span><span class="s2">=</span><span class="s5">405</span><span class="s2">, </span><span class="s1">headers</span><span class="s2">=</span><span class="s1">headers</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">WebSocketEndpoint</span><span class="s2">:</span>
+    <span class="s1">encoding</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None  </span><span class="s4"># May be &quot;text&quot;, &quot;bytes&quot;, or &quot;json&quot;.</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">: </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">: </span><span class="s1">Send</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">assert </span><span class="s1">scope</span><span class="s2">[</span><span class="s3">&quot;type&quot;</span><span class="s2">] == </span><span class="s3">&quot;websocket&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">scope </span><span class="s2">= </span><span class="s1">scope</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">receive </span><span class="s2">= </span><span class="s1">receive</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">send </span><span class="s2">= </span><span class="s1">send</span>
+
+    <span class="s0">def </span><span class="s1">__await__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Generator</span><span class="s2">[</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, </span><span class="s0">None</span><span class="s2">, </span><span class="s0">None</span><span class="s2">]:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">dispatch</span><span class="s2">().</span><span class="s1">__await__</span><span class="s2">()</span>
+
+    <span class="s0">async def </span><span class="s1">dispatch</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">websocket </span><span class="s2">= </span><span class="s1">WebSocket</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">)</span>
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">on_connect</span><span class="s2">(</span><span class="s1">websocket</span><span class="s2">)</span>
+
+        <span class="s1">close_code </span><span class="s2">= </span><span class="s1">status</span><span class="s2">.</span><span class="s1">WS_1000_NORMAL_CLOSURE</span>
+
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">while True</span><span class="s2">:</span>
+                <span class="s1">message </span><span class="s2">= </span><span class="s0">await </span><span class="s1">websocket</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">()</span>
+                <span class="s0">if </span><span class="s1">message</span><span class="s2">[</span><span class="s3">&quot;type&quot;</span><span class="s2">] == </span><span class="s3">&quot;websocket.receive&quot;</span><span class="s2">:</span>
+                    <span class="s1">data </span><span class="s2">= </span><span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">decode</span><span class="s2">(</span><span class="s1">websocket</span><span class="s2">, </span><span class="s1">message</span><span class="s2">)</span>
+                    <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">on_receive</span><span class="s2">(</span><span class="s1">websocket</span><span class="s2">, </span><span class="s1">data</span><span class="s2">)</span>
+                <span class="s0">elif </span><span class="s1">message</span><span class="s2">[</span><span class="s3">&quot;type&quot;</span><span class="s2">] == </span><span class="s3">&quot;websocket.disconnect&quot;</span><span class="s2">:  </span><span class="s4"># pragma: no branch</span>
+                    <span class="s1">close_code </span><span class="s2">= </span><span class="s1">int</span><span class="s2">(</span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;code&quot;</span><span class="s2">) </span><span class="s0">or </span><span class="s1">status</span><span class="s2">.</span><span class="s1">WS_1000_NORMAL_CLOSURE</span><span class="s2">)</span>
+                    <span class="s0">break</span>
+        <span class="s0">except </span><span class="s1">Exception </span><span class="s0">as </span><span class="s1">exc</span><span class="s2">:</span>
+            <span class="s1">close_code </span><span class="s2">= </span><span class="s1">status</span><span class="s2">.</span><span class="s1">WS_1011_INTERNAL_ERROR</span>
+            <span class="s0">raise </span><span class="s1">exc</span>
+        <span class="s0">finally</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">on_disconnect</span><span class="s2">(</span><span class="s1">websocket</span><span class="s2">, </span><span class="s1">close_code</span><span class="s2">)</span>
+
+    <span class="s0">async def </span><span class="s1">decode</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">websocket</span><span class="s2">: </span><span class="s1">WebSocket</span><span class="s2">, </span><span class="s1">message</span><span class="s2">: </span><span class="s1">Message</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">encoding </span><span class="s2">== </span><span class="s3">&quot;text&quot;</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s3">&quot;text&quot; </span><span class="s0">not in </span><span class="s1">message</span><span class="s2">:</span>
+                <span class="s0">await </span><span class="s1">websocket</span><span class="s2">.</span><span class="s1">close</span><span class="s2">(</span><span class="s1">code</span><span class="s2">=</span><span class="s1">status</span><span class="s2">.</span><span class="s1">WS_1003_UNSUPPORTED_DATA</span><span class="s2">)</span>
+                <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s3">&quot;Expected text websocket messages, but got bytes&quot;</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">message</span><span class="s2">[</span><span class="s3">&quot;text&quot;</span><span class="s2">]</span>
+
+        <span class="s0">elif </span><span class="s1">self</span><span class="s2">.</span><span class="s1">encoding </span><span class="s2">== </span><span class="s3">&quot;bytes&quot;</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s3">&quot;bytes&quot; </span><span class="s0">not in </span><span class="s1">message</span><span class="s2">:</span>
+                <span class="s0">await </span><span class="s1">websocket</span><span class="s2">.</span><span class="s1">close</span><span class="s2">(</span><span class="s1">code</span><span class="s2">=</span><span class="s1">status</span><span class="s2">.</span><span class="s1">WS_1003_UNSUPPORTED_DATA</span><span class="s2">)</span>
+                <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s3">&quot;Expected bytes websocket messages, but got text&quot;</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">message</span><span class="s2">[</span><span class="s3">&quot;bytes&quot;</span><span class="s2">]</span>
+
+        <span class="s0">elif </span><span class="s1">self</span><span class="s2">.</span><span class="s1">encoding </span><span class="s2">== </span><span class="s3">&quot;json&quot;</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;text&quot;</span><span class="s2">) </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s1">text </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s3">&quot;text&quot;</span><span class="s2">]</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">text </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s3">&quot;bytes&quot;</span><span class="s2">].</span><span class="s1">decode</span><span class="s2">(</span><span class="s3">&quot;utf-8&quot;</span><span class="s2">)</span>
+
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">json</span><span class="s2">.</span><span class="s1">loads</span><span class="s2">(</span><span class="s1">text</span><span class="s2">)</span>
+            <span class="s0">except </span><span class="s1">json</span><span class="s2">.</span><span class="s1">decoder</span><span class="s2">.</span><span class="s1">JSONDecodeError</span><span class="s2">:</span>
+                <span class="s0">await </span><span class="s1">websocket</span><span class="s2">.</span><span class="s1">close</span><span class="s2">(</span><span class="s1">code</span><span class="s2">=</span><span class="s1">status</span><span class="s2">.</span><span class="s1">WS_1003_UNSUPPORTED_DATA</span><span class="s2">)</span>
+                <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s3">&quot;Malformed JSON data received.&quot;</span><span class="s2">)</span>
+
+        <span class="s0">assert </span><span class="s1">self</span><span class="s2">.</span><span class="s1">encoding </span><span class="s0">is None</span><span class="s2">, </span><span class="s3">f&quot;Unsupported 'encoding' attribute </span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">encoding</span><span class="s0">}</span><span class="s3">&quot;</span>
+        <span class="s0">return </span><span class="s1">message</span><span class="s2">[</span><span class="s3">&quot;text&quot;</span><span class="s2">] </span><span class="s0">if </span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;text&quot;</span><span class="s2">) </span><span class="s0">else </span><span class="s1">message</span><span class="s2">[</span><span class="s3">&quot;bytes&quot;</span><span class="s2">]</span>
+
+    <span class="s0">async def </span><span class="s1">on_connect</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">websocket</span><span class="s2">: </span><span class="s1">WebSocket</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot;Override to handle an incoming websocket connection&quot;&quot;&quot;</span>
+        <span class="s0">await </span><span class="s1">websocket</span><span class="s2">.</span><span class="s1">accept</span><span class="s2">()</span>
+
+    <span class="s0">async def </span><span class="s1">on_receive</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">websocket</span><span class="s2">: </span><span class="s1">WebSocket</span><span class="s2">, </span><span class="s1">data</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot;Override to handle an incoming websocket message&quot;&quot;&quot;</span>
+
+    <span class="s0">async def </span><span class="s1">on_disconnect</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">websocket</span><span class="s2">: </span><span class="s1">WebSocket</span><span class="s2">, </span><span class="s1">close_code</span><span class="s2">: </span><span class="s1">int</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot;Override to handle a disconnecting websocket&quot;&quot;&quot;</span>
+</pre>
+</body>
+</html>

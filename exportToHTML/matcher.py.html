@@ -1,0 +1,225 @@
+<html>
+<head>
+<title>matcher.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #5f826b; font-style: italic;}
+.s4 { color: #7a7e85;}
+.s5 { color: #2aacb8;}
+.s6 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+matcher.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">re</span>
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+<span class="s0">from </span><span class="s1">dataclasses </span><span class="s0">import </span><span class="s1">dataclass</span>
+<span class="s0">from </span><span class="s1">dataclasses </span><span class="s0">import </span><span class="s1">field</span>
+
+<span class="s0">from </span><span class="s2">.</span><span class="s1">converters </span><span class="s0">import </span><span class="s1">ValidationError</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">NoMatch</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">RequestAliasRedirect</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">RequestPath</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">rules </span><span class="s0">import </span><span class="s1">Rule</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">rules </span><span class="s0">import </span><span class="s1">RulePart</span>
+
+
+<span class="s0">class </span><span class="s1">SlashRequired</span><span class="s2">(</span><span class="s1">Exception</span><span class="s2">):</span>
+    <span class="s0">pass</span>
+
+
+<span class="s2">@</span><span class="s1">dataclass</span>
+<span class="s0">class </span><span class="s1">State</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;A representation of a rule state. 
+ 
+    This includes the *rules* that correspond to the state and the 
+    possible *static* and *dynamic* transitions to the next state. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">dynamic</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">RulePart</span><span class="s2">, </span><span class="s1">State</span><span class="s2">]] = </span><span class="s1">field</span><span class="s2">(</span><span class="s1">default_factory</span><span class="s2">=</span><span class="s1">list</span><span class="s2">)</span>
+    <span class="s1">rules</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">Rule</span><span class="s2">] = </span><span class="s1">field</span><span class="s2">(</span><span class="s1">default_factory</span><span class="s2">=</span><span class="s1">list</span><span class="s2">)</span>
+    <span class="s1">static</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">State</span><span class="s2">] = </span><span class="s1">field</span><span class="s2">(</span><span class="s1">default_factory</span><span class="s2">=</span><span class="s1">dict</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">StateMachineMatcher</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">merge_slashes</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_root </span><span class="s2">= </span><span class="s1">State</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">merge_slashes </span><span class="s2">= </span><span class="s1">merge_slashes</span>
+
+    <span class="s0">def </span><span class="s1">add</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">rule</span><span class="s2">: </span><span class="s1">Rule</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">state </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_root</span>
+        <span class="s0">for </span><span class="s1">part </span><span class="s0">in </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">_parts</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">part</span><span class="s2">.</span><span class="s1">static</span><span class="s2">:</span>
+                <span class="s1">state</span><span class="s2">.</span><span class="s1">static</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s1">part</span><span class="s2">.</span><span class="s1">content</span><span class="s2">, </span><span class="s1">State</span><span class="s2">())</span>
+                <span class="s1">state </span><span class="s2">= </span><span class="s1">state</span><span class="s2">.</span><span class="s1">static</span><span class="s2">[</span><span class="s1">part</span><span class="s2">.</span><span class="s1">content</span><span class="s2">]</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s0">for </span><span class="s1">test_part</span><span class="s2">, </span><span class="s1">new_state </span><span class="s0">in </span><span class="s1">state</span><span class="s2">.</span><span class="s1">dynamic</span><span class="s2">:</span>
+                    <span class="s0">if </span><span class="s1">test_part </span><span class="s2">== </span><span class="s1">part</span><span class="s2">:</span>
+                        <span class="s1">state </span><span class="s2">= </span><span class="s1">new_state</span>
+                        <span class="s0">break</span>
+                <span class="s0">else</span><span class="s2">:</span>
+                    <span class="s1">new_state </span><span class="s2">= </span><span class="s1">State</span><span class="s2">()</span>
+                    <span class="s1">state</span><span class="s2">.</span><span class="s1">dynamic</span><span class="s2">.</span><span class="s1">append</span><span class="s2">((</span><span class="s1">part</span><span class="s2">, </span><span class="s1">new_state</span><span class="s2">))</span>
+                    <span class="s1">state </span><span class="s2">= </span><span class="s1">new_state</span>
+        <span class="s1">state</span><span class="s2">.</span><span class="s1">rules</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">update</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s4"># For every state the dynamic transitions should be sorted by</span>
+        <span class="s4"># the weight of the transition</span>
+        <span class="s1">state </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_root</span>
+
+        <span class="s0">def </span><span class="s1">_update_state</span><span class="s2">(</span><span class="s1">state</span><span class="s2">: </span><span class="s1">State</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s1">state</span><span class="s2">.</span><span class="s1">dynamic</span><span class="s2">.</span><span class="s1">sort</span><span class="s2">(</span><span class="s1">key</span><span class="s2">=</span><span class="s0">lambda </span><span class="s1">entry</span><span class="s2">: </span><span class="s1">entry</span><span class="s2">[</span><span class="s5">0</span><span class="s2">].</span><span class="s1">weight</span><span class="s2">)</span>
+            <span class="s0">for </span><span class="s1">new_state </span><span class="s0">in </span><span class="s1">state</span><span class="s2">.</span><span class="s1">static</span><span class="s2">.</span><span class="s1">values</span><span class="s2">():</span>
+                <span class="s1">_update_state</span><span class="s2">(</span><span class="s1">new_state</span><span class="s2">)</span>
+            <span class="s0">for </span><span class="s1">_</span><span class="s2">, </span><span class="s1">new_state </span><span class="s0">in </span><span class="s1">state</span><span class="s2">.</span><span class="s1">dynamic</span><span class="s2">:</span>
+                <span class="s1">_update_state</span><span class="s2">(</span><span class="s1">new_state</span><span class="s2">)</span>
+
+        <span class="s1">_update_state</span><span class="s2">(</span><span class="s1">state</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">match</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">domain</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">path</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">method</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">websocket</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s2">) </span><span class="s1">-&gt; tuple</span><span class="s2">[</span><span class="s1">Rule</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">MutableMapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]]:</span>
+        <span class="s4"># To match to a rule we need to start at the root state and</span>
+        <span class="s4"># try to follow the transitions until we find a match, or find</span>
+        <span class="s4"># there is no transition to follow.</span>
+
+        <span class="s1">have_match_for </span><span class="s2">= </span><span class="s1">set</span><span class="s2">()</span>
+        <span class="s1">websocket_mismatch </span><span class="s2">= </span><span class="s0">False</span>
+
+        <span class="s0">def </span><span class="s1">_match</span><span class="s2">(</span>
+            <span class="s1">state</span><span class="s2">: </span><span class="s1">State</span><span class="s2">, </span><span class="s1">parts</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">], </span><span class="s1">values</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]</span>
+        <span class="s2">) </span><span class="s1">-&gt; tuple</span><span class="s2">[</span><span class="s1">Rule</span><span class="s2">, </span><span class="s1">list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]] | </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s4"># This function is meant to be called recursively, and will attempt</span>
+            <span class="s4"># to match the head part to the state's transitions.</span>
+            <span class="s0">nonlocal </span><span class="s1">have_match_for</span><span class="s2">, </span><span class="s1">websocket_mismatch</span>
+
+            <span class="s4"># The base case is when all parts have been matched via</span>
+            <span class="s4"># transitions. Hence if there is a rule with methods &amp;</span>
+            <span class="s4"># websocket that work return it and the dynamic values</span>
+            <span class="s4"># extracted.</span>
+            <span class="s0">if </span><span class="s1">parts </span><span class="s2">== []:</span>
+                <span class="s0">for </span><span class="s1">rule </span><span class="s0">in </span><span class="s1">state</span><span class="s2">.</span><span class="s1">rules</span><span class="s2">:</span>
+                    <span class="s0">if </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">methods </span><span class="s0">is not None and </span><span class="s1">method </span><span class="s0">not in </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">methods</span><span class="s2">:</span>
+                        <span class="s1">have_match_for</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">.</span><span class="s1">methods</span><span class="s2">)</span>
+                    <span class="s0">elif </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">websocket </span><span class="s2">!= </span><span class="s1">websocket</span><span class="s2">:</span>
+                        <span class="s1">websocket_mismatch </span><span class="s2">= </span><span class="s0">True</span>
+                    <span class="s0">else</span><span class="s2">:</span>
+                        <span class="s0">return </span><span class="s1">rule</span><span class="s2">, </span><span class="s1">values</span>
+
+                <span class="s4"># Test if there is a match with this path with a</span>
+                <span class="s4"># trailing slash, if so raise an exception to report</span>
+                <span class="s4"># that matching is possible with an additional slash</span>
+                <span class="s0">if </span><span class="s6">&quot;&quot; </span><span class="s0">in </span><span class="s1">state</span><span class="s2">.</span><span class="s1">static</span><span class="s2">:</span>
+                    <span class="s0">for </span><span class="s1">rule </span><span class="s0">in </span><span class="s1">state</span><span class="s2">.</span><span class="s1">static</span><span class="s2">[</span><span class="s6">&quot;&quot;</span><span class="s2">].</span><span class="s1">rules</span><span class="s2">:</span>
+                        <span class="s0">if </span><span class="s1">websocket </span><span class="s2">== </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">websocket </span><span class="s0">and </span><span class="s2">(</span>
+                            <span class="s1">rule</span><span class="s2">.</span><span class="s1">methods </span><span class="s0">is None or </span><span class="s1">method </span><span class="s0">in </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">methods</span>
+                        <span class="s2">):</span>
+                            <span class="s0">if </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">strict_slashes</span><span class="s2">:</span>
+                                <span class="s0">raise </span><span class="s1">SlashRequired</span><span class="s2">()</span>
+                            <span class="s0">else</span><span class="s2">:</span>
+                                <span class="s0">return </span><span class="s1">rule</span><span class="s2">, </span><span class="s1">values</span>
+                <span class="s0">return None</span>
+
+            <span class="s1">part </span><span class="s2">= </span><span class="s1">parts</span><span class="s2">[</span><span class="s5">0</span><span class="s2">]</span>
+            <span class="s4"># To match this part try the static transitions first</span>
+            <span class="s0">if </span><span class="s1">part </span><span class="s0">in </span><span class="s1">state</span><span class="s2">.</span><span class="s1">static</span><span class="s2">:</span>
+                <span class="s1">rv </span><span class="s2">= </span><span class="s1">_match</span><span class="s2">(</span><span class="s1">state</span><span class="s2">.</span><span class="s1">static</span><span class="s2">[</span><span class="s1">part</span><span class="s2">], </span><span class="s1">parts</span><span class="s2">[</span><span class="s5">1</span><span class="s2">:], </span><span class="s1">values</span><span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">rv </span><span class="s0">is not None</span><span class="s2">:</span>
+                    <span class="s0">return </span><span class="s1">rv</span>
+            <span class="s4"># No match via the static transitions, so try the dynamic</span>
+            <span class="s4"># ones.</span>
+            <span class="s0">for </span><span class="s1">test_part</span><span class="s2">, </span><span class="s1">new_state </span><span class="s0">in </span><span class="s1">state</span><span class="s2">.</span><span class="s1">dynamic</span><span class="s2">:</span>
+                <span class="s1">target </span><span class="s2">= </span><span class="s1">part</span>
+                <span class="s1">remaining </span><span class="s2">= </span><span class="s1">parts</span><span class="s2">[</span><span class="s5">1</span><span class="s2">:]</span>
+                <span class="s4"># A final part indicates a transition that always</span>
+                <span class="s4"># consumes the remaining parts i.e. transitions to a</span>
+                <span class="s4"># final state.</span>
+                <span class="s0">if </span><span class="s1">test_part</span><span class="s2">.</span><span class="s1">final</span><span class="s2">:</span>
+                    <span class="s1">target </span><span class="s2">= </span><span class="s6">&quot;/&quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">parts</span><span class="s2">)</span>
+                    <span class="s1">remaining </span><span class="s2">= []</span>
+                <span class="s1">match </span><span class="s2">= </span><span class="s1">re</span><span class="s2">.</span><span class="s1">compile</span><span class="s2">(</span><span class="s1">test_part</span><span class="s2">.</span><span class="s1">content</span><span class="s2">).</span><span class="s1">match</span><span class="s2">(</span><span class="s1">target</span><span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">match </span><span class="s0">is not None</span><span class="s2">:</span>
+                    <span class="s0">if </span><span class="s1">test_part</span><span class="s2">.</span><span class="s1">suffixed</span><span class="s2">:</span>
+                        <span class="s4"># If a part_isolating=False part has a slash suffix, remove the</span>
+                        <span class="s4"># suffix from the match and check for the slash redirect next.</span>
+                        <span class="s1">suffix </span><span class="s2">= </span><span class="s1">match</span><span class="s2">.</span><span class="s1">groups</span><span class="s2">()[-</span><span class="s5">1</span><span class="s2">]</span>
+                        <span class="s0">if </span><span class="s1">suffix </span><span class="s2">== </span><span class="s6">&quot;/&quot;</span><span class="s2">:</span>
+                            <span class="s1">remaining </span><span class="s2">= [</span><span class="s6">&quot;&quot;</span><span class="s2">]</span>
+
+                    <span class="s1">converter_groups </span><span class="s2">= </span><span class="s1">sorted</span><span class="s2">(</span>
+                        <span class="s1">match</span><span class="s2">.</span><span class="s1">groupdict</span><span class="s2">().</span><span class="s1">items</span><span class="s2">(), </span><span class="s1">key</span><span class="s2">=</span><span class="s0">lambda </span><span class="s1">entry</span><span class="s2">: </span><span class="s1">entry</span><span class="s2">[</span><span class="s5">0</span><span class="s2">]</span>
+                    <span class="s2">)</span>
+                    <span class="s1">groups </span><span class="s2">= [</span>
+                        <span class="s1">value</span>
+                        <span class="s0">for </span><span class="s1">key</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">converter_groups</span>
+                        <span class="s0">if </span><span class="s1">key</span><span class="s2">[:</span><span class="s5">11</span><span class="s2">] == </span><span class="s6">&quot;__werkzeug_&quot;</span>
+                    <span class="s2">]</span>
+                    <span class="s1">rv </span><span class="s2">= </span><span class="s1">_match</span><span class="s2">(</span><span class="s1">new_state</span><span class="s2">, </span><span class="s1">remaining</span><span class="s2">, </span><span class="s1">values </span><span class="s2">+ </span><span class="s1">groups</span><span class="s2">)</span>
+                    <span class="s0">if </span><span class="s1">rv </span><span class="s0">is not None</span><span class="s2">:</span>
+                        <span class="s0">return </span><span class="s1">rv</span>
+
+            <span class="s4"># If there is no match and the only part left is a</span>
+            <span class="s4"># trailing slash (&quot;&quot;) consider rules that aren't</span>
+            <span class="s4"># strict-slashes as these should match if there is a final</span>
+            <span class="s4"># slash part.</span>
+            <span class="s0">if </span><span class="s1">parts </span><span class="s2">== [</span><span class="s6">&quot;&quot;</span><span class="s2">]:</span>
+                <span class="s0">for </span><span class="s1">rule </span><span class="s0">in </span><span class="s1">state</span><span class="s2">.</span><span class="s1">rules</span><span class="s2">:</span>
+                    <span class="s0">if </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">strict_slashes</span><span class="s2">:</span>
+                        <span class="s0">continue</span>
+                    <span class="s0">if </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">methods </span><span class="s0">is not None and </span><span class="s1">method </span><span class="s0">not in </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">methods</span><span class="s2">:</span>
+                        <span class="s1">have_match_for</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">.</span><span class="s1">methods</span><span class="s2">)</span>
+                    <span class="s0">elif </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">websocket </span><span class="s2">!= </span><span class="s1">websocket</span><span class="s2">:</span>
+                        <span class="s1">websocket_mismatch </span><span class="s2">= </span><span class="s0">True</span>
+                    <span class="s0">else</span><span class="s2">:</span>
+                        <span class="s0">return </span><span class="s1">rule</span><span class="s2">, </span><span class="s1">values</span>
+
+            <span class="s0">return None</span>
+
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">rv </span><span class="s2">= </span><span class="s1">_match</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_root</span><span class="s2">, [</span><span class="s1">domain</span><span class="s2">, *</span><span class="s1">path</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s6">&quot;/&quot;</span><span class="s2">)], [])</span>
+        <span class="s0">except </span><span class="s1">SlashRequired</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RequestPath</span><span class="s2">(</span><span class="s6">f&quot;</span><span class="s0">{</span><span class="s1">path</span><span class="s0">}</span><span class="s6">/&quot;</span><span class="s2">) </span><span class="s0">from None</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">merge_slashes </span><span class="s0">and </span><span class="s1">rv </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s4"># Try to match again, but with slashes merged</span>
+            <span class="s1">path </span><span class="s2">= </span><span class="s1">re</span><span class="s2">.</span><span class="s1">sub</span><span class="s2">(</span><span class="s6">&quot;/{2,}?&quot;</span><span class="s2">, </span><span class="s6">&quot;/&quot;</span><span class="s2">, </span><span class="s1">path</span><span class="s2">)</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">rv </span><span class="s2">= </span><span class="s1">_match</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_root</span><span class="s2">, [</span><span class="s1">domain</span><span class="s2">, *</span><span class="s1">path</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s6">&quot;/&quot;</span><span class="s2">)], [])</span>
+            <span class="s0">except </span><span class="s1">SlashRequired</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">RequestPath</span><span class="s2">(</span><span class="s6">f&quot;</span><span class="s0">{</span><span class="s1">path</span><span class="s0">}</span><span class="s6">/&quot;</span><span class="s2">) </span><span class="s0">from None</span>
+            <span class="s0">if </span><span class="s1">rv </span><span class="s0">is None or </span><span class="s1">rv</span><span class="s2">[</span><span class="s5">0</span><span class="s2">].</span><span class="s1">merge_slashes </span><span class="s0">is False</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">NoMatch</span><span class="s2">(</span><span class="s1">have_match_for</span><span class="s2">, </span><span class="s1">websocket_mismatch</span><span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">RequestPath</span><span class="s2">(</span><span class="s6">f&quot;</span><span class="s0">{</span><span class="s1">path</span><span class="s0">}</span><span class="s6">&quot;</span><span class="s2">)</span>
+        <span class="s0">elif </span><span class="s1">rv </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">rule</span><span class="s2">, </span><span class="s1">values </span><span class="s2">= </span><span class="s1">rv</span>
+
+            <span class="s1">result </span><span class="s2">= {}</span>
+            <span class="s0">for </span><span class="s1">name</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">zip</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">.</span><span class="s1">_converters</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">(), </span><span class="s1">values</span><span class="s2">):</span>
+                <span class="s0">try</span><span class="s2">:</span>
+                    <span class="s1">value </span><span class="s2">= </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">_converters</span><span class="s2">[</span><span class="s1">name</span><span class="s2">].</span><span class="s1">to_python</span><span class="s2">(</span><span class="s1">value</span><span class="s2">)</span>
+                <span class="s0">except </span><span class="s1">ValidationError</span><span class="s2">:</span>
+                    <span class="s0">raise </span><span class="s1">NoMatch</span><span class="s2">(</span><span class="s1">have_match_for</span><span class="s2">, </span><span class="s1">websocket_mismatch</span><span class="s2">) </span><span class="s0">from None</span>
+                <span class="s1">result</span><span class="s2">[</span><span class="s1">str</span><span class="s2">(</span><span class="s1">name</span><span class="s2">)] = </span><span class="s1">value</span>
+            <span class="s0">if </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">defaults</span><span class="s2">:</span>
+                <span class="s1">result</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">rule</span><span class="s2">.</span><span class="s1">defaults</span><span class="s2">)</span>
+
+            <span class="s0">if </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">alias </span><span class="s0">and </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">map</span><span class="s2">.</span><span class="s1">redirect_defaults</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">RequestAliasRedirect</span><span class="s2">(</span><span class="s1">result</span><span class="s2">, </span><span class="s1">rule</span><span class="s2">.</span><span class="s1">endpoint</span><span class="s2">)</span>
+
+            <span class="s0">return </span><span class="s1">rule</span><span class="s2">, </span><span class="s1">result</span>
+
+        <span class="s0">raise </span><span class="s1">NoMatch</span><span class="s2">(</span><span class="s1">have_match_for</span><span class="s2">, </span><span class="s1">websocket_mismatch</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

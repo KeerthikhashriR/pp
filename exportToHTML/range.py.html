@@ -1,0 +1,237 @@
+<html>
+<head>
+<title>range.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #7a7e85;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+range.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">collections</span><span class="s2">.</span><span class="s1">abc </span><span class="s0">as </span><span class="s1">cabc</span>
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+<span class="s0">from </span><span class="s1">datetime </span><span class="s0">import </span><span class="s1">datetime</span>
+
+<span class="s0">if </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+    <span class="s0">import </span><span class="s1">typing_extensions </span><span class="s0">as </span><span class="s1">te</span>
+
+<span class="s1">T </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s3">&quot;T&quot;</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">IfRange</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Very simple object that represents the `If-Range` header in parsed 
+    form.  It will either have neither a etag or date or one of either but 
+    never both. 
+ 
+    .. versionadded:: 0.7 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">etag</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">, </span><span class="s1">date</span><span class="s2">: </span><span class="s1">datetime </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">):</span>
+        <span class="s5">#: The etag parsed and unquoted.  Ranges always operate on strong</span>
+        <span class="s5">#: etags so the weakness information is not necessary.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">etag </span><span class="s2">= </span><span class="s1">etag</span>
+        <span class="s5">#: The date in parsed format or `None`.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">date </span><span class="s2">= </span><span class="s1">date</span>
+
+    <span class="s0">def </span><span class="s1">to_header</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Converts the object back into an HTTP header.&quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">date </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">http</span><span class="s2">.</span><span class="s1">http_date</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">date</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">etag </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">http</span><span class="s2">.</span><span class="s1">quote_etag</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">etag</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s3">&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__str__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">to_header</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">__repr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s3">f&quot;&lt;</span><span class="s0">{</span><span class="s1">type</span><span class="s2">(</span><span class="s1">self</span><span class="s2">).</span><span class="s1">__name__</span><span class="s0">} {</span><span class="s1">str</span><span class="s2">(</span><span class="s1">self</span><span class="s2">)</span><span class="s0">!r}</span><span class="s3">&gt;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">Range</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Represents a ``Range`` header. All methods only support only 
+    bytes as the unit. Stores a list of ranges if given, but the methods 
+    only work if only one range is provided. 
+ 
+    :raise ValueError: If the ranges provided are invalid. 
+ 
+    .. versionchanged:: 0.15 
+        The ranges passed in are validated. 
+ 
+    .. versionadded:: 0.7 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">units</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">ranges</span><span class="s2">: </span><span class="s1">cabc</span><span class="s2">.</span><span class="s1">Sequence</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">int</span><span class="s2">, </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None</span><span class="s2">]]</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">#: The units of this range.  Usually &quot;bytes&quot;.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">units </span><span class="s2">= </span><span class="s1">units</span>
+        <span class="s5">#: A list of ``(begin, end)`` tuples for the range header provided.</span>
+        <span class="s5">#: The ranges are non-inclusive.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">ranges </span><span class="s2">= </span><span class="s1">ranges</span>
+
+        <span class="s0">for </span><span class="s1">start</span><span class="s2">, </span><span class="s1">end </span><span class="s0">in </span><span class="s1">ranges</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">start </span><span class="s0">is None or </span><span class="s2">(</span><span class="s1">end </span><span class="s0">is not None and </span><span class="s2">(</span><span class="s1">start </span><span class="s2">&lt; </span><span class="s6">0 </span><span class="s0">or </span><span class="s1">start </span><span class="s2">&gt;= </span><span class="s1">end</span><span class="s2">)):</span>
+                <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s2">(</span><span class="s1">start</span><span class="s2">, </span><span class="s1">end</span><span class="s2">)</span><span class="s0">} </span><span class="s3">is not a valid range.&quot;</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">range_for_length</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">length</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; tuple</span><span class="s2">[</span><span class="s1">int</span><span class="s2">, </span><span class="s1">int</span><span class="s2">] | </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;If the range is for bytes, the length is not None and there is 
+        exactly one range and it is satisfiable it returns a ``(start, stop)`` 
+        tuple, otherwise `None`. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">units </span><span class="s2">!= </span><span class="s3">&quot;bytes&quot; </span><span class="s0">or </span><span class="s1">length </span><span class="s0">is None or </span><span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">ranges</span><span class="s2">) != </span><span class="s6">1</span><span class="s2">:</span>
+            <span class="s0">return None</span>
+        <span class="s1">start</span><span class="s2">, </span><span class="s1">end </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">ranges</span><span class="s2">[</span><span class="s6">0</span><span class="s2">]</span>
+        <span class="s0">if </span><span class="s1">end </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">end </span><span class="s2">= </span><span class="s1">length</span>
+            <span class="s0">if </span><span class="s1">start </span><span class="s2">&lt; </span><span class="s6">0</span><span class="s2">:</span>
+                <span class="s1">start </span><span class="s2">+= </span><span class="s1">length</span>
+        <span class="s0">if </span><span class="s1">http</span><span class="s2">.</span><span class="s1">is_byte_range_valid</span><span class="s2">(</span><span class="s1">start</span><span class="s2">, </span><span class="s1">end</span><span class="s2">, </span><span class="s1">length</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">start</span><span class="s2">, </span><span class="s1">min</span><span class="s2">(</span><span class="s1">end</span><span class="s2">, </span><span class="s1">length</span><span class="s2">)</span>
+        <span class="s0">return None</span>
+
+    <span class="s0">def </span><span class="s1">make_content_range</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">length</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; ContentRange </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Creates a :class:`~werkzeug.datastructures.ContentRange` object 
+        from the current range and given content length. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">rng </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">range_for_length</span><span class="s2">(</span><span class="s1">length</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">rng </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">ContentRange</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">units</span><span class="s2">, </span><span class="s1">rng</span><span class="s2">[</span><span class="s6">0</span><span class="s2">], </span><span class="s1">rng</span><span class="s2">[</span><span class="s6">1</span><span class="s2">], </span><span class="s1">length</span><span class="s2">)</span>
+        <span class="s0">return None</span>
+
+    <span class="s0">def </span><span class="s1">to_header</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Converts the object back into an HTTP header.&quot;&quot;&quot;</span>
+        <span class="s1">ranges </span><span class="s2">= []</span>
+        <span class="s0">for </span><span class="s1">begin</span><span class="s2">, </span><span class="s1">end </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">ranges</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">end </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s1">ranges</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">begin</span><span class="s0">}</span><span class="s3">-&quot; </span><span class="s0">if </span><span class="s1">begin </span><span class="s2">&gt;= </span><span class="s6">0 </span><span class="s0">else </span><span class="s1">str</span><span class="s2">(</span><span class="s1">begin</span><span class="s2">))</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">ranges</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">begin</span><span class="s0">}</span><span class="s3">-</span><span class="s0">{</span><span class="s1">end </span><span class="s2">- </span><span class="s6">1</span><span class="s0">}</span><span class="s3">&quot;</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">units</span><span class="s0">}</span><span class="s3">=</span><span class="s0">{</span><span class="s3">','</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">ranges</span><span class="s2">)</span><span class="s0">}</span><span class="s3">&quot;</span>
+
+    <span class="s0">def </span><span class="s1">to_content_range_header</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">length</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Converts the object into `Content-Range` HTTP header, 
+        based on given length 
+        &quot;&quot;&quot;</span>
+        <span class="s1">range </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">range_for_length</span><span class="s2">(</span><span class="s1">length</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">range </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">units</span><span class="s0">} {</span><span class="s1">range</span><span class="s2">[</span><span class="s6">0</span><span class="s2">]</span><span class="s0">}</span><span class="s3">-</span><span class="s0">{</span><span class="s1">range</span><span class="s2">[</span><span class="s6">1</span><span class="s2">] - </span><span class="s6">1</span><span class="s0">}</span><span class="s3">/</span><span class="s0">{</span><span class="s1">length</span><span class="s0">}</span><span class="s3">&quot;</span>
+        <span class="s0">return None</span>
+
+    <span class="s0">def </span><span class="s1">__str__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">to_header</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">__repr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s3">f&quot;&lt;</span><span class="s0">{</span><span class="s1">type</span><span class="s2">(</span><span class="s1">self</span><span class="s2">).</span><span class="s1">__name__</span><span class="s0">} {</span><span class="s1">str</span><span class="s2">(</span><span class="s1">self</span><span class="s2">)</span><span class="s0">!r}</span><span class="s3">&gt;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">_CallbackProperty</span><span class="s2">(</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Generic</span><span class="s2">[</span><span class="s1">T</span><span class="s2">]):</span>
+    <span class="s0">def </span><span class="s1">__set_name__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">owner</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">ContentRange</span><span class="s2">], </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">attr </span><span class="s2">= </span><span class="s3">f&quot;_</span><span class="s0">{</span><span class="s1">name</span><span class="s0">}</span><span class="s3">&quot;</span>
+
+    <span class="s2">@</span><span class="s1">t</span><span class="s2">.</span><span class="s1">overload</span>
+    <span class="s0">def </span><span class="s1">__get__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">instance</span><span class="s2">: </span><span class="s0">None</span><span class="s2">, </span><span class="s1">owner</span><span class="s2">: </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; te</span><span class="s2">.</span><span class="s1">Self</span><span class="s2">: ...</span>
+    <span class="s2">@</span><span class="s1">t</span><span class="s2">.</span><span class="s1">overload</span>
+    <span class="s0">def </span><span class="s1">__get__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">instance</span><span class="s2">: </span><span class="s1">ContentRange</span><span class="s2">, </span><span class="s1">owner</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">ContentRange</span><span class="s2">]) </span><span class="s1">-&gt; T</span><span class="s2">: ...</span>
+    <span class="s0">def </span><span class="s1">__get__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">instance</span><span class="s2">: </span><span class="s1">ContentRange </span><span class="s2">| </span><span class="s0">None</span><span class="s2">, </span><span class="s1">owner</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">ContentRange</span><span class="s2">] | </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; te</span><span class="s2">.</span><span class="s1">Self </span><span class="s2">| </span><span class="s1">T</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">instance </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span>
+
+        <span class="s0">return </span><span class="s1">instance</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">[</span><span class="s1">self</span><span class="s2">.</span><span class="s1">attr</span><span class="s2">]  </span><span class="s5"># type: ignore[no-any-return]</span>
+
+    <span class="s0">def </span><span class="s1">__set__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">instance</span><span class="s2">: </span><span class="s1">ContentRange</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">T</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">instance</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">[</span><span class="s1">self</span><span class="s2">.</span><span class="s1">attr</span><span class="s2">] = </span><span class="s1">value</span>
+
+        <span class="s0">if </span><span class="s1">instance</span><span class="s2">.</span><span class="s1">on_update </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">instance</span><span class="s2">.</span><span class="s1">on_update</span><span class="s2">(</span><span class="s1">instance</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">ContentRange</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Represents the content range header. 
+ 
+    .. versionadded:: 0.7 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">units</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">start</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">stop</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">length</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">on_update</span><span class="s2">: </span><span class="s1">cabc</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">ContentRange</span><span class="s2">], </span><span class="s0">None</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">on_update </span><span class="s2">= </span><span class="s1">on_update</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">set</span><span class="s2">(</span><span class="s1">start</span><span class="s2">, </span><span class="s1">stop</span><span class="s2">, </span><span class="s1">length</span><span class="s2">, </span><span class="s1">units</span><span class="s2">)</span>
+
+    <span class="s5">#: The units to use, usually &quot;bytes&quot;</span>
+    <span class="s1">units</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s1">_CallbackProperty</span><span class="s2">()  </span><span class="s5"># type: ignore[assignment]</span>
+    <span class="s5">#: The start point of the range or `None`.</span>
+    <span class="s1">start</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s1">_CallbackProperty</span><span class="s2">()  </span><span class="s5"># type: ignore[assignment]</span>
+    <span class="s5">#: The stop point of the range (non-inclusive) or `None`.  Can only be</span>
+    <span class="s5">#: `None` if also start is `None`.</span>
+    <span class="s1">stop</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s1">_CallbackProperty</span><span class="s2">()  </span><span class="s5"># type: ignore[assignment]</span>
+    <span class="s5">#: The length of the range or `None`.</span>
+    <span class="s1">length</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s1">_CallbackProperty</span><span class="s2">()  </span><span class="s5"># type: ignore[assignment]</span>
+
+    <span class="s0">def </span><span class="s1">set</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">start</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">stop</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">length</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">units</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s3">&quot;bytes&quot;</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Simple method to update the ranges.&quot;&quot;&quot;</span>
+        <span class="s0">assert </span><span class="s1">http</span><span class="s2">.</span><span class="s1">is_byte_range_valid</span><span class="s2">(</span><span class="s1">start</span><span class="s2">, </span><span class="s1">stop</span><span class="s2">, </span><span class="s1">length</span><span class="s2">), </span><span class="s3">&quot;Bad range provided&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_units</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s1">units</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_start</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s1">start</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_stop</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s1">stop</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_length</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s1">length</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">on_update </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">on_update</span><span class="s2">(</span><span class="s1">self</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">unset</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Sets the units to `None` which indicates that the header should 
+        no longer be used. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">set</span><span class="s2">(</span><span class="s0">None</span><span class="s2">, </span><span class="s0">None</span><span class="s2">, </span><span class="s1">units</span><span class="s2">=</span><span class="s0">None</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">to_header</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_units </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s3">&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_length </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">length</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s1">int </span><span class="s2">= </span><span class="s3">&quot;*&quot;</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">length </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_length</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_start </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_units</span><span class="s0">} </span><span class="s3">*/</span><span class="s0">{</span><span class="s1">length</span><span class="s0">}</span><span class="s3">&quot;</span>
+        <span class="s0">return </span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_units</span><span class="s0">} {</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_start</span><span class="s0">}</span><span class="s3">-</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_stop </span><span class="s2">- </span><span class="s6">1</span><span class="s0">}</span><span class="s3">/</span><span class="s0">{</span><span class="s1">length</span><span class="s0">}</span><span class="s3">&quot;  </span><span class="s5"># type: ignore[operator]</span>
+
+    <span class="s0">def </span><span class="s1">__bool__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_units </span><span class="s0">is not None</span>
+
+    <span class="s0">def </span><span class="s1">__str__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">to_header</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">__repr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s3">f&quot;&lt;</span><span class="s0">{</span><span class="s1">type</span><span class="s2">(</span><span class="s1">self</span><span class="s2">).</span><span class="s1">__name__</span><span class="s0">} {</span><span class="s1">str</span><span class="s2">(</span><span class="s1">self</span><span class="s2">)</span><span class="s0">!r}</span><span class="s3">&gt;&quot;</span>
+
+
+<span class="s5"># circular dependencies</span>
+<span class="s0">from </span><span class="s2">.. </span><span class="s0">import </span><span class="s1">http</span>
+</pre>
+</body>
+</html>

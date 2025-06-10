@@ -1,0 +1,272 @@
+<html>
+<head>
+<title>applications.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+.s5 { color: #6aab73;}
+.s6 { color: #5f826b; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+applications.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">import </span><span class="s1">typing</span>
+<span class="s0">import </span><span class="s1">warnings</span>
+
+<span class="s0">if </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">version_info </span><span class="s2">&gt;= (</span><span class="s3">3</span><span class="s2">, </span><span class="s3">10</span><span class="s2">):  </span><span class="s4"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">ParamSpec</span>
+<span class="s0">else</span><span class="s2">:  </span><span class="s4"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s1">typing_extensions </span><span class="s0">import </span><span class="s1">ParamSpec</span>
+
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">datastructures </span><span class="s0">import </span><span class="s1">State</span><span class="s2">, </span><span class="s1">URLPath</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">middleware </span><span class="s0">import </span><span class="s1">Middleware</span><span class="s2">, </span><span class="s1">_MiddlewareFactory</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">middleware</span><span class="s2">.</span><span class="s1">base </span><span class="s0">import </span><span class="s1">BaseHTTPMiddleware</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">middleware</span><span class="s2">.</span><span class="s1">errors </span><span class="s0">import </span><span class="s1">ServerErrorMiddleware</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">middleware</span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">ExceptionMiddleware</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">requests </span><span class="s0">import </span><span class="s1">Request</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">responses </span><span class="s0">import </span><span class="s1">Response</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">routing </span><span class="s0">import </span><span class="s1">BaseRoute</span><span class="s2">, </span><span class="s1">Router</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">ASGIApp</span><span class="s2">, </span><span class="s1">ExceptionHandler</span><span class="s2">, </span><span class="s1">Lifespan</span><span class="s2">, </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">Send</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">websockets </span><span class="s0">import </span><span class="s1">WebSocket</span>
+
+<span class="s1">AppType </span><span class="s2">= </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s5">&quot;AppType&quot;</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s5">&quot;Starlette&quot;</span><span class="s2">)</span>
+<span class="s1">P </span><span class="s2">= </span><span class="s1">ParamSpec</span><span class="s2">(</span><span class="s5">&quot;P&quot;</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">Starlette</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot;Creates an Starlette application.&quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">: </span><span class="s1">AppType</span><span class="s2">,</span>
+        <span class="s1">debug</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">routes</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Sequence</span><span class="s2">[</span><span class="s1">BaseRoute</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">middleware</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Sequence</span><span class="s2">[</span><span class="s1">Middleware</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">exception_handlers</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, </span><span class="s1">ExceptionHandler</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">on_startup</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Sequence</span><span class="s2">[</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[], </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">on_shutdown</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Sequence</span><span class="s2">[</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[], </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">lifespan</span><span class="s2">: </span><span class="s1">Lifespan</span><span class="s2">[</span><span class="s1">AppType</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot;Initializes the application. 
+ 
+        Parameters: 
+            debug: Boolean indicating if debug tracebacks should be returned on errors. 
+            routes: A list of routes to serve incoming HTTP and WebSocket requests. 
+            middleware: A list of middleware to run for every request. A starlette 
+                application will always automatically include two middleware classes. 
+                `ServerErrorMiddleware` is added as the very outermost middleware, to handle 
+                any uncaught errors occurring anywhere in the entire stack. 
+                `ExceptionMiddleware` is added as the very innermost middleware, to deal 
+                with handled exception cases occurring in the routing or endpoints. 
+            exception_handlers: A mapping of either integer status codes, 
+                or exception class types onto callables which handle the exceptions. 
+                Exception handler callables should be of the form 
+                `handler(request, exc) -&gt; response` and may be either standard functions, or 
+                async functions. 
+            on_startup: A list of callables to run on application startup. 
+                Startup handler callables do not take any arguments, and may be either 
+                standard functions, or async functions. 
+            on_shutdown: A list of callables to run on application shutdown. 
+                Shutdown handler callables do not take any arguments, and may be either 
+                standard functions, or async functions. 
+            lifespan: A lifespan context function, which can be used to perform 
+                startup and shutdown tasks. This is a newer style that replaces the 
+                `on_startup` and `on_shutdown` handlers. Use one or the other, not both. 
+        &quot;&quot;&quot;</span>
+        <span class="s4"># The lifespan context function is a newer style that replaces</span>
+        <span class="s4"># on_startup / on_shutdown handlers. Use one or the other, not both.</span>
+        <span class="s0">assert </span><span class="s1">lifespan </span><span class="s0">is None or </span><span class="s2">(</span><span class="s1">on_startup </span><span class="s0">is None and </span><span class="s1">on_shutdown </span><span class="s0">is None</span><span class="s2">), (</span>
+            <span class="s5">&quot;Use either 'lifespan' or 'on_startup'/'on_shutdown', not both.&quot;</span>
+        <span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">debug </span><span class="s2">= </span><span class="s1">debug</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">state </span><span class="s2">= </span><span class="s1">State</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">router </span><span class="s2">= </span><span class="s1">Router</span><span class="s2">(</span><span class="s1">routes</span><span class="s2">, </span><span class="s1">on_startup</span><span class="s2">=</span><span class="s1">on_startup</span><span class="s2">, </span><span class="s1">on_shutdown</span><span class="s2">=</span><span class="s1">on_shutdown</span><span class="s2">, </span><span class="s1">lifespan</span><span class="s2">=</span><span class="s1">lifespan</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">exception_handlers </span><span class="s2">= {} </span><span class="s0">if </span><span class="s1">exception_handlers </span><span class="s0">is None else </span><span class="s1">dict</span><span class="s2">(</span><span class="s1">exception_handlers</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">user_middleware </span><span class="s2">= [] </span><span class="s0">if </span><span class="s1">middleware </span><span class="s0">is None else </span><span class="s1">list</span><span class="s2">(</span><span class="s1">middleware</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">middleware_stack</span><span class="s2">: </span><span class="s1">ASGIApp </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+
+    <span class="s0">def </span><span class="s1">build_middleware_stack</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; ASGIApp</span><span class="s2">:</span>
+        <span class="s1">debug </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">debug</span>
+        <span class="s1">error_handler </span><span class="s2">= </span><span class="s0">None</span>
+        <span class="s1">exception_handlers</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Request</span><span class="s2">, </span><span class="s1">Exception</span><span class="s2">], </span><span class="s1">Response</span><span class="s2">]] = {}</span>
+
+        <span class="s0">for </span><span class="s1">key</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">exception_handlers</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+            <span class="s0">if </span><span class="s1">key </span><span class="s0">in </span><span class="s2">(</span><span class="s3">500</span><span class="s2">, </span><span class="s1">Exception</span><span class="s2">):</span>
+                <span class="s1">error_handler </span><span class="s2">= </span><span class="s1">value</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">exception_handlers</span><span class="s2">[</span><span class="s1">key</span><span class="s2">] = </span><span class="s1">value</span>
+
+        <span class="s1">middleware </span><span class="s2">= (</span>
+            <span class="s2">[</span><span class="s1">Middleware</span><span class="s2">(</span><span class="s1">ServerErrorMiddleware</span><span class="s2">, </span><span class="s1">handler</span><span class="s2">=</span><span class="s1">error_handler</span><span class="s2">, </span><span class="s1">debug</span><span class="s2">=</span><span class="s1">debug</span><span class="s2">)]</span>
+            <span class="s2">+ </span><span class="s1">self</span><span class="s2">.</span><span class="s1">user_middleware</span>
+            <span class="s2">+ [</span><span class="s1">Middleware</span><span class="s2">(</span><span class="s1">ExceptionMiddleware</span><span class="s2">, </span><span class="s1">handlers</span><span class="s2">=</span><span class="s1">exception_handlers</span><span class="s2">, </span><span class="s1">debug</span><span class="s2">=</span><span class="s1">debug</span><span class="s2">)]</span>
+        <span class="s2">)</span>
+
+        <span class="s1">app </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">router</span>
+        <span class="s0">for </span><span class="s1">cls</span><span class="s2">, </span><span class="s1">args</span><span class="s2">, </span><span class="s1">kwargs </span><span class="s0">in </span><span class="s1">reversed</span><span class="s2">(</span><span class="s1">middleware</span><span class="s2">):</span>
+            <span class="s1">app </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">(</span><span class="s1">app</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">app</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">routes</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">BaseRoute</span><span class="s2">]:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">router</span><span class="s2">.</span><span class="s1">routes</span>
+
+    <span class="s0">def </span><span class="s1">url_path_for</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, /, **</span><span class="s1">path_params</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; URLPath</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">router</span><span class="s2">.</span><span class="s1">url_path_for</span><span class="s2">(</span><span class="s1">name</span><span class="s2">, **</span><span class="s1">path_params</span><span class="s2">)</span>
+
+    <span class="s0">async def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">: </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">: </span><span class="s1">Send</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">scope</span><span class="s2">[</span><span class="s5">&quot;app&quot;</span><span class="s2">] = </span><span class="s1">self</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">middleware_stack </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">middleware_stack </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">build_middleware_stack</span><span class="s2">()</span>
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">middleware_stack</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">on_event</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">event_type</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">:  </span><span class="s4"># type: ignore[type-arg]</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">router</span><span class="s2">.</span><span class="s1">on_event</span><span class="s2">(</span><span class="s1">event_type</span><span class="s2">)  </span><span class="s4"># pragma: no cover</span>
+
+    <span class="s0">def </span><span class="s1">mount</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">path</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">app</span><span class="s2">: </span><span class="s1">ASGIApp</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">router</span><span class="s2">.</span><span class="s1">mount</span><span class="s2">(</span><span class="s1">path</span><span class="s2">, </span><span class="s1">app</span><span class="s2">=</span><span class="s1">app</span><span class="s2">, </span><span class="s1">name</span><span class="s2">=</span><span class="s1">name</span><span class="s2">)  </span><span class="s4"># pragma: no cover</span>
+
+    <span class="s0">def </span><span class="s1">host</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">host</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">app</span><span class="s2">: </span><span class="s1">ASGIApp</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">router</span><span class="s2">.</span><span class="s1">host</span><span class="s2">(</span><span class="s1">host</span><span class="s2">, </span><span class="s1">app</span><span class="s2">=</span><span class="s1">app</span><span class="s2">, </span><span class="s1">name</span><span class="s2">=</span><span class="s1">name</span><span class="s2">)  </span><span class="s4"># pragma: no cover</span>
+
+    <span class="s0">def </span><span class="s1">add_middleware</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">middleware_class</span><span class="s2">: </span><span class="s1">_MiddlewareFactory</span><span class="s2">[</span><span class="s1">P</span><span class="s2">],</span>
+        <span class="s2">*</span><span class="s1">args</span><span class="s2">: </span><span class="s1">P</span><span class="s2">.</span><span class="s1">args</span><span class="s2">,</span>
+        <span class="s2">**</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">P</span><span class="s2">.</span><span class="s1">kwargs</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">middleware_stack </span><span class="s0">is not None</span><span class="s2">:  </span><span class="s4"># pragma: no cover</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s5">&quot;Cannot add middleware after an application has started&quot;</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">user_middleware</span><span class="s2">.</span><span class="s1">insert</span><span class="s2">(</span><span class="s3">0</span><span class="s2">, </span><span class="s1">Middleware</span><span class="s2">(</span><span class="s1">middleware_class</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">))</span>
+
+    <span class="s0">def </span><span class="s1">add_exception_handler</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">exc_class_or_status_code</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s1">type</span><span class="s2">[</span><span class="s1">Exception</span><span class="s2">],</span>
+        <span class="s1">handler</span><span class="s2">: </span><span class="s1">ExceptionHandler</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:  </span><span class="s4"># pragma: no cover</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">exception_handlers</span><span class="s2">[</span><span class="s1">exc_class_or_status_code</span><span class="s2">] = </span><span class="s1">handler</span>
+
+    <span class="s0">def </span><span class="s1">add_event_handler</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">event_type</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">func</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">,  </span><span class="s4"># type: ignore[type-arg]</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:  </span><span class="s4"># pragma: no cover</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">router</span><span class="s2">.</span><span class="s1">add_event_handler</span><span class="s2">(</span><span class="s1">event_type</span><span class="s2">, </span><span class="s1">func</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">add_route</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">path</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">route</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Request</span><span class="s2">], </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Awaitable</span><span class="s2">[</span><span class="s1">Response</span><span class="s2">] | </span><span class="s1">Response</span><span class="s2">],</span>
+        <span class="s1">methods</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">include_in_schema</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:  </span><span class="s4"># pragma: no cover</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">router</span><span class="s2">.</span><span class="s1">add_route</span><span class="s2">(</span><span class="s1">path</span><span class="s2">, </span><span class="s1">route</span><span class="s2">, </span><span class="s1">methods</span><span class="s2">=</span><span class="s1">methods</span><span class="s2">, </span><span class="s1">name</span><span class="s2">=</span><span class="s1">name</span><span class="s2">, </span><span class="s1">include_in_schema</span><span class="s2">=</span><span class="s1">include_in_schema</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">add_websocket_route</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">path</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">route</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">WebSocket</span><span class="s2">], </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Awaitable</span><span class="s2">[</span><span class="s0">None</span><span class="s2">]],</span>
+        <span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:  </span><span class="s4"># pragma: no cover</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">router</span><span class="s2">.</span><span class="s1">add_websocket_route</span><span class="s2">(</span><span class="s1">path</span><span class="s2">, </span><span class="s1">route</span><span class="s2">, </span><span class="s1">name</span><span class="s2">=</span><span class="s1">name</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">exception_handler</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">exc_class_or_status_code</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s1">type</span><span class="s2">[</span><span class="s1">Exception</span><span class="s2">]) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">:  </span><span class="s4"># type: ignore[type-arg]</span>
+        <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+            <span class="s5">&quot;The `exception_handler` decorator is deprecated, and will be removed in version 1.0.0. &quot;</span>
+            <span class="s5">&quot;Refer to https://www.starlette.io/exceptions/ for the recommended approach.&quot;</span><span class="s2">,</span>
+            <span class="s1">DeprecationWarning</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+        <span class="s0">def </span><span class="s1">decorator</span><span class="s2">(</span><span class="s1">func</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">:  </span><span class="s4"># type: ignore[type-arg]</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">add_exception_handler</span><span class="s2">(</span><span class="s1">exc_class_or_status_code</span><span class="s2">, </span><span class="s1">func</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">func</span>
+
+        <span class="s0">return </span><span class="s1">decorator</span>
+
+    <span class="s0">def </span><span class="s1">route</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">path</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">methods</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">include_in_schema</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">:  </span><span class="s4"># type: ignore[type-arg]</span>
+        <span class="s6">&quot;&quot;&quot; 
+        We no longer document this decorator style API, and its usage is discouraged. 
+        Instead you should use the following approach: 
+ 
+        &gt;&gt;&gt; routes = [Route(path, endpoint=...), ...] 
+        &gt;&gt;&gt; app = Starlette(routes=routes) 
+        &quot;&quot;&quot;</span>
+        <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+            <span class="s5">&quot;The `route` decorator is deprecated, and will be removed in version 1.0.0. &quot;</span>
+            <span class="s5">&quot;Refer to https://www.starlette.io/routing/ for the recommended approach.&quot;</span><span class="s2">,</span>
+            <span class="s1">DeprecationWarning</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+        <span class="s0">def </span><span class="s1">decorator</span><span class="s2">(</span><span class="s1">func</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">:  </span><span class="s4"># type: ignore[type-arg]</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">router</span><span class="s2">.</span><span class="s1">add_route</span><span class="s2">(</span>
+                <span class="s1">path</span><span class="s2">,</span>
+                <span class="s1">func</span><span class="s2">,</span>
+                <span class="s1">methods</span><span class="s2">=</span><span class="s1">methods</span><span class="s2">,</span>
+                <span class="s1">name</span><span class="s2">=</span><span class="s1">name</span><span class="s2">,</span>
+                <span class="s1">include_in_schema</span><span class="s2">=</span><span class="s1">include_in_schema</span><span class="s2">,</span>
+            <span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">func</span>
+
+        <span class="s0">return </span><span class="s1">decorator</span>
+
+    <span class="s0">def </span><span class="s1">websocket_route</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">path</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">:  </span><span class="s4"># type: ignore[type-arg]</span>
+        <span class="s6">&quot;&quot;&quot; 
+        We no longer document this decorator style API, and its usage is discouraged. 
+        Instead you should use the following approach: 
+ 
+        &gt;&gt;&gt; routes = [WebSocketRoute(path, endpoint=...), ...] 
+        &gt;&gt;&gt; app = Starlette(routes=routes) 
+        &quot;&quot;&quot;</span>
+        <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+            <span class="s5">&quot;The `websocket_route` decorator is deprecated, and will be removed in version 1.0.0. &quot;</span>
+            <span class="s5">&quot;Refer to https://www.starlette.io/routing/#websocket-routing for the recommended approach.&quot;</span><span class="s2">,</span>
+            <span class="s1">DeprecationWarning</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+        <span class="s0">def </span><span class="s1">decorator</span><span class="s2">(</span><span class="s1">func</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">:  </span><span class="s4"># type: ignore[type-arg]</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">router</span><span class="s2">.</span><span class="s1">add_websocket_route</span><span class="s2">(</span><span class="s1">path</span><span class="s2">, </span><span class="s1">func</span><span class="s2">, </span><span class="s1">name</span><span class="s2">=</span><span class="s1">name</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">func</span>
+
+        <span class="s0">return </span><span class="s1">decorator</span>
+
+    <span class="s0">def </span><span class="s1">middleware</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">middleware_type</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">:  </span><span class="s4"># type: ignore[type-arg]</span>
+        <span class="s6">&quot;&quot;&quot; 
+        We no longer document this decorator style API, and its usage is discouraged. 
+        Instead you should use the following approach: 
+ 
+        &gt;&gt;&gt; middleware = [Middleware(...), ...] 
+        &gt;&gt;&gt; app = Starlette(middleware=middleware) 
+        &quot;&quot;&quot;</span>
+        <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+            <span class="s5">&quot;The `middleware` decorator is deprecated, and will be removed in version 1.0.0. &quot;</span>
+            <span class="s5">&quot;Refer to https://www.starlette.io/middleware/#using-middleware for recommended approach.&quot;</span><span class="s2">,</span>
+            <span class="s1">DeprecationWarning</span><span class="s2">,</span>
+        <span class="s2">)</span>
+        <span class="s0">assert </span><span class="s1">middleware_type </span><span class="s2">== </span><span class="s5">&quot;http&quot;</span><span class="s2">, </span><span class="s5">'Currently only middleware(&quot;http&quot;) is supported.'</span>
+
+        <span class="s0">def </span><span class="s1">decorator</span><span class="s2">(</span><span class="s1">func</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">:  </span><span class="s4"># type: ignore[type-arg]</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">add_middleware</span><span class="s2">(</span><span class="s1">BaseHTTPMiddleware</span><span class="s2">, </span><span class="s1">dispatch</span><span class="s2">=</span><span class="s1">func</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">func</span>
+
+        <span class="s0">return </span><span class="s1">decorator</span>
+</pre>
+</body>
+</html>

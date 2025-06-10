@@ -1,0 +1,110 @@
+<html>
+<head>
+<title>message_logger.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #2aacb8;}
+.s6 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+message_logger.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">logging</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span>
+
+<span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">_types </span><span class="s0">import </span><span class="s2">(</span>
+    <span class="s1">ASGI3Application</span><span class="s2">,</span>
+    <span class="s1">ASGIReceiveCallable</span><span class="s2">,</span>
+    <span class="s1">ASGIReceiveEvent</span><span class="s2">,</span>
+    <span class="s1">ASGISendCallable</span><span class="s2">,</span>
+    <span class="s1">ASGISendEvent</span><span class="s2">,</span>
+    <span class="s1">WWWScope</span><span class="s2">,</span>
+<span class="s2">)</span>
+<span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">logging </span><span class="s0">import </span><span class="s1">TRACE_LOG_LEVEL</span>
+
+<span class="s1">PLACEHOLDER_FORMAT </span><span class="s2">= {</span>
+    <span class="s3">&quot;body&quot;</span><span class="s2">: </span><span class="s3">&quot;&lt;{length} bytes&gt;&quot;</span><span class="s2">,</span>
+    <span class="s3">&quot;bytes&quot;</span><span class="s2">: </span><span class="s3">&quot;&lt;{length} bytes&gt;&quot;</span><span class="s2">,</span>
+    <span class="s3">&quot;text&quot;</span><span class="s2">: </span><span class="s3">&quot;&lt;{length} chars&gt;&quot;</span><span class="s2">,</span>
+    <span class="s3">&quot;headers&quot;</span><span class="s2">: </span><span class="s3">&quot;&lt;...&gt;&quot;</span><span class="s2">,</span>
+<span class="s2">}</span>
+
+
+<span class="s0">def </span><span class="s1">message_with_placeholders</span><span class="s2">(</span><span class="s1">message</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Return an ASGI message, with any body-type content omitted and replaced 
+    with a placeholder. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">new_message </span><span class="s2">= </span><span class="s1">message</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">()</span>
+    <span class="s0">for </span><span class="s1">attr </span><span class="s0">in </span><span class="s1">PLACEHOLDER_FORMAT</span><span class="s2">.</span><span class="s1">keys</span><span class="s2">():</span>
+        <span class="s0">if </span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">attr</span><span class="s2">) </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">content </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s1">attr</span><span class="s2">]</span>
+            <span class="s1">placeholder </span><span class="s2">= </span><span class="s1">PLACEHOLDER_FORMAT</span><span class="s2">[</span><span class="s1">attr</span><span class="s2">].</span><span class="s1">format</span><span class="s2">(</span><span class="s1">length</span><span class="s2">=</span><span class="s1">len</span><span class="s2">(</span><span class="s1">content</span><span class="s2">))</span>
+            <span class="s1">new_message</span><span class="s2">[</span><span class="s1">attr</span><span class="s2">] = </span><span class="s1">placeholder</span>
+    <span class="s0">return </span><span class="s1">new_message</span>
+
+
+<span class="s0">class </span><span class="s1">MessageLoggerMiddleware</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">app</span><span class="s2">: </span><span class="s3">&quot;ASGI3Application&quot;</span><span class="s2">):</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">task_counter </span><span class="s2">= </span><span class="s5">0</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app </span><span class="s2">= </span><span class="s1">app</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">logger </span><span class="s2">= </span><span class="s1">logging</span><span class="s2">.</span><span class="s1">getLogger</span><span class="s2">(</span><span class="s3">&quot;uvicorn.asgi&quot;</span><span class="s2">)</span>
+
+        <span class="s0">def </span><span class="s1">trace</span><span class="s2">(</span><span class="s1">message</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">log</span><span class="s2">(</span><span class="s1">TRACE_LOG_LEVEL</span><span class="s2">, </span><span class="s1">message</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">trace </span><span class="s2">= </span><span class="s1">trace  </span><span class="s6"># type: ignore</span>
+
+    <span class="s0">async def </span><span class="s1">__call__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">scope</span><span class="s2">: </span><span class="s3">&quot;WWWScope&quot;</span><span class="s2">,</span>
+        <span class="s1">receive</span><span class="s2">: </span><span class="s3">&quot;ASGIReceiveCallable&quot;</span><span class="s2">,</span>
+        <span class="s1">send</span><span class="s2">: </span><span class="s3">&quot;ASGISendCallable&quot;</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">task_counter </span><span class="s2">+= </span><span class="s5">1</span>
+
+        <span class="s1">task_counter </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">task_counter</span>
+        <span class="s1">client </span><span class="s2">= </span><span class="s1">scope</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s3">&quot;client&quot;</span><span class="s2">)</span>
+        <span class="s1">prefix </span><span class="s2">= </span><span class="s3">&quot;%s:%d - ASGI&quot; </span><span class="s2">% (</span><span class="s1">client</span><span class="s2">[</span><span class="s5">0</span><span class="s2">], </span><span class="s1">client</span><span class="s2">[</span><span class="s5">1</span><span class="s2">]) </span><span class="s0">if </span><span class="s1">client </span><span class="s0">else </span><span class="s3">&quot;ASGI&quot;</span>
+
+        <span class="s0">async def </span><span class="s1">inner_receive</span><span class="s2">() </span><span class="s1">-&gt; </span><span class="s3">&quot;ASGIReceiveEvent&quot;</span><span class="s2">:</span>
+            <span class="s1">message </span><span class="s2">= </span><span class="s0">await </span><span class="s1">receive</span><span class="s2">()</span>
+            <span class="s1">logged_message </span><span class="s2">= </span><span class="s1">message_with_placeholders</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+            <span class="s1">log_text </span><span class="s2">= </span><span class="s3">&quot;%s [%d] Receive %s&quot;</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">trace</span><span class="s2">(  </span><span class="s6"># type: ignore</span>
+                <span class="s1">log_text</span><span class="s2">, </span><span class="s1">prefix</span><span class="s2">, </span><span class="s1">task_counter</span><span class="s2">, </span><span class="s1">logged_message</span>
+            <span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">message</span>
+
+        <span class="s0">async def </span><span class="s1">inner_send</span><span class="s2">(</span><span class="s1">message</span><span class="s2">: </span><span class="s3">&quot;ASGISendEvent&quot;</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s1">logged_message </span><span class="s2">= </span><span class="s1">message_with_placeholders</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+            <span class="s1">log_text </span><span class="s2">= </span><span class="s3">&quot;%s [%d] Send %s&quot;</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">trace</span><span class="s2">(  </span><span class="s6"># type: ignore</span>
+                <span class="s1">log_text</span><span class="s2">, </span><span class="s1">prefix</span><span class="s2">, </span><span class="s1">task_counter</span><span class="s2">, </span><span class="s1">logged_message</span>
+            <span class="s2">)</span>
+            <span class="s0">await </span><span class="s1">send</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+
+        <span class="s1">logged_scope </span><span class="s2">= </span><span class="s1">message_with_placeholders</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">)</span>
+        <span class="s1">log_text </span><span class="s2">= </span><span class="s3">&quot;%s [%d] Started scope=%s&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">trace</span><span class="s2">(</span><span class="s1">log_text</span><span class="s2">, </span><span class="s1">prefix</span><span class="s2">, </span><span class="s1">task_counter</span><span class="s2">, </span><span class="s1">logged_scope</span><span class="s2">)  </span><span class="s6"># type: ignore</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">inner_receive</span><span class="s2">, </span><span class="s1">inner_send</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">BaseException </span><span class="s0">as </span><span class="s1">exc</span><span class="s2">:</span>
+            <span class="s1">log_text </span><span class="s2">= </span><span class="s3">&quot;%s [%d] Raised exception&quot;</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">trace</span><span class="s2">(</span><span class="s1">log_text</span><span class="s2">, </span><span class="s1">prefix</span><span class="s2">, </span><span class="s1">task_counter</span><span class="s2">)  </span><span class="s6"># type: ignore</span>
+            <span class="s0">raise </span><span class="s1">exc </span><span class="s0">from None</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">log_text </span><span class="s2">= </span><span class="s3">&quot;%s [%d] Completed&quot;</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">logger</span><span class="s2">.</span><span class="s1">trace</span><span class="s2">(</span><span class="s1">log_text</span><span class="s2">, </span><span class="s1">prefix</span><span class="s2">, </span><span class="s1">task_counter</span><span class="s2">)  </span><span class="s6"># type: ignore</span>
+</pre>
+</body>
+</html>

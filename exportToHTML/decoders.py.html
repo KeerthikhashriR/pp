@@ -1,0 +1,209 @@
+<html>
+<head>
+<title>decoders.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #7a7e85;}
+.s4 { color: #6aab73;}
+.s5 { color: #5f826b; font-style: italic;}
+.s6 { color: #2aacb8;}
+.s7 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+decoders.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">base64</span>
+<span class="s0">import </span><span class="s1">binascii</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">TYPE_CHECKING</span>
+
+<span class="s0">from </span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">DecodeError</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING</span><span class="s2">:  </span><span class="s3"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Protocol</span><span class="s2">, </span><span class="s1">TypeVar</span>
+
+    <span class="s1">_T_contra </span><span class="s2">= </span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s4">&quot;_T_contra&quot;</span><span class="s2">, </span><span class="s1">contravariant</span><span class="s2">=</span><span class="s0">True</span><span class="s2">)</span>
+
+    <span class="s0">class </span><span class="s1">SupportsWrite</span><span class="s2">(</span><span class="s1">Protocol</span><span class="s2">[</span><span class="s1">_T_contra</span><span class="s2">]):</span>
+        <span class="s0">def </span><span class="s1">write</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">__b</span><span class="s2">: </span><span class="s1">_T_contra</span><span class="s2">) </span><span class="s1">-&gt; object</span><span class="s2">: ...</span>
+
+        <span class="s3"># No way to specify optional methods. See</span>
+        <span class="s3"># https://github.com/python/typing/issues/601</span>
+        <span class="s3"># close() [Optional]</span>
+        <span class="s3"># finalize() [Optional]</span>
+
+
+<span class="s0">class </span><span class="s1">Base64Decoder</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot;This object provides an interface to decode a stream of Base64 data.  It 
+    is instantiated with an &quot;underlying object&quot;, and whenever a write() 
+    operation is performed, it will decode the incoming data as Base64, and 
+    call write() on the underlying object.  This is primarily used for decoding 
+    form data encoded as Base64, but can be used for other purposes:: 
+ 
+        from python_multipart.decoders import Base64Decoder 
+        fd = open(&quot;notb64.txt&quot;, &quot;wb&quot;) 
+        decoder = Base64Decoder(fd) 
+        try: 
+            decoder.write(&quot;Zm9vYmFy&quot;)       # &quot;foobar&quot; in Base64 
+            decoder.finalize() 
+        finally: 
+            decoder.close() 
+ 
+        # The contents of &quot;notb64.txt&quot; should be &quot;foobar&quot;. 
+ 
+    This object will also pass all finalize() and close() calls to the 
+    underlying object, if the underlying object supports them. 
+ 
+    Note that this class maintains a cache of base64 chunks, so that a write of 
+    arbitrary size can be performed.  You must call :meth:`finalize` on this 
+    object after all writes are completed to ensure that all data is flushed 
+    to the underlying object. 
+ 
+    :param underlying: the underlying object to pass writes to 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">underlying</span><span class="s2">: </span><span class="s4">&quot;SupportsWrite[bytes]&quot;</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">cache </span><span class="s2">= </span><span class="s1">bytearray</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">underlying </span><span class="s2">= </span><span class="s1">underlying</span>
+
+    <span class="s0">def </span><span class="s1">write</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">data</span><span class="s2">: </span><span class="s1">bytes</span><span class="s2">) </span><span class="s1">-&gt; int</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Takes any input data provided, decodes it as base64, and passes it 
+        on to the underlying object.  If the data provided is invalid base64 
+        data, then this method will raise 
+        a :class:`python_multipart.exceptions.DecodeError` 
+ 
+        :param data: base64 data to decode 
+        &quot;&quot;&quot;</span>
+
+        <span class="s3"># Prepend any cache info to our data.</span>
+        <span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">cache</span><span class="s2">) &gt; </span><span class="s6">0</span><span class="s2">:</span>
+            <span class="s1">data </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cache </span><span class="s2">+ </span><span class="s1">data</span>
+
+        <span class="s3"># Slice off a string that's a multiple of 4.</span>
+        <span class="s1">decode_len </span><span class="s2">= (</span><span class="s1">len</span><span class="s2">(</span><span class="s1">data</span><span class="s2">) // </span><span class="s6">4</span><span class="s2">) * </span><span class="s6">4</span>
+        <span class="s1">val </span><span class="s2">= </span><span class="s1">data</span><span class="s2">[:</span><span class="s1">decode_len</span><span class="s2">]</span>
+
+        <span class="s3"># Decode and write, if we have any.</span>
+        <span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">val</span><span class="s2">) &gt; </span><span class="s6">0</span><span class="s2">:</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">decoded </span><span class="s2">= </span><span class="s1">base64</span><span class="s2">.</span><span class="s1">b64decode</span><span class="s2">(</span><span class="s1">val</span><span class="s2">)</span>
+            <span class="s0">except </span><span class="s1">binascii</span><span class="s2">.</span><span class="s1">Error</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">DecodeError</span><span class="s2">(</span><span class="s4">&quot;There was an error raised while decoding base64-encoded data.&quot;</span><span class="s2">)</span>
+
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">underlying</span><span class="s2">.</span><span class="s1">write</span><span class="s2">(</span><span class="s1">decoded</span><span class="s2">)</span>
+
+        <span class="s3"># Get the remaining bytes and save in our cache.</span>
+        <span class="s1">remaining_len </span><span class="s2">= </span><span class="s1">len</span><span class="s2">(</span><span class="s1">data</span><span class="s2">) % </span><span class="s6">4</span>
+        <span class="s0">if </span><span class="s1">remaining_len </span><span class="s2">&gt; </span><span class="s6">0</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">cache</span><span class="s2">[:] = </span><span class="s1">data</span><span class="s2">[-</span><span class="s1">remaining_len</span><span class="s2">:]</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">cache</span><span class="s2">[:] = </span><span class="s7">b&quot;&quot;</span>
+
+        <span class="s3"># Return the length of the data to indicate no error.</span>
+        <span class="s0">return </span><span class="s1">len</span><span class="s2">(</span><span class="s1">data</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">close</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Close this decoder.  If the underlying object has a `close()` 
+        method, this function will call it. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">underlying</span><span class="s2">, </span><span class="s4">&quot;close&quot;</span><span class="s2">):</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">underlying</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">finalize</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Finalize this object.  This should be called when no more data 
+        should be written to the stream.  This function can raise a 
+        :class:`python_multipart.exceptions.DecodeError` if there is some remaining 
+        data in the cache. 
+ 
+        If the underlying object has a `finalize()` method, this function will 
+        call it. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">cache</span><span class="s2">) &gt; </span><span class="s6">0</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">DecodeError</span><span class="s2">(</span>
+                <span class="s4">&quot;There are %d bytes remaining in the Base64Decoder cache when finalize() is called&quot; </span><span class="s2">% </span><span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">cache</span><span class="s2">)</span>
+            <span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">underlying</span><span class="s2">, </span><span class="s4">&quot;finalize&quot;</span><span class="s2">):</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">underlying</span><span class="s2">.</span><span class="s1">finalize</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">__repr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">}</span><span class="s4">(underlying=</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">underlying</span><span class="s0">!r}</span><span class="s4">)&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">QuotedPrintableDecoder</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot;This object provides an interface to decode a stream of quoted-printable 
+    data.  It is instantiated with an &quot;underlying object&quot;, in the same manner 
+    as the :class:`python_multipart.decoders.Base64Decoder` class.  This class behaves 
+    in exactly the same way, including maintaining a cache of quoted-printable 
+    chunks. 
+ 
+    :param underlying: the underlying object to pass writes to 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">underlying</span><span class="s2">: </span><span class="s4">&quot;SupportsWrite[bytes]&quot;</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">cache </span><span class="s2">= </span><span class="s7">b&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">underlying </span><span class="s2">= </span><span class="s1">underlying</span>
+
+    <span class="s0">def </span><span class="s1">write</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">data</span><span class="s2">: </span><span class="s1">bytes</span><span class="s2">) </span><span class="s1">-&gt; int</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Takes any input data provided, decodes it as quoted-printable, and 
+        passes it on to the underlying object. 
+ 
+        :param data: quoted-printable data to decode 
+        &quot;&quot;&quot;</span>
+        <span class="s3"># Prepend any cache info to our data.</span>
+        <span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">cache</span><span class="s2">) &gt; </span><span class="s6">0</span><span class="s2">:</span>
+            <span class="s1">data </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">cache </span><span class="s2">+ </span><span class="s1">data</span>
+
+        <span class="s3"># If the last 2 characters have an '=' sign in it, then we won't be</span>
+        <span class="s3"># able to decode the encoded value and we'll need to save it for the</span>
+        <span class="s3"># next decoding step.</span>
+        <span class="s0">if </span><span class="s1">data</span><span class="s2">[-</span><span class="s6">2</span><span class="s2">:].</span><span class="s1">find</span><span class="s2">(</span><span class="s7">b&quot;=&quot;</span><span class="s2">) != -</span><span class="s6">1</span><span class="s2">:</span>
+            <span class="s1">enc</span><span class="s2">, </span><span class="s1">rest </span><span class="s2">= </span><span class="s1">data</span><span class="s2">[:-</span><span class="s6">2</span><span class="s2">], </span><span class="s1">data</span><span class="s2">[-</span><span class="s6">2</span><span class="s2">:]</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">enc </span><span class="s2">= </span><span class="s1">data</span>
+            <span class="s1">rest </span><span class="s2">= </span><span class="s7">b&quot;&quot;</span>
+
+        <span class="s3"># Encode and write, if we have data.</span>
+        <span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">enc</span><span class="s2">) &gt; </span><span class="s6">0</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">underlying</span><span class="s2">.</span><span class="s1">write</span><span class="s2">(</span><span class="s1">binascii</span><span class="s2">.</span><span class="s1">a2b_qp</span><span class="s2">(</span><span class="s1">enc</span><span class="s2">))</span>
+
+        <span class="s3"># Save remaining in cache.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">cache </span><span class="s2">= </span><span class="s1">rest</span>
+        <span class="s0">return </span><span class="s1">len</span><span class="s2">(</span><span class="s1">data</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">close</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Close this decoder.  If the underlying object has a `close()` 
+        method, this function will call it. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">underlying</span><span class="s2">, </span><span class="s4">&quot;close&quot;</span><span class="s2">):</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">underlying</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">finalize</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Finalize this object.  This should be called when no more data 
+        should be written to the stream.  This function will not raise any 
+        exceptions, but it may write more data to the underlying object if 
+        there is data remaining in the cache. 
+ 
+        If the underlying object has a `finalize()` method, this function will 
+        call it. 
+        &quot;&quot;&quot;</span>
+        <span class="s3"># If we have a cache, write and then remove it.</span>
+        <span class="s0">if </span><span class="s1">len</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">cache</span><span class="s2">) &gt; </span><span class="s6">0</span><span class="s2">:  </span><span class="s3"># pragma: no cover</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">underlying</span><span class="s2">.</span><span class="s1">write</span><span class="s2">(</span><span class="s1">binascii</span><span class="s2">.</span><span class="s1">a2b_qp</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">cache</span><span class="s2">))</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">cache </span><span class="s2">= </span><span class="s7">b&quot;&quot;</span>
+
+        <span class="s3"># Finalize our underlying stream.</span>
+        <span class="s0">if </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">underlying</span><span class="s2">, </span><span class="s4">&quot;finalize&quot;</span><span class="s2">):</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">underlying</span><span class="s2">.</span><span class="s1">finalize</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">__repr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">}</span><span class="s4">(underlying=</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">underlying</span><span class="s0">!r}</span><span class="s4">)&quot;</span>
+</pre>
+</body>
+</html>

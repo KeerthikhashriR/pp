@@ -1,0 +1,162 @@
+<html>
+<head>
+<title>_validate_call.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #5f826b; font-style: italic;}
+.s4 { color: #6aab73;}
+.s5 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_validate_call.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations </span><span class="s0">as </span><span class="s1">_annotations</span>
+
+<span class="s0">import </span><span class="s1">functools</span>
+<span class="s0">import </span><span class="s1">inspect</span>
+<span class="s0">from </span><span class="s1">collections</span><span class="s2">.</span><span class="s1">abc </span><span class="s0">import </span><span class="s1">Awaitable</span>
+<span class="s0">from </span><span class="s1">functools </span><span class="s0">import </span><span class="s1">partial</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Callable</span>
+
+<span class="s0">import </span><span class="s1">pydantic_core</span>
+
+<span class="s0">from </span><span class="s2">..</span><span class="s1">config </span><span class="s0">import </span><span class="s1">ConfigDict</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">plugin</span><span class="s2">.</span><span class="s1">_schema_validator </span><span class="s0">import </span><span class="s1">create_schema_validator</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">_config </span><span class="s0">import </span><span class="s1">ConfigWrapper</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">_generate_schema </span><span class="s0">import </span><span class="s1">GenerateSchema</span><span class="s2">, </span><span class="s1">ValidateCallSupportedTypes</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">_namespace_utils </span><span class="s0">import </span><span class="s1">MappingNamespace</span><span class="s2">, </span><span class="s1">NsResolver</span><span class="s2">, </span><span class="s1">ns_for_function</span>
+
+
+<span class="s0">def </span><span class="s1">extract_function_name</span><span class="s2">(</span><span class="s1">func</span><span class="s2">: </span><span class="s1">ValidateCallSupportedTypes</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;Extract the name of a `ValidateCallSupportedTypes` object.&quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s4">f'partial(</span><span class="s0">{</span><span class="s1">func</span><span class="s2">.</span><span class="s1">func</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">}</span><span class="s4">)' </span><span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">func</span><span class="s2">, </span><span class="s1">functools</span><span class="s2">.</span><span class="s1">partial</span><span class="s2">) </span><span class="s0">else </span><span class="s1">func</span><span class="s2">.</span><span class="s1">__name__</span>
+
+
+<span class="s0">def </span><span class="s1">extract_function_qualname</span><span class="s2">(</span><span class="s1">func</span><span class="s2">: </span><span class="s1">ValidateCallSupportedTypes</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;Extract the qualname of a `ValidateCallSupportedTypes` object.&quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s4">f'partial(</span><span class="s0">{</span><span class="s1">func</span><span class="s2">.</span><span class="s1">func</span><span class="s2">.</span><span class="s1">__qualname__</span><span class="s0">}</span><span class="s4">)' </span><span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">func</span><span class="s2">, </span><span class="s1">functools</span><span class="s2">.</span><span class="s1">partial</span><span class="s2">) </span><span class="s0">else </span><span class="s1">func</span><span class="s2">.</span><span class="s1">__qualname__</span>
+
+
+<span class="s0">def </span><span class="s1">update_wrapper_attributes</span><span class="s2">(</span><span class="s1">wrapped</span><span class="s2">: </span><span class="s1">ValidateCallSupportedTypes</span><span class="s2">, </span><span class="s1">wrapper</span><span class="s2">: </span><span class="s1">Callable</span><span class="s2">[..., </span><span class="s1">Any</span><span class="s2">]):</span>
+    <span class="s3">&quot;&quot;&quot;Update the `wrapper` function with the attributes of the `wrapped` function. Return the updated function.&quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">inspect</span><span class="s2">.</span><span class="s1">iscoroutinefunction</span><span class="s2">(</span><span class="s1">wrapped</span><span class="s2">):</span>
+
+        <span class="s2">@</span><span class="s1">functools</span><span class="s2">.</span><span class="s1">wraps</span><span class="s2">(</span><span class="s1">wrapped</span><span class="s2">)</span>
+        <span class="s0">async def </span><span class="s1">wrapper_function</span><span class="s2">(*</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">):  </span><span class="s5"># type: ignore</span>
+            <span class="s0">return await </span><span class="s1">wrapper</span><span class="s2">(*</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+
+        <span class="s2">@</span><span class="s1">functools</span><span class="s2">.</span><span class="s1">wraps</span><span class="s2">(</span><span class="s1">wrapped</span><span class="s2">)</span>
+        <span class="s0">def </span><span class="s1">wrapper_function</span><span class="s2">(*</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">wrapper</span><span class="s2">(*</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+
+    <span class="s5"># We need to manually update this because `partial` object has no `__name__` and `__qualname__`.</span>
+    <span class="s1">wrapper_function</span><span class="s2">.</span><span class="s1">__name__ </span><span class="s2">= </span><span class="s1">extract_function_name</span><span class="s2">(</span><span class="s1">wrapped</span><span class="s2">)</span>
+    <span class="s1">wrapper_function</span><span class="s2">.</span><span class="s1">__qualname__ </span><span class="s2">= </span><span class="s1">extract_function_qualname</span><span class="s2">(</span><span class="s1">wrapped</span><span class="s2">)</span>
+    <span class="s1">wrapper_function</span><span class="s2">.</span><span class="s1">raw_function </span><span class="s2">= </span><span class="s1">wrapped  </span><span class="s5"># type: ignore</span>
+
+    <span class="s0">return </span><span class="s1">wrapper_function</span>
+
+
+<span class="s0">class </span><span class="s1">ValidateCallWrapper</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;This is a wrapper around a function that validates the arguments passed to it, and optionally the return value.&quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ </span><span class="s2">= (</span>
+        <span class="s4">'function'</span><span class="s2">,</span>
+        <span class="s4">'validate_return'</span><span class="s2">,</span>
+        <span class="s4">'schema_type'</span><span class="s2">,</span>
+        <span class="s4">'module'</span><span class="s2">,</span>
+        <span class="s4">'qualname'</span><span class="s2">,</span>
+        <span class="s4">'ns_resolver'</span><span class="s2">,</span>
+        <span class="s4">'config_wrapper'</span><span class="s2">,</span>
+        <span class="s4">'__pydantic_complete__'</span><span class="s2">,</span>
+        <span class="s4">'__pydantic_validator__'</span><span class="s2">,</span>
+        <span class="s4">'__return_pydantic_validator__'</span><span class="s2">,</span>
+    <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">function</span><span class="s2">: </span><span class="s1">ValidateCallSupportedTypes</span><span class="s2">,</span>
+        <span class="s1">config</span><span class="s2">: </span><span class="s1">ConfigDict </span><span class="s2">| </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">validate_return</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">,</span>
+        <span class="s1">parent_namespace</span><span class="s2">: </span><span class="s1">MappingNamespace </span><span class="s2">| </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">function </span><span class="s2">= </span><span class="s1">function</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">validate_return </span><span class="s2">= </span><span class="s1">validate_return</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">function</span><span class="s2">, </span><span class="s1">partial</span><span class="s2">):</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">schema_type </span><span class="s2">= </span><span class="s1">function</span><span class="s2">.</span><span class="s1">func</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">module </span><span class="s2">= </span><span class="s1">function</span><span class="s2">.</span><span class="s1">func</span><span class="s2">.</span><span class="s1">__module__</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">schema_type </span><span class="s2">= </span><span class="s1">function</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">module </span><span class="s2">= </span><span class="s1">function</span><span class="s2">.</span><span class="s1">__module__</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">qualname </span><span class="s2">= </span><span class="s1">extract_function_qualname</span><span class="s2">(</span><span class="s1">function</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">ns_resolver </span><span class="s2">= </span><span class="s1">NsResolver</span><span class="s2">(</span>
+            <span class="s1">namespaces_tuple</span><span class="s2">=</span><span class="s1">ns_for_function</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">schema_type</span><span class="s2">, </span><span class="s1">parent_namespace</span><span class="s2">=</span><span class="s1">parent_namespace</span><span class="s2">)</span>
+        <span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">config_wrapper </span><span class="s2">= </span><span class="s1">ConfigWrapper</span><span class="s2">(</span><span class="s1">config</span><span class="s2">)</span>
+        <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config_wrapper</span><span class="s2">.</span><span class="s1">defer_build</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_create_validators</span><span class="s2">()</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">__pydantic_complete__ </span><span class="s2">= </span><span class="s0">False</span>
+
+    <span class="s0">def </span><span class="s1">_create_validators</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">gen_schema </span><span class="s2">= </span><span class="s1">GenerateSchema</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">config_wrapper</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">ns_resolver</span><span class="s2">)</span>
+        <span class="s1">schema </span><span class="s2">= </span><span class="s1">gen_schema</span><span class="s2">.</span><span class="s1">clean_schema</span><span class="s2">(</span><span class="s1">gen_schema</span><span class="s2">.</span><span class="s1">generate_schema</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">function</span><span class="s2">))</span>
+        <span class="s1">core_config </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config_wrapper</span><span class="s2">.</span><span class="s1">core_config</span><span class="s2">(</span><span class="s1">title</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">qualname</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">__pydantic_validator__ </span><span class="s2">= </span><span class="s1">create_schema_validator</span><span class="s2">(</span>
+            <span class="s1">schema</span><span class="s2">,</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">schema_type</span><span class="s2">,</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">module</span><span class="s2">,</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">qualname</span><span class="s2">,</span>
+            <span class="s4">'validate_call'</span><span class="s2">,</span>
+            <span class="s1">core_config</span><span class="s2">,</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">config_wrapper</span><span class="s2">.</span><span class="s1">plugin_settings</span><span class="s2">,</span>
+        <span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">validate_return</span><span class="s2">:</span>
+            <span class="s1">signature </span><span class="s2">= </span><span class="s1">inspect</span><span class="s2">.</span><span class="s1">signature</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">function</span><span class="s2">)</span>
+            <span class="s1">return_type </span><span class="s2">= </span><span class="s1">signature</span><span class="s2">.</span><span class="s1">return_annotation </span><span class="s0">if </span><span class="s1">signature</span><span class="s2">.</span><span class="s1">return_annotation </span><span class="s0">is not </span><span class="s1">signature</span><span class="s2">.</span><span class="s1">empty </span><span class="s0">else </span><span class="s1">Any</span>
+            <span class="s1">gen_schema </span><span class="s2">= </span><span class="s1">GenerateSchema</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">config_wrapper</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">ns_resolver</span><span class="s2">)</span>
+            <span class="s1">schema </span><span class="s2">= </span><span class="s1">gen_schema</span><span class="s2">.</span><span class="s1">clean_schema</span><span class="s2">(</span><span class="s1">gen_schema</span><span class="s2">.</span><span class="s1">generate_schema</span><span class="s2">(</span><span class="s1">return_type</span><span class="s2">))</span>
+            <span class="s1">validator </span><span class="s2">= </span><span class="s1">create_schema_validator</span><span class="s2">(</span>
+                <span class="s1">schema</span><span class="s2">,</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">schema_type</span><span class="s2">,</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">module</span><span class="s2">,</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">qualname</span><span class="s2">,</span>
+                <span class="s4">'validate_call'</span><span class="s2">,</span>
+                <span class="s1">core_config</span><span class="s2">,</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">config_wrapper</span><span class="s2">.</span><span class="s1">plugin_settings</span><span class="s2">,</span>
+            <span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">inspect</span><span class="s2">.</span><span class="s1">iscoroutinefunction</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">function</span><span class="s2">):</span>
+
+                <span class="s0">async def </span><span class="s1">return_val_wrapper</span><span class="s2">(</span><span class="s1">aw</span><span class="s2">: </span><span class="s1">Awaitable</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+                    <span class="s0">return </span><span class="s1">validator</span><span class="s2">.</span><span class="s1">validate_python</span><span class="s2">(</span><span class="s0">await </span><span class="s1">aw</span><span class="s2">)</span>
+
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">__return_pydantic_validator__ </span><span class="s2">= </span><span class="s1">return_val_wrapper</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">__return_pydantic_validator__ </span><span class="s2">= </span><span class="s1">validator</span><span class="s2">.</span><span class="s1">validate_python</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">__return_pydantic_validator__ </span><span class="s2">= </span><span class="s0">None</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">__pydantic_complete__ </span><span class="s2">= </span><span class="s0">True</span>
+
+    <span class="s0">def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+        <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__pydantic_complete__</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_create_validators</span><span class="s2">()</span>
+
+        <span class="s1">res </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__pydantic_validator__</span><span class="s2">.</span><span class="s1">validate_python</span><span class="s2">(</span><span class="s1">pydantic_core</span><span class="s2">.</span><span class="s1">ArgsKwargs</span><span class="s2">(</span><span class="s1">args</span><span class="s2">, </span><span class="s1">kwargs</span><span class="s2">))</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__return_pydantic_validator__</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__return_pydantic_validator__</span><span class="s2">(</span><span class="s1">res</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">res</span>
+</pre>
+</body>
+</html>

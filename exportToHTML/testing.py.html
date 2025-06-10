@@ -1,0 +1,320 @@
+<html>
+<head>
+<title>testing.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #7a7e85;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #6aab73;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+testing.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">importlib</span><span class="s2">.</span><span class="s1">metadata</span>
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+<span class="s0">from </span><span class="s1">contextlib </span><span class="s0">import </span><span class="s1">contextmanager</span>
+<span class="s0">from </span><span class="s1">contextlib </span><span class="s0">import </span><span class="s1">ExitStack</span>
+<span class="s0">from </span><span class="s1">copy </span><span class="s0">import </span><span class="s1">copy</span>
+<span class="s0">from </span><span class="s1">types </span><span class="s0">import </span><span class="s1">TracebackType</span>
+<span class="s0">from </span><span class="s1">urllib</span><span class="s2">.</span><span class="s1">parse </span><span class="s0">import </span><span class="s1">urlsplit</span>
+
+<span class="s0">import </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">test</span>
+<span class="s0">from </span><span class="s1">click</span><span class="s2">.</span><span class="s1">testing </span><span class="s0">import </span><span class="s1">CliRunner</span>
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">test </span><span class="s0">import </span><span class="s1">Client</span>
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">wrappers </span><span class="s0">import </span><span class="s1">Request </span><span class="s0">as </span><span class="s1">BaseRequest</span>
+
+<span class="s0">from </span><span class="s2">.</span><span class="s1">cli </span><span class="s0">import </span><span class="s1">ScriptInfo</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">sessions </span><span class="s0">import </span><span class="s1">SessionMixin</span>
+
+<span class="s0">if </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TYPE_CHECKING</span><span class="s2">:  </span><span class="s3"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s1">_typeshed</span><span class="s2">.</span><span class="s1">wsgi </span><span class="s0">import </span><span class="s1">WSGIEnvironment</span>
+    <span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">test </span><span class="s0">import </span><span class="s1">TestResponse</span>
+
+    <span class="s0">from </span><span class="s2">.</span><span class="s1">app </span><span class="s0">import </span><span class="s1">Flask</span>
+
+
+<span class="s0">class </span><span class="s1">EnvironBuilder</span><span class="s2">(</span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">test</span><span class="s2">.</span><span class="s1">EnvironBuilder</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;An :class:`~werkzeug.test.EnvironBuilder`, that takes defaults from the 
+    application. 
+ 
+    :param app: The Flask application to configure the environment from. 
+    :param path: URL path being requested. 
+    :param base_url: Base URL where the app is being served, which 
+        ``path`` is relative to. If not given, built from 
+        :data:`PREFERRED_URL_SCHEME`, ``subdomain``, 
+        :data:`SERVER_NAME`, and :data:`APPLICATION_ROOT`. 
+    :param subdomain: Subdomain name to append to :data:`SERVER_NAME`. 
+    :param url_scheme: Scheme to use instead of 
+        :data:`PREFERRED_URL_SCHEME`. 
+    :param json: If given, this is serialized as JSON and passed as 
+        ``data``. Also defaults ``content_type`` to 
+        ``application/json``. 
+    :param args: other positional arguments passed to 
+        :class:`~werkzeug.test.EnvironBuilder`. 
+    :param kwargs: other keyword arguments passed to 
+        :class:`~werkzeug.test.EnvironBuilder`. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">app</span><span class="s2">: </span><span class="s1">Flask</span><span class="s2">,</span>
+        <span class="s1">path</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s5">&quot;/&quot;</span><span class="s2">,</span>
+        <span class="s1">base_url</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">subdomain</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">url_scheme</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s2">*</span><span class="s1">args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">,</span>
+        <span class="s2">**</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">assert not </span><span class="s2">(</span><span class="s1">base_url </span><span class="s0">or </span><span class="s1">subdomain </span><span class="s0">or </span><span class="s1">url_scheme</span><span class="s2">) </span><span class="s0">or </span><span class="s2">(</span>
+            <span class="s1">base_url </span><span class="s0">is not None</span>
+        <span class="s2">) != </span><span class="s1">bool</span><span class="s2">(</span>
+            <span class="s1">subdomain </span><span class="s0">or </span><span class="s1">url_scheme</span>
+        <span class="s2">), </span><span class="s5">'Cannot pass &quot;subdomain&quot; or &quot;url_scheme&quot; with &quot;base_url&quot;.'</span>
+
+        <span class="s0">if </span><span class="s1">base_url </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">http_host </span><span class="s2">= </span><span class="s1">app</span><span class="s2">.</span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;SERVER_NAME&quot;</span><span class="s2">) </span><span class="s0">or </span><span class="s5">&quot;localhost&quot;</span>
+            <span class="s1">app_root </span><span class="s2">= </span><span class="s1">app</span><span class="s2">.</span><span class="s1">config</span><span class="s2">[</span><span class="s5">&quot;APPLICATION_ROOT&quot;</span><span class="s2">]</span>
+
+            <span class="s0">if </span><span class="s1">subdomain</span><span class="s2">:</span>
+                <span class="s1">http_host </span><span class="s2">= </span><span class="s5">f&quot;</span><span class="s0">{</span><span class="s1">subdomain</span><span class="s0">}</span><span class="s5">.</span><span class="s0">{</span><span class="s1">http_host</span><span class="s0">}</span><span class="s5">&quot;</span>
+
+            <span class="s0">if </span><span class="s1">url_scheme </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s1">url_scheme </span><span class="s2">= </span><span class="s1">app</span><span class="s2">.</span><span class="s1">config</span><span class="s2">[</span><span class="s5">&quot;PREFERRED_URL_SCHEME&quot;</span><span class="s2">]</span>
+
+            <span class="s1">url </span><span class="s2">= </span><span class="s1">urlsplit</span><span class="s2">(</span><span class="s1">path</span><span class="s2">)</span>
+            <span class="s1">base_url </span><span class="s2">= (</span>
+                <span class="s5">f&quot;</span><span class="s0">{</span><span class="s1">url</span><span class="s2">.</span><span class="s1">scheme </span><span class="s0">or </span><span class="s1">url_scheme</span><span class="s0">}</span><span class="s5">://</span><span class="s0">{</span><span class="s1">url</span><span class="s2">.</span><span class="s1">netloc </span><span class="s0">or </span><span class="s1">http_host</span><span class="s0">}</span><span class="s5">&quot;</span>
+                <span class="s5">f&quot;/</span><span class="s0">{</span><span class="s1">app_root</span><span class="s2">.</span><span class="s1">lstrip</span><span class="s2">(</span><span class="s5">'/'</span><span class="s2">)</span><span class="s0">}</span><span class="s5">&quot;</span>
+            <span class="s2">)</span>
+            <span class="s1">path </span><span class="s2">= </span><span class="s1">url</span><span class="s2">.</span><span class="s1">path</span>
+
+            <span class="s0">if </span><span class="s1">url</span><span class="s2">.</span><span class="s1">query</span><span class="s2">:</span>
+                <span class="s1">path </span><span class="s2">= </span><span class="s5">f&quot;</span><span class="s0">{</span><span class="s1">path</span><span class="s0">}</span><span class="s5">?</span><span class="s0">{</span><span class="s1">url</span><span class="s2">.</span><span class="s1">query</span><span class="s0">}</span><span class="s5">&quot;</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app </span><span class="s2">= </span><span class="s1">app</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">path</span><span class="s2">, </span><span class="s1">base_url</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">json_dumps</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">obj</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:  </span><span class="s3"># type: ignore</span>
+        <span class="s4">&quot;&quot;&quot;Serialize ``obj`` to a JSON-formatted string. 
+ 
+        The serialization will be configured according to the config associated 
+        with this EnvironBuilder's ``app``. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">.</span><span class="s1">json</span><span class="s2">.</span><span class="s1">dumps</span><span class="s2">(</span><span class="s1">obj</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+
+
+<span class="s1">_werkzeug_version </span><span class="s2">= </span><span class="s5">&quot;&quot;</span>
+
+
+<span class="s0">def </span><span class="s1">_get_werkzeug_version</span><span class="s2">() </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+    <span class="s0">global </span><span class="s1">_werkzeug_version</span>
+
+    <span class="s0">if not </span><span class="s1">_werkzeug_version</span><span class="s2">:</span>
+        <span class="s1">_werkzeug_version </span><span class="s2">= </span><span class="s1">importlib</span><span class="s2">.</span><span class="s1">metadata</span><span class="s2">.</span><span class="s1">version</span><span class="s2">(</span><span class="s5">&quot;werkzeug&quot;</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">_werkzeug_version</span>
+
+
+<span class="s0">class </span><span class="s1">FlaskClient</span><span class="s2">(</span><span class="s1">Client</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;Works like a regular Werkzeug test client but has knowledge about 
+    Flask's contexts to defer the cleanup of the request context until 
+    the end of a ``with`` block. For general information about how to 
+    use this class refer to :class:`werkzeug.test.Client`. 
+ 
+    .. versionchanged:: 0.12 
+       `app.test_client()` includes preset default environment, which can be 
+       set after instantiation of the `app.test_client()` object in 
+       `client.environ_base`. 
+ 
+    Basic usage is outlined in the :doc:`/testing` chapter. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">application</span><span class="s2">: </span><span class="s1">Flask</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(*</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">preserve_context </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_new_contexts</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">ContextManager</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]] = []</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_context_stack </span><span class="s2">= </span><span class="s1">ExitStack</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">environ_base </span><span class="s2">= {</span>
+            <span class="s5">&quot;REMOTE_ADDR&quot;</span><span class="s2">: </span><span class="s5">&quot;127.0.0.1&quot;</span><span class="s2">,</span>
+            <span class="s5">&quot;HTTP_USER_AGENT&quot;</span><span class="s2">: </span><span class="s5">f&quot;Werkzeug/</span><span class="s0">{</span><span class="s1">_get_werkzeug_version</span><span class="s2">()</span><span class="s0">}</span><span class="s5">&quot;</span><span class="s2">,</span>
+        <span class="s2">}</span>
+
+    <span class="s2">@</span><span class="s1">contextmanager</span>
+    <span class="s0">def </span><span class="s1">session_transaction</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span>
+    <span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">SessionMixin</span><span class="s2">]:</span>
+        <span class="s4">&quot;&quot;&quot;When used in combination with a ``with`` statement this opens a 
+        session transaction.  This can be used to modify the session that 
+        the test client uses.  Once the ``with`` block is left the session is 
+        stored back. 
+ 
+        :: 
+ 
+            with client.session_transaction() as session: 
+                session['value'] = 42 
+ 
+        Internally this is implemented by going through a temporary test 
+        request context and since session handling could depend on 
+        request variables this function accepts the same arguments as 
+        :meth:`~flask.Flask.test_request_context` which are directly 
+        passed through. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_cookies </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span>
+                <span class="s5">&quot;Cookies are disabled. Create a client with 'use_cookies=True'.&quot;</span>
+            <span class="s2">)</span>
+
+        <span class="s1">app </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">application</span>
+        <span class="s1">ctx </span><span class="s2">= </span><span class="s1">app</span><span class="s2">.</span><span class="s1">test_request_context</span><span class="s2">(*</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_add_cookies_to_wsgi</span><span class="s2">(</span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">request</span><span class="s2">.</span><span class="s1">environ</span><span class="s2">)</span>
+
+        <span class="s0">with </span><span class="s1">ctx</span><span class="s2">:</span>
+            <span class="s1">sess </span><span class="s2">= </span><span class="s1">app</span><span class="s2">.</span><span class="s1">session_interface</span><span class="s2">.</span><span class="s1">open_session</span><span class="s2">(</span><span class="s1">app</span><span class="s2">, </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">request</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">sess </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s5">&quot;Session backend did not open a session.&quot;</span><span class="s2">)</span>
+
+        <span class="s0">yield </span><span class="s1">sess</span>
+        <span class="s1">resp </span><span class="s2">= </span><span class="s1">app</span><span class="s2">.</span><span class="s1">response_class</span><span class="s2">()</span>
+
+        <span class="s0">if </span><span class="s1">app</span><span class="s2">.</span><span class="s1">session_interface</span><span class="s2">.</span><span class="s1">is_null_session</span><span class="s2">(</span><span class="s1">sess</span><span class="s2">):</span>
+            <span class="s0">return</span>
+
+        <span class="s0">with </span><span class="s1">ctx</span><span class="s2">:</span>
+            <span class="s1">app</span><span class="s2">.</span><span class="s1">session_interface</span><span class="s2">.</span><span class="s1">save_session</span><span class="s2">(</span><span class="s1">app</span><span class="s2">, </span><span class="s1">sess</span><span class="s2">, </span><span class="s1">resp</span><span class="s2">)</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_update_cookies_from_response</span><span class="s2">(</span>
+            <span class="s1">ctx</span><span class="s2">.</span><span class="s1">request</span><span class="s2">.</span><span class="s1">host</span><span class="s2">.</span><span class="s1">partition</span><span class="s2">(</span><span class="s5">&quot;:&quot;</span><span class="s2">)[</span><span class="s6">0</span><span class="s2">],</span>
+            <span class="s1">ctx</span><span class="s2">.</span><span class="s1">request</span><span class="s2">.</span><span class="s1">path</span><span class="s2">,</span>
+            <span class="s1">resp</span><span class="s2">.</span><span class="s1">headers</span><span class="s2">.</span><span class="s1">getlist</span><span class="s2">(</span><span class="s5">&quot;Set-Cookie&quot;</span><span class="s2">),</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_copy_environ</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">other</span><span class="s2">: </span><span class="s1">WSGIEnvironment</span><span class="s2">) </span><span class="s1">-&gt; WSGIEnvironment</span><span class="s2">:</span>
+        <span class="s1">out </span><span class="s2">= {**</span><span class="s1">self</span><span class="s2">.</span><span class="s1">environ_base</span><span class="s2">, **</span><span class="s1">other</span><span class="s2">}</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">preserve_context</span><span class="s2">:</span>
+            <span class="s1">out</span><span class="s2">[</span><span class="s5">&quot;werkzeug.debug.preserve_context&quot;</span><span class="s2">] = </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_new_contexts</span><span class="s2">.</span><span class="s1">append</span>
+
+        <span class="s0">return </span><span class="s1">out</span>
+
+    <span class="s0">def </span><span class="s1">_request_from_builder_args</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">args</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, ...], </span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]</span>
+    <span class="s2">) </span><span class="s1">-&gt; BaseRequest</span><span class="s2">:</span>
+        <span class="s1">kwargs</span><span class="s2">[</span><span class="s5">&quot;environ_base&quot;</span><span class="s2">] = </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_copy_environ</span><span class="s2">(</span><span class="s1">kwargs</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;environ_base&quot;</span><span class="s2">, {}))</span>
+        <span class="s1">builder </span><span class="s2">= </span><span class="s1">EnvironBuilder</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">application</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">builder</span><span class="s2">.</span><span class="s1">get_request</span><span class="s2">()</span>
+        <span class="s0">finally</span><span class="s2">:</span>
+            <span class="s1">builder</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">open</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s2">*</span><span class="s1">args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">,</span>
+        <span class="s1">buffered</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s1">follow_redirects</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+        <span class="s2">**</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; TestResponse</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">args </span><span class="s0">and </span><span class="s1">isinstance</span><span class="s2">(</span>
+            <span class="s1">args</span><span class="s2">[</span><span class="s6">0</span><span class="s2">], (</span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">test</span><span class="s2">.</span><span class="s1">EnvironBuilder</span><span class="s2">, </span><span class="s1">dict</span><span class="s2">, </span><span class="s1">BaseRequest</span><span class="s2">)</span>
+        <span class="s2">):</span>
+            <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">args</span><span class="s2">[</span><span class="s6">0</span><span class="s2">], </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">test</span><span class="s2">.</span><span class="s1">EnvironBuilder</span><span class="s2">):</span>
+                <span class="s1">builder </span><span class="s2">= </span><span class="s1">copy</span><span class="s2">(</span><span class="s1">args</span><span class="s2">[</span><span class="s6">0</span><span class="s2">])</span>
+                <span class="s1">builder</span><span class="s2">.</span><span class="s1">environ_base </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_copy_environ</span><span class="s2">(</span><span class="s1">builder</span><span class="s2">.</span><span class="s1">environ_base </span><span class="s0">or </span><span class="s2">{})  </span><span class="s3"># type: ignore[arg-type]</span>
+                <span class="s1">request </span><span class="s2">= </span><span class="s1">builder</span><span class="s2">.</span><span class="s1">get_request</span><span class="s2">()</span>
+            <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">args</span><span class="s2">[</span><span class="s6">0</span><span class="s2">], </span><span class="s1">dict</span><span class="s2">):</span>
+                <span class="s1">request </span><span class="s2">= </span><span class="s1">EnvironBuilder</span><span class="s2">.</span><span class="s1">from_environ</span><span class="s2">(</span>
+                    <span class="s1">args</span><span class="s2">[</span><span class="s6">0</span><span class="s2">], </span><span class="s1">app</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">application</span><span class="s2">, </span><span class="s1">environ_base</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_copy_environ</span><span class="s2">({})</span>
+                <span class="s2">).</span><span class="s1">get_request</span><span class="s2">()</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s3"># isinstance(args[0], BaseRequest)</span>
+                <span class="s1">request </span><span class="s2">= </span><span class="s1">copy</span><span class="s2">(</span><span class="s1">args</span><span class="s2">[</span><span class="s6">0</span><span class="s2">])</span>
+                <span class="s1">request</span><span class="s2">.</span><span class="s1">environ </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_copy_environ</span><span class="s2">(</span><span class="s1">request</span><span class="s2">.</span><span class="s1">environ</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s3"># request is None</span>
+            <span class="s1">request </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_request_from_builder_args</span><span class="s2">(</span><span class="s1">args</span><span class="s2">, </span><span class="s1">kwargs</span><span class="s2">)</span>
+
+        <span class="s3"># Pop any previously preserved contexts. This prevents contexts</span>
+        <span class="s3"># from being preserved across redirects or multiple requests</span>
+        <span class="s3"># within a single block.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_context_stack</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+
+        <span class="s1">response </span><span class="s2">= </span><span class="s1">super</span><span class="s2">().</span><span class="s1">open</span><span class="s2">(</span>
+            <span class="s1">request</span><span class="s2">,</span>
+            <span class="s1">buffered</span><span class="s2">=</span><span class="s1">buffered</span><span class="s2">,</span>
+            <span class="s1">follow_redirects</span><span class="s2">=</span><span class="s1">follow_redirects</span><span class="s2">,</span>
+        <span class="s2">)</span>
+        <span class="s1">response</span><span class="s2">.</span><span class="s1">json_module </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">application</span><span class="s2">.</span><span class="s1">json  </span><span class="s3"># type: ignore[assignment]</span>
+
+        <span class="s3"># Re-push contexts that were preserved during the request.</span>
+        <span class="s0">while </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_new_contexts</span><span class="s2">:</span>
+            <span class="s1">cm </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_new_contexts</span><span class="s2">.</span><span class="s1">pop</span><span class="s2">()</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_context_stack</span><span class="s2">.</span><span class="s1">enter_context</span><span class="s2">(</span><span class="s1">cm</span><span class="s2">)</span>
+
+        <span class="s0">return </span><span class="s1">response</span>
+
+    <span class="s0">def </span><span class="s1">__enter__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; FlaskClient</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">preserve_context</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s5">&quot;Cannot nest client invocations&quot;</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">preserve_context </span><span class="s2">= </span><span class="s0">True</span>
+        <span class="s0">return </span><span class="s1">self</span>
+
+    <span class="s0">def </span><span class="s1">__exit__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">exc_type</span><span class="s2">: </span><span class="s1">type </span><span class="s2">| </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">exc_value</span><span class="s2">: </span><span class="s1">BaseException </span><span class="s2">| </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">tb</span><span class="s2">: </span><span class="s1">TracebackType </span><span class="s2">| </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">preserve_context </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_context_stack</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+
+
+<span class="s0">class </span><span class="s1">FlaskCliRunner</span><span class="s2">(</span><span class="s1">CliRunner</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;A :class:`~click.testing.CliRunner` for testing a Flask app's 
+    CLI commands. Typically created using 
+    :meth:`~flask.Flask.test_cli_runner`. See :ref:`testing-cli`. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">app</span><span class="s2">: </span><span class="s1">Flask</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app </span><span class="s2">= </span><span class="s1">app</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(**</span><span class="s1">kwargs</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">invoke</span><span class="s2">(  </span><span class="s3"># type: ignore</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">cli</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any </span><span class="s2">= </span><span class="s0">None</span><span class="s2">, </span><span class="s1">args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any </span><span class="s2">= </span><span class="s0">None</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span>
+    <span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;Invokes a CLI command in an isolated environment. See 
+        :meth:`CliRunner.invoke &lt;click.testing.CliRunner.invoke&gt;` for 
+        full method documentation. See :ref:`testing-cli` for examples. 
+ 
+        If the ``obj`` argument is not given, passes an instance of 
+        :class:`~flask.cli.ScriptInfo` that knows how to load the Flask 
+        app being tested. 
+ 
+        :param cli: Command object to invoke. Default is the app's 
+            :attr:`~flask.app.Flask.cli` group. 
+        :param args: List of strings to invoke the command with. 
+ 
+        :return: a :class:`~click.testing.Result` object. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">cli </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">cli </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">.</span><span class="s1">cli</span>
+
+        <span class="s0">if </span><span class="s5">&quot;obj&quot; </span><span class="s0">not in </span><span class="s1">kwargs</span><span class="s2">:</span>
+            <span class="s1">kwargs</span><span class="s2">[</span><span class="s5">&quot;obj&quot;</span><span class="s2">] = </span><span class="s1">ScriptInfo</span><span class="s2">(</span><span class="s1">create_app</span><span class="s2">=</span><span class="s0">lambda</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">)</span>
+
+        <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">invoke</span><span class="s2">(</span><span class="s1">cli</span><span class="s2">, </span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

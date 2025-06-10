@@ -1,0 +1,343 @@
+<html>
+<head>
+<title>ImageColor.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #2aacb8;}
+.s6 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageColor.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># map CSS3-style colour description strings to RGB</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 2002-10-24 fl   Added support for CSS-style color strings</span>
+<span class="s0"># 2002-12-15 fl   Added RGBA support</span>
+<span class="s0"># 2004-03-27 fl   Fixed remaining int() problems for Python 1.5.2</span>
+<span class="s0"># 2004-07-19 fl   Fixed gray/grey spelling issues</span>
+<span class="s0"># 2009-03-05 fl   Fixed rounding error in grayscale calculation</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 2002-2004 by Secret Labs AB</span>
+<span class="s0"># Copyright (c) 2002-2004 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">from </span><span class="s1">functools </span><span class="s2">import </span><span class="s1">lru_cache</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">Image</span>
+
+
+<span class="s3">@</span><span class="s1">lru_cache</span>
+<span class="s2">def </span><span class="s1">getrgb</span><span class="s3">(</span><span class="s1">color</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">] | </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]:</span>
+    <span class="s4">&quot;&quot;&quot; 
+     Convert a color string to an RGB or RGBA tuple. If the string cannot be 
+     parsed, this function raises a :py:exc:`ValueError` exception. 
+ 
+    .. versionadded:: 1.1.4 
+ 
+    :param color: A color string 
+    :return: ``(red, green, blue[, alpha])`` 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">color</span><span class="s3">) &gt; </span><span class="s5">100</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;color specifier is too long&quot;</span>
+        <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+    <span class="s1">color </span><span class="s3">= </span><span class="s1">color</span><span class="s3">.</span><span class="s1">lower</span><span class="s3">()</span>
+
+    <span class="s1">rgb </span><span class="s3">= </span><span class="s1">colormap</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">color</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">rgb</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">rgb</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">):</span>
+            <span class="s2">return </span><span class="s1">rgb</span>
+        <span class="s1">rgb_tuple </span><span class="s3">= </span><span class="s1">getrgb</span><span class="s3">(</span><span class="s1">rgb</span><span class="s3">)</span>
+        <span class="s2">assert </span><span class="s1">len</span><span class="s3">(</span><span class="s1">rgb_tuple</span><span class="s3">) == </span><span class="s5">3</span>
+        <span class="s1">colormap</span><span class="s3">[</span><span class="s1">color</span><span class="s3">] = </span><span class="s1">rgb_tuple</span>
+        <span class="s2">return </span><span class="s1">rgb_tuple</span>
+
+    <span class="s0"># check for known string formats</span>
+    <span class="s2">if </span><span class="s1">re</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s6">&quot;#[a-f0-9]{3}$&quot;</span><span class="s3">, </span><span class="s1">color</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">int</span><span class="s3">(</span><span class="s1">color</span><span class="s3">[</span><span class="s5">1</span><span class="s3">] * </span><span class="s5">2</span><span class="s3">, </span><span class="s5">16</span><span class="s3">), </span><span class="s1">int</span><span class="s3">(</span><span class="s1">color</span><span class="s3">[</span><span class="s5">2</span><span class="s3">] * </span><span class="s5">2</span><span class="s3">, </span><span class="s5">16</span><span class="s3">), </span><span class="s1">int</span><span class="s3">(</span><span class="s1">color</span><span class="s3">[</span><span class="s5">3</span><span class="s3">] * </span><span class="s5">2</span><span class="s3">, </span><span class="s5">16</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">re</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s6">&quot;#[a-f0-9]{4}$&quot;</span><span class="s3">, </span><span class="s1">color</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s3">(</span>
+            <span class="s1">int</span><span class="s3">(</span><span class="s1">color</span><span class="s3">[</span><span class="s5">1</span><span class="s3">] * </span><span class="s5">2</span><span class="s3">, </span><span class="s5">16</span><span class="s3">),</span>
+            <span class="s1">int</span><span class="s3">(</span><span class="s1">color</span><span class="s3">[</span><span class="s5">2</span><span class="s3">] * </span><span class="s5">2</span><span class="s3">, </span><span class="s5">16</span><span class="s3">),</span>
+            <span class="s1">int</span><span class="s3">(</span><span class="s1">color</span><span class="s3">[</span><span class="s5">3</span><span class="s3">] * </span><span class="s5">2</span><span class="s3">, </span><span class="s5">16</span><span class="s3">),</span>
+            <span class="s1">int</span><span class="s3">(</span><span class="s1">color</span><span class="s3">[</span><span class="s5">4</span><span class="s3">] * </span><span class="s5">2</span><span class="s3">, </span><span class="s5">16</span><span class="s3">),</span>
+        <span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">re</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s6">&quot;#[a-f0-9]{6}$&quot;</span><span class="s3">, </span><span class="s1">color</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">int</span><span class="s3">(</span><span class="s1">color</span><span class="s3">[</span><span class="s5">1</span><span class="s3">:</span><span class="s5">3</span><span class="s3">], </span><span class="s5">16</span><span class="s3">), </span><span class="s1">int</span><span class="s3">(</span><span class="s1">color</span><span class="s3">[</span><span class="s5">3</span><span class="s3">:</span><span class="s5">5</span><span class="s3">], </span><span class="s5">16</span><span class="s3">), </span><span class="s1">int</span><span class="s3">(</span><span class="s1">color</span><span class="s3">[</span><span class="s5">5</span><span class="s3">:</span><span class="s5">7</span><span class="s3">], </span><span class="s5">16</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">re</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s6">&quot;#[a-f0-9]{8}$&quot;</span><span class="s3">, </span><span class="s1">color</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s3">(</span>
+            <span class="s1">int</span><span class="s3">(</span><span class="s1">color</span><span class="s3">[</span><span class="s5">1</span><span class="s3">:</span><span class="s5">3</span><span class="s3">], </span><span class="s5">16</span><span class="s3">),</span>
+            <span class="s1">int</span><span class="s3">(</span><span class="s1">color</span><span class="s3">[</span><span class="s5">3</span><span class="s3">:</span><span class="s5">5</span><span class="s3">], </span><span class="s5">16</span><span class="s3">),</span>
+            <span class="s1">int</span><span class="s3">(</span><span class="s1">color</span><span class="s3">[</span><span class="s5">5</span><span class="s3">:</span><span class="s5">7</span><span class="s3">], </span><span class="s5">16</span><span class="s3">),</span>
+            <span class="s1">int</span><span class="s3">(</span><span class="s1">color</span><span class="s3">[</span><span class="s5">7</span><span class="s3">:</span><span class="s5">9</span><span class="s3">], </span><span class="s5">16</span><span class="s3">),</span>
+        <span class="s3">)</span>
+
+    <span class="s1">m </span><span class="s3">= </span><span class="s1">re</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s6">r&quot;rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$&quot;</span><span class="s3">, </span><span class="s1">color</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">m</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">1</span><span class="s3">)), </span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">2</span><span class="s3">)), </span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">3</span><span class="s3">))</span>
+
+    <span class="s1">m </span><span class="s3">= </span><span class="s1">re</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s6">r&quot;rgb\(\s*(\d+)%\s*,\s*(\d+)%\s*,\s*(\d+)%\s*\)$&quot;</span><span class="s3">, </span><span class="s1">color</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">m</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s3">(</span>
+            <span class="s1">int</span><span class="s3">((</span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">1</span><span class="s3">)) * </span><span class="s5">255</span><span class="s3">) / </span><span class="s5">100.0 </span><span class="s3">+ </span><span class="s5">0.5</span><span class="s3">),</span>
+            <span class="s1">int</span><span class="s3">((</span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">2</span><span class="s3">)) * </span><span class="s5">255</span><span class="s3">) / </span><span class="s5">100.0 </span><span class="s3">+ </span><span class="s5">0.5</span><span class="s3">),</span>
+            <span class="s1">int</span><span class="s3">((</span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">3</span><span class="s3">)) * </span><span class="s5">255</span><span class="s3">) / </span><span class="s5">100.0 </span><span class="s3">+ </span><span class="s5">0.5</span><span class="s3">),</span>
+        <span class="s3">)</span>
+
+    <span class="s1">m </span><span class="s3">= </span><span class="s1">re</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span>
+        <span class="s6">r&quot;hsl\(\s*(\d+\.?\d*)\s*,\s*(\d+\.?\d*)%\s*,\s*(\d+\.?\d*)%\s*\)$&quot;</span><span class="s3">, </span><span class="s1">color</span>
+    <span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">m</span><span class="s3">:</span>
+        <span class="s2">from </span><span class="s1">colorsys </span><span class="s2">import </span><span class="s1">hls_to_rgb</span>
+
+        <span class="s1">rgb_floats </span><span class="s3">= </span><span class="s1">hls_to_rgb</span><span class="s3">(</span>
+            <span class="s1">float</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">1</span><span class="s3">)) / </span><span class="s5">360.0</span><span class="s3">,</span>
+            <span class="s1">float</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">3</span><span class="s3">)) / </span><span class="s5">100.0</span><span class="s3">,</span>
+            <span class="s1">float</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">2</span><span class="s3">)) / </span><span class="s5">100.0</span><span class="s3">,</span>
+        <span class="s3">)</span>
+        <span class="s2">return </span><span class="s3">(</span>
+            <span class="s1">int</span><span class="s3">(</span><span class="s1">rgb_floats</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] * </span><span class="s5">255 </span><span class="s3">+ </span><span class="s5">0.5</span><span class="s3">),</span>
+            <span class="s1">int</span><span class="s3">(</span><span class="s1">rgb_floats</span><span class="s3">[</span><span class="s5">1</span><span class="s3">] * </span><span class="s5">255 </span><span class="s3">+ </span><span class="s5">0.5</span><span class="s3">),</span>
+            <span class="s1">int</span><span class="s3">(</span><span class="s1">rgb_floats</span><span class="s3">[</span><span class="s5">2</span><span class="s3">] * </span><span class="s5">255 </span><span class="s3">+ </span><span class="s5">0.5</span><span class="s3">),</span>
+        <span class="s3">)</span>
+
+    <span class="s1">m </span><span class="s3">= </span><span class="s1">re</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span>
+        <span class="s6">r&quot;hs[bv]\(\s*(\d+\.?\d*)\s*,\s*(\d+\.?\d*)%\s*,\s*(\d+\.?\d*)%\s*\)$&quot;</span><span class="s3">, </span><span class="s1">color</span>
+    <span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">m</span><span class="s3">:</span>
+        <span class="s2">from </span><span class="s1">colorsys </span><span class="s2">import </span><span class="s1">hsv_to_rgb</span>
+
+        <span class="s1">rgb_floats </span><span class="s3">= </span><span class="s1">hsv_to_rgb</span><span class="s3">(</span>
+            <span class="s1">float</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">1</span><span class="s3">)) / </span><span class="s5">360.0</span><span class="s3">,</span>
+            <span class="s1">float</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">2</span><span class="s3">)) / </span><span class="s5">100.0</span><span class="s3">,</span>
+            <span class="s1">float</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">3</span><span class="s3">)) / </span><span class="s5">100.0</span><span class="s3">,</span>
+        <span class="s3">)</span>
+        <span class="s2">return </span><span class="s3">(</span>
+            <span class="s1">int</span><span class="s3">(</span><span class="s1">rgb_floats</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] * </span><span class="s5">255 </span><span class="s3">+ </span><span class="s5">0.5</span><span class="s3">),</span>
+            <span class="s1">int</span><span class="s3">(</span><span class="s1">rgb_floats</span><span class="s3">[</span><span class="s5">1</span><span class="s3">] * </span><span class="s5">255 </span><span class="s3">+ </span><span class="s5">0.5</span><span class="s3">),</span>
+            <span class="s1">int</span><span class="s3">(</span><span class="s1">rgb_floats</span><span class="s3">[</span><span class="s5">2</span><span class="s3">] * </span><span class="s5">255 </span><span class="s3">+ </span><span class="s5">0.5</span><span class="s3">),</span>
+        <span class="s3">)</span>
+
+    <span class="s1">m </span><span class="s3">= </span><span class="s1">re</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s6">r&quot;rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$&quot;</span><span class="s3">, </span><span class="s1">color</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">m</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">1</span><span class="s3">)), </span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">2</span><span class="s3">)), </span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">3</span><span class="s3">)), </span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">4</span><span class="s3">))</span>
+    <span class="s1">msg </span><span class="s3">= </span><span class="s6">f&quot;unknown color specifier: </span><span class="s2">{</span><span class="s1">repr</span><span class="s3">(</span><span class="s1">color</span><span class="s3">)</span><span class="s2">}</span><span class="s6">&quot;</span>
+    <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+
+<span class="s3">@</span><span class="s1">lru_cache</span>
+<span class="s2">def </span><span class="s1">getcolor</span><span class="s3">(</span><span class="s1">color</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, </span><span class="s1">mode</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; int </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, ...]:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Same as :py:func:`~PIL.ImageColor.getrgb` for most modes. However, if 
+    ``mode`` is HSV, converts the RGB value to a HSV value, or if ``mode`` is 
+    not color or a palette image, converts the RGB value to a grayscale value. 
+    If the string cannot be parsed, this function raises a :py:exc:`ValueError` 
+    exception. 
+ 
+    .. versionadded:: 1.1.4 
+ 
+    :param color: A color string 
+    :param mode: Convert result to this mode 
+    :return: ``graylevel, (graylevel, alpha) or (red, green, blue[, alpha])`` 
+    &quot;&quot;&quot;</span>
+    <span class="s0"># same as getrgb, but converts the result to the given mode</span>
+    <span class="s1">rgb</span><span class="s3">, </span><span class="s1">alpha </span><span class="s3">= </span><span class="s1">getrgb</span><span class="s3">(</span><span class="s1">color</span><span class="s3">), </span><span class="s5">255</span>
+    <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">rgb</span><span class="s3">) == </span><span class="s5">4</span><span class="s3">:</span>
+        <span class="s1">alpha </span><span class="s3">= </span><span class="s1">rgb</span><span class="s3">[</span><span class="s5">3</span><span class="s3">]</span>
+        <span class="s1">rgb </span><span class="s3">= </span><span class="s1">rgb</span><span class="s3">[:</span><span class="s5">3</span><span class="s3">]</span>
+
+    <span class="s2">if </span><span class="s1">mode </span><span class="s3">== </span><span class="s6">&quot;HSV&quot;</span><span class="s3">:</span>
+        <span class="s2">from </span><span class="s1">colorsys </span><span class="s2">import </span><span class="s1">rgb_to_hsv</span>
+
+        <span class="s1">r</span><span class="s3">, </span><span class="s1">g</span><span class="s3">, </span><span class="s1">b </span><span class="s3">= </span><span class="s1">rgb</span>
+        <span class="s1">h</span><span class="s3">, </span><span class="s1">s</span><span class="s3">, </span><span class="s1">v </span><span class="s3">= </span><span class="s1">rgb_to_hsv</span><span class="s3">(</span><span class="s1">r </span><span class="s3">/ </span><span class="s5">255</span><span class="s3">, </span><span class="s1">g </span><span class="s3">/ </span><span class="s5">255</span><span class="s3">, </span><span class="s1">b </span><span class="s3">/ </span><span class="s5">255</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">int</span><span class="s3">(</span><span class="s1">h </span><span class="s3">* </span><span class="s5">255</span><span class="s3">), </span><span class="s1">int</span><span class="s3">(</span><span class="s1">s </span><span class="s3">* </span><span class="s5">255</span><span class="s3">), </span><span class="s1">int</span><span class="s3">(</span><span class="s1">v </span><span class="s3">* </span><span class="s5">255</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">getmodebase</span><span class="s3">(</span><span class="s1">mode</span><span class="s3">) == </span><span class="s6">&quot;L&quot;</span><span class="s3">:</span>
+        <span class="s1">r</span><span class="s3">, </span><span class="s1">g</span><span class="s3">, </span><span class="s1">b </span><span class="s3">= </span><span class="s1">rgb</span>
+        <span class="s0"># ITU-R Recommendation 601-2 for nonlinear RGB</span>
+        <span class="s0"># scaled to 24 bits to match the convert's implementation.</span>
+        <span class="s1">graylevel </span><span class="s3">= (</span><span class="s1">r </span><span class="s3">* </span><span class="s5">19595 </span><span class="s3">+ </span><span class="s1">g </span><span class="s3">* </span><span class="s5">38470 </span><span class="s3">+ </span><span class="s1">b </span><span class="s3">* </span><span class="s5">7471 </span><span class="s3">+ </span><span class="s5">0x8000</span><span class="s3">) &gt;&gt; </span><span class="s5">16</span>
+        <span class="s2">if </span><span class="s1">mode</span><span class="s3">[-</span><span class="s5">1</span><span class="s3">] == </span><span class="s6">&quot;A&quot;</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">graylevel</span><span class="s3">, </span><span class="s1">alpha</span>
+        <span class="s2">return </span><span class="s1">graylevel</span>
+    <span class="s2">elif </span><span class="s1">mode</span><span class="s3">[-</span><span class="s5">1</span><span class="s3">] == </span><span class="s6">&quot;A&quot;</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s1">rgb </span><span class="s3">+ (</span><span class="s1">alpha</span><span class="s3">,)</span>
+    <span class="s2">return </span><span class="s1">rgb</span>
+
+
+<span class="s1">colormap</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">str </span><span class="s3">| </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]] = {</span>
+    <span class="s0"># X11 colour table from https://drafts.csswg.org/css-color-4/, with</span>
+    <span class="s0"># gray/grey spelling issues fixed.  This is a superset of HTML 4.0</span>
+    <span class="s0"># colour names used in CSS 1.</span>
+    <span class="s6">&quot;aliceblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#f0f8ff&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;antiquewhite&quot;</span><span class="s3">: </span><span class="s6">&quot;#faebd7&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;aqua&quot;</span><span class="s3">: </span><span class="s6">&quot;#00ffff&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;aquamarine&quot;</span><span class="s3">: </span><span class="s6">&quot;#7fffd4&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;azure&quot;</span><span class="s3">: </span><span class="s6">&quot;#f0ffff&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;beige&quot;</span><span class="s3">: </span><span class="s6">&quot;#f5f5dc&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;bisque&quot;</span><span class="s3">: </span><span class="s6">&quot;#ffe4c4&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;black&quot;</span><span class="s3">: </span><span class="s6">&quot;#000000&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;blanchedalmond&quot;</span><span class="s3">: </span><span class="s6">&quot;#ffebcd&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;blue&quot;</span><span class="s3">: </span><span class="s6">&quot;#0000ff&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;blueviolet&quot;</span><span class="s3">: </span><span class="s6">&quot;#8a2be2&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;brown&quot;</span><span class="s3">: </span><span class="s6">&quot;#a52a2a&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;burlywood&quot;</span><span class="s3">: </span><span class="s6">&quot;#deb887&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;cadetblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#5f9ea0&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;chartreuse&quot;</span><span class="s3">: </span><span class="s6">&quot;#7fff00&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;chocolate&quot;</span><span class="s3">: </span><span class="s6">&quot;#d2691e&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;coral&quot;</span><span class="s3">: </span><span class="s6">&quot;#ff7f50&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;cornflowerblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#6495ed&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;cornsilk&quot;</span><span class="s3">: </span><span class="s6">&quot;#fff8dc&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;crimson&quot;</span><span class="s3">: </span><span class="s6">&quot;#dc143c&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;cyan&quot;</span><span class="s3">: </span><span class="s6">&quot;#00ffff&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#00008b&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkcyan&quot;</span><span class="s3">: </span><span class="s6">&quot;#008b8b&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkgoldenrod&quot;</span><span class="s3">: </span><span class="s6">&quot;#b8860b&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkgray&quot;</span><span class="s3">: </span><span class="s6">&quot;#a9a9a9&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkgrey&quot;</span><span class="s3">: </span><span class="s6">&quot;#a9a9a9&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkgreen&quot;</span><span class="s3">: </span><span class="s6">&quot;#006400&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkkhaki&quot;</span><span class="s3">: </span><span class="s6">&quot;#bdb76b&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkmagenta&quot;</span><span class="s3">: </span><span class="s6">&quot;#8b008b&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkolivegreen&quot;</span><span class="s3">: </span><span class="s6">&quot;#556b2f&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkorange&quot;</span><span class="s3">: </span><span class="s6">&quot;#ff8c00&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkorchid&quot;</span><span class="s3">: </span><span class="s6">&quot;#9932cc&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkred&quot;</span><span class="s3">: </span><span class="s6">&quot;#8b0000&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darksalmon&quot;</span><span class="s3">: </span><span class="s6">&quot;#e9967a&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkseagreen&quot;</span><span class="s3">: </span><span class="s6">&quot;#8fbc8f&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkslateblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#483d8b&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkslategray&quot;</span><span class="s3">: </span><span class="s6">&quot;#2f4f4f&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkslategrey&quot;</span><span class="s3">: </span><span class="s6">&quot;#2f4f4f&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkturquoise&quot;</span><span class="s3">: </span><span class="s6">&quot;#00ced1&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;darkviolet&quot;</span><span class="s3">: </span><span class="s6">&quot;#9400d3&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;deeppink&quot;</span><span class="s3">: </span><span class="s6">&quot;#ff1493&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;deepskyblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#00bfff&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;dimgray&quot;</span><span class="s3">: </span><span class="s6">&quot;#696969&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;dimgrey&quot;</span><span class="s3">: </span><span class="s6">&quot;#696969&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;dodgerblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#1e90ff&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;firebrick&quot;</span><span class="s3">: </span><span class="s6">&quot;#b22222&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;floralwhite&quot;</span><span class="s3">: </span><span class="s6">&quot;#fffaf0&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;forestgreen&quot;</span><span class="s3">: </span><span class="s6">&quot;#228b22&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;fuchsia&quot;</span><span class="s3">: </span><span class="s6">&quot;#ff00ff&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;gainsboro&quot;</span><span class="s3">: </span><span class="s6">&quot;#dcdcdc&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;ghostwhite&quot;</span><span class="s3">: </span><span class="s6">&quot;#f8f8ff&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;gold&quot;</span><span class="s3">: </span><span class="s6">&quot;#ffd700&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;goldenrod&quot;</span><span class="s3">: </span><span class="s6">&quot;#daa520&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;gray&quot;</span><span class="s3">: </span><span class="s6">&quot;#808080&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;grey&quot;</span><span class="s3">: </span><span class="s6">&quot;#808080&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;green&quot;</span><span class="s3">: </span><span class="s6">&quot;#008000&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;greenyellow&quot;</span><span class="s3">: </span><span class="s6">&quot;#adff2f&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;honeydew&quot;</span><span class="s3">: </span><span class="s6">&quot;#f0fff0&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;hotpink&quot;</span><span class="s3">: </span><span class="s6">&quot;#ff69b4&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;indianred&quot;</span><span class="s3">: </span><span class="s6">&quot;#cd5c5c&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;indigo&quot;</span><span class="s3">: </span><span class="s6">&quot;#4b0082&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;ivory&quot;</span><span class="s3">: </span><span class="s6">&quot;#fffff0&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;khaki&quot;</span><span class="s3">: </span><span class="s6">&quot;#f0e68c&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lavender&quot;</span><span class="s3">: </span><span class="s6">&quot;#e6e6fa&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lavenderblush&quot;</span><span class="s3">: </span><span class="s6">&quot;#fff0f5&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lawngreen&quot;</span><span class="s3">: </span><span class="s6">&quot;#7cfc00&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lemonchiffon&quot;</span><span class="s3">: </span><span class="s6">&quot;#fffacd&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lightblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#add8e6&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lightcoral&quot;</span><span class="s3">: </span><span class="s6">&quot;#f08080&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lightcyan&quot;</span><span class="s3">: </span><span class="s6">&quot;#e0ffff&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lightgoldenrodyellow&quot;</span><span class="s3">: </span><span class="s6">&quot;#fafad2&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lightgreen&quot;</span><span class="s3">: </span><span class="s6">&quot;#90ee90&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lightgray&quot;</span><span class="s3">: </span><span class="s6">&quot;#d3d3d3&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lightgrey&quot;</span><span class="s3">: </span><span class="s6">&quot;#d3d3d3&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lightpink&quot;</span><span class="s3">: </span><span class="s6">&quot;#ffb6c1&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lightsalmon&quot;</span><span class="s3">: </span><span class="s6">&quot;#ffa07a&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lightseagreen&quot;</span><span class="s3">: </span><span class="s6">&quot;#20b2aa&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lightskyblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#87cefa&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lightslategray&quot;</span><span class="s3">: </span><span class="s6">&quot;#778899&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lightslategrey&quot;</span><span class="s3">: </span><span class="s6">&quot;#778899&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lightsteelblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#b0c4de&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lightyellow&quot;</span><span class="s3">: </span><span class="s6">&quot;#ffffe0&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;lime&quot;</span><span class="s3">: </span><span class="s6">&quot;#00ff00&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;limegreen&quot;</span><span class="s3">: </span><span class="s6">&quot;#32cd32&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;linen&quot;</span><span class="s3">: </span><span class="s6">&quot;#faf0e6&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;magenta&quot;</span><span class="s3">: </span><span class="s6">&quot;#ff00ff&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;maroon&quot;</span><span class="s3">: </span><span class="s6">&quot;#800000&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;mediumaquamarine&quot;</span><span class="s3">: </span><span class="s6">&quot;#66cdaa&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;mediumblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#0000cd&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;mediumorchid&quot;</span><span class="s3">: </span><span class="s6">&quot;#ba55d3&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;mediumpurple&quot;</span><span class="s3">: </span><span class="s6">&quot;#9370db&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;mediumseagreen&quot;</span><span class="s3">: </span><span class="s6">&quot;#3cb371&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;mediumslateblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#7b68ee&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;mediumspringgreen&quot;</span><span class="s3">: </span><span class="s6">&quot;#00fa9a&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;mediumturquoise&quot;</span><span class="s3">: </span><span class="s6">&quot;#48d1cc&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;mediumvioletred&quot;</span><span class="s3">: </span><span class="s6">&quot;#c71585&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;midnightblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#191970&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;mintcream&quot;</span><span class="s3">: </span><span class="s6">&quot;#f5fffa&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;mistyrose&quot;</span><span class="s3">: </span><span class="s6">&quot;#ffe4e1&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;moccasin&quot;</span><span class="s3">: </span><span class="s6">&quot;#ffe4b5&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;navajowhite&quot;</span><span class="s3">: </span><span class="s6">&quot;#ffdead&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;navy&quot;</span><span class="s3">: </span><span class="s6">&quot;#000080&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;oldlace&quot;</span><span class="s3">: </span><span class="s6">&quot;#fdf5e6&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;olive&quot;</span><span class="s3">: </span><span class="s6">&quot;#808000&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;olivedrab&quot;</span><span class="s3">: </span><span class="s6">&quot;#6b8e23&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;orange&quot;</span><span class="s3">: </span><span class="s6">&quot;#ffa500&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;orangered&quot;</span><span class="s3">: </span><span class="s6">&quot;#ff4500&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;orchid&quot;</span><span class="s3">: </span><span class="s6">&quot;#da70d6&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;palegoldenrod&quot;</span><span class="s3">: </span><span class="s6">&quot;#eee8aa&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;palegreen&quot;</span><span class="s3">: </span><span class="s6">&quot;#98fb98&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;paleturquoise&quot;</span><span class="s3">: </span><span class="s6">&quot;#afeeee&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;palevioletred&quot;</span><span class="s3">: </span><span class="s6">&quot;#db7093&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;papayawhip&quot;</span><span class="s3">: </span><span class="s6">&quot;#ffefd5&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;peachpuff&quot;</span><span class="s3">: </span><span class="s6">&quot;#ffdab9&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;peru&quot;</span><span class="s3">: </span><span class="s6">&quot;#cd853f&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;pink&quot;</span><span class="s3">: </span><span class="s6">&quot;#ffc0cb&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;plum&quot;</span><span class="s3">: </span><span class="s6">&quot;#dda0dd&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;powderblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#b0e0e6&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;purple&quot;</span><span class="s3">: </span><span class="s6">&quot;#800080&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;rebeccapurple&quot;</span><span class="s3">: </span><span class="s6">&quot;#663399&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;red&quot;</span><span class="s3">: </span><span class="s6">&quot;#ff0000&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;rosybrown&quot;</span><span class="s3">: </span><span class="s6">&quot;#bc8f8f&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;royalblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#4169e1&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;saddlebrown&quot;</span><span class="s3">: </span><span class="s6">&quot;#8b4513&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;salmon&quot;</span><span class="s3">: </span><span class="s6">&quot;#fa8072&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;sandybrown&quot;</span><span class="s3">: </span><span class="s6">&quot;#f4a460&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;seagreen&quot;</span><span class="s3">: </span><span class="s6">&quot;#2e8b57&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;seashell&quot;</span><span class="s3">: </span><span class="s6">&quot;#fff5ee&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;sienna&quot;</span><span class="s3">: </span><span class="s6">&quot;#a0522d&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;silver&quot;</span><span class="s3">: </span><span class="s6">&quot;#c0c0c0&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;skyblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#87ceeb&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;slateblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#6a5acd&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;slategray&quot;</span><span class="s3">: </span><span class="s6">&quot;#708090&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;slategrey&quot;</span><span class="s3">: </span><span class="s6">&quot;#708090&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;snow&quot;</span><span class="s3">: </span><span class="s6">&quot;#fffafa&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;springgreen&quot;</span><span class="s3">: </span><span class="s6">&quot;#00ff7f&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;steelblue&quot;</span><span class="s3">: </span><span class="s6">&quot;#4682b4&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;tan&quot;</span><span class="s3">: </span><span class="s6">&quot;#d2b48c&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;teal&quot;</span><span class="s3">: </span><span class="s6">&quot;#008080&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;thistle&quot;</span><span class="s3">: </span><span class="s6">&quot;#d8bfd8&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;tomato&quot;</span><span class="s3">: </span><span class="s6">&quot;#ff6347&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;turquoise&quot;</span><span class="s3">: </span><span class="s6">&quot;#40e0d0&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;violet&quot;</span><span class="s3">: </span><span class="s6">&quot;#ee82ee&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;wheat&quot;</span><span class="s3">: </span><span class="s6">&quot;#f5deb3&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;white&quot;</span><span class="s3">: </span><span class="s6">&quot;#ffffff&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;whitesmoke&quot;</span><span class="s3">: </span><span class="s6">&quot;#f5f5f5&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;yellow&quot;</span><span class="s3">: </span><span class="s6">&quot;#ffff00&quot;</span><span class="s3">,</span>
+    <span class="s6">&quot;yellowgreen&quot;</span><span class="s3">: </span><span class="s6">&quot;#9acd32&quot;</span><span class="s3">,</span>
+<span class="s3">}</span>
+</pre>
+</body>
+</html>

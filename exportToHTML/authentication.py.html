@@ -1,0 +1,73 @@
+<html>
+<head>
+<title>authentication.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+authentication.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">typing</span>
+
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">authentication </span><span class="s0">import </span><span class="s2">(</span>
+    <span class="s1">AuthCredentials</span><span class="s2">,</span>
+    <span class="s1">AuthenticationBackend</span><span class="s2">,</span>
+    <span class="s1">AuthenticationError</span><span class="s2">,</span>
+    <span class="s1">UnauthenticatedUser</span><span class="s2">,</span>
+<span class="s2">)</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">requests </span><span class="s0">import </span><span class="s1">HTTPConnection</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">responses </span><span class="s0">import </span><span class="s1">PlainTextResponse</span><span class="s2">, </span><span class="s1">Response</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">ASGIApp</span><span class="s2">, </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">Send</span>
+
+
+<span class="s0">class </span><span class="s1">AuthenticationMiddleware</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">app</span><span class="s2">: </span><span class="s1">ASGIApp</span><span class="s2">,</span>
+        <span class="s1">backend</span><span class="s2">: </span><span class="s1">AuthenticationBackend</span><span class="s2">,</span>
+        <span class="s1">on_error</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">HTTPConnection</span><span class="s2">, </span><span class="s1">AuthenticationError</span><span class="s2">], </span><span class="s1">Response</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app </span><span class="s2">= </span><span class="s1">app</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">backend </span><span class="s2">= </span><span class="s1">backend</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">on_error</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">HTTPConnection</span><span class="s2">, </span><span class="s1">AuthenticationError</span><span class="s2">], </span><span class="s1">Response</span><span class="s2">] = (</span>
+            <span class="s1">on_error </span><span class="s0">if </span><span class="s1">on_error </span><span class="s0">is not None else </span><span class="s1">self</span><span class="s2">.</span><span class="s1">default_on_error</span>
+        <span class="s2">)</span>
+
+    <span class="s0">async def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">: </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">: </span><span class="s1">Send</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">scope</span><span class="s2">[</span><span class="s3">&quot;type&quot;</span><span class="s2">] </span><span class="s0">not in </span><span class="s2">[</span><span class="s3">&quot;http&quot;</span><span class="s2">, </span><span class="s3">&quot;websocket&quot;</span><span class="s2">]:</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+            <span class="s0">return</span>
+
+        <span class="s1">conn </span><span class="s2">= </span><span class="s1">HTTPConnection</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">)</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">auth_result </span><span class="s2">= </span><span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">backend</span><span class="s2">.</span><span class="s1">authenticate</span><span class="s2">(</span><span class="s1">conn</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">AuthenticationError </span><span class="s0">as </span><span class="s1">exc</span><span class="s2">:</span>
+            <span class="s1">response </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">on_error</span><span class="s2">(</span><span class="s1">conn</span><span class="s2">, </span><span class="s1">exc</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">scope</span><span class="s2">[</span><span class="s3">&quot;type&quot;</span><span class="s2">] == </span><span class="s3">&quot;websocket&quot;</span><span class="s2">:</span>
+                <span class="s0">await </span><span class="s1">send</span><span class="s2">({</span><span class="s3">&quot;type&quot;</span><span class="s2">: </span><span class="s3">&quot;websocket.close&quot;</span><span class="s2">, </span><span class="s3">&quot;code&quot;</span><span class="s2">: </span><span class="s4">1000</span><span class="s2">})</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s0">await </span><span class="s1">response</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+            <span class="s0">return</span>
+
+        <span class="s0">if </span><span class="s1">auth_result </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">auth_result </span><span class="s2">= </span><span class="s1">AuthCredentials</span><span class="s2">(), </span><span class="s1">UnauthenticatedUser</span><span class="s2">()</span>
+        <span class="s1">scope</span><span class="s2">[</span><span class="s3">&quot;auth&quot;</span><span class="s2">], </span><span class="s1">scope</span><span class="s2">[</span><span class="s3">&quot;user&quot;</span><span class="s2">] = </span><span class="s1">auth_result</span>
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">staticmethod</span>
+    <span class="s0">def </span><span class="s1">default_on_error</span><span class="s2">(</span><span class="s1">conn</span><span class="s2">: </span><span class="s1">HTTPConnection</span><span class="s2">, </span><span class="s1">exc</span><span class="s2">: </span><span class="s1">Exception</span><span class="s2">) </span><span class="s1">-&gt; Response</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">PlainTextResponse</span><span class="s2">(</span><span class="s1">str</span><span class="s2">(</span><span class="s1">exc</span><span class="s2">), </span><span class="s1">status_code</span><span class="s2">=</span><span class="s4">400</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

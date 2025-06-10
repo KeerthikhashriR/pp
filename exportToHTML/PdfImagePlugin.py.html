@@ -1,0 +1,334 @@
+<html>
+<head>
+<title>PdfImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #2aacb8;}
+.s6 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+PdfImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># PDF (Acrobat) file handling</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1996-07-16 fl   Created</span>
+<span class="s0"># 1997-01-18 fl   Fixed header</span>
+<span class="s0"># 2004-02-21 fl   Fixes for 1/L/CMYK images, etc.</span>
+<span class="s0"># 2004-02-24 fl   Fixes for 1 and P images.</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2004 by Secret Labs AB.  All rights reserved.</span>
+<span class="s0"># Copyright (c) 1996-1997 by Fredrik Lundh.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for PDF images (output only).</span>
+<span class="s0">##</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">io</span>
+<span class="s2">import </span><span class="s1">math</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">time</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">IO</span><span class="s3">, </span><span class="s1">Any</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">ImageFile</span><span class="s3">, </span><span class="s1">ImageSequence</span><span class="s3">, </span><span class="s1">PdfParser</span><span class="s3">, </span><span class="s1">__version__</span><span class="s3">, </span><span class="s1">features</span>
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+
+<span class="s0"># object ids:</span>
+<span class="s0">#  1. catalogue</span>
+<span class="s0">#  2. pages</span>
+<span class="s0">#  3. image</span>
+<span class="s0">#  4. page</span>
+<span class="s0">#  5. page contents</span>
+
+
+<span class="s2">def </span><span class="s1">_save_all</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">, </span><span class="s1">filename</span><span class="s3">, </span><span class="s1">save_all</span><span class="s3">=</span><span class="s2">True</span><span class="s3">)</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># (Internal) Image save plugin for the PDF format.</span>
+
+
+<span class="s2">def </span><span class="s1">_write_image</span><span class="s3">(</span>
+    <span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">,</span>
+    <span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">,</span>
+    <span class="s1">existing_pdf</span><span class="s3">: </span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfParser</span><span class="s3">,</span>
+    <span class="s1">image_refs</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">IndirectReference</span><span class="s3">],</span>
+<span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">IndirectReference</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]:</span>
+    <span class="s0"># FIXME: Should replace ASCIIHexDecode with RunLengthDecode</span>
+    <span class="s0"># (packbits) or LZWDecode (tiff/lzw compression).  Note that</span>
+    <span class="s0"># PDF 1.2 also supports Flatedecode (zip compression).</span>
+
+    <span class="s1">params </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s1">decode </span><span class="s3">= </span><span class="s2">None</span>
+
+    <span class="s0">#</span>
+    <span class="s0"># Get image characteristics</span>
+
+    <span class="s1">width</span><span class="s3">, </span><span class="s1">height </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span>
+
+    <span class="s1">dict_obj</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] = {</span><span class="s4">&quot;BitsPerComponent&quot;</span><span class="s3">: </span><span class="s5">8</span><span class="s3">}</span>
+    <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s4">&quot;1&quot;</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">features</span><span class="s3">.</span><span class="s1">check</span><span class="s3">(</span><span class="s4">&quot;libtiff&quot;</span><span class="s3">):</span>
+            <span class="s1">decode_filter </span><span class="s3">= </span><span class="s4">&quot;CCITTFaxDecode&quot;</span>
+            <span class="s1">dict_obj</span><span class="s3">[</span><span class="s4">&quot;BitsPerComponent&quot;</span><span class="s3">] = </span><span class="s5">1</span>
+            <span class="s1">params </span><span class="s3">= </span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfArray</span><span class="s3">(</span>
+                <span class="s3">[</span>
+                    <span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfDict</span><span class="s3">(</span>
+                        <span class="s3">{</span>
+                            <span class="s4">&quot;K&quot;</span><span class="s3">: -</span><span class="s5">1</span><span class="s3">,</span>
+                            <span class="s4">&quot;BlackIs1&quot;</span><span class="s3">: </span><span class="s2">True</span><span class="s3">,</span>
+                            <span class="s4">&quot;Columns&quot;</span><span class="s3">: </span><span class="s1">width</span><span class="s3">,</span>
+                            <span class="s4">&quot;Rows&quot;</span><span class="s3">: </span><span class="s1">height</span><span class="s3">,</span>
+                        <span class="s3">}</span>
+                    <span class="s3">)</span>
+                <span class="s3">]</span>
+            <span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">decode_filter </span><span class="s3">= </span><span class="s4">&quot;DCTDecode&quot;</span>
+        <span class="s1">dict_obj</span><span class="s3">[</span><span class="s4">&quot;ColorSpace&quot;</span><span class="s3">] = </span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfName</span><span class="s3">(</span><span class="s4">&quot;DeviceGray&quot;</span><span class="s3">)</span>
+        <span class="s1">procset </span><span class="s3">= </span><span class="s4">&quot;ImageB&quot;  </span><span class="s0"># grayscale</span>
+    <span class="s2">elif </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s4">&quot;L&quot;</span><span class="s3">:</span>
+        <span class="s1">decode_filter </span><span class="s3">= </span><span class="s4">&quot;DCTDecode&quot;</span>
+        <span class="s0"># params = f&quot;&lt;&lt; /Predictor 15 /Columns {width-2} &gt;&gt;&quot;</span>
+        <span class="s1">dict_obj</span><span class="s3">[</span><span class="s4">&quot;ColorSpace&quot;</span><span class="s3">] = </span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfName</span><span class="s3">(</span><span class="s4">&quot;DeviceGray&quot;</span><span class="s3">)</span>
+        <span class="s1">procset </span><span class="s3">= </span><span class="s4">&quot;ImageB&quot;  </span><span class="s0"># grayscale</span>
+    <span class="s2">elif </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s4">&quot;LA&quot;</span><span class="s3">:</span>
+        <span class="s1">decode_filter </span><span class="s3">= </span><span class="s4">&quot;JPXDecode&quot;</span>
+        <span class="s0"># params = f&quot;&lt;&lt; /Predictor 15 /Columns {width-2} &gt;&gt;&quot;</span>
+        <span class="s1">procset </span><span class="s3">= </span><span class="s4">&quot;ImageB&quot;  </span><span class="s0"># grayscale</span>
+        <span class="s1">dict_obj</span><span class="s3">[</span><span class="s4">&quot;SMaskInData&quot;</span><span class="s3">] = </span><span class="s5">1</span>
+    <span class="s2">elif </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s4">&quot;P&quot;</span><span class="s3">:</span>
+        <span class="s1">decode_filter </span><span class="s3">= </span><span class="s4">&quot;ASCIIHexDecode&quot;</span>
+        <span class="s1">palette </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">getpalette</span><span class="s3">()</span>
+        <span class="s2">assert </span><span class="s1">palette </span><span class="s2">is not None</span>
+        <span class="s1">dict_obj</span><span class="s3">[</span><span class="s4">&quot;ColorSpace&quot;</span><span class="s3">] = [</span>
+            <span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfName</span><span class="s3">(</span><span class="s4">&quot;Indexed&quot;</span><span class="s3">),</span>
+            <span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfName</span><span class="s3">(</span><span class="s4">&quot;DeviceRGB&quot;</span><span class="s3">),</span>
+            <span class="s1">len</span><span class="s3">(</span><span class="s1">palette</span><span class="s3">) // </span><span class="s5">3 </span><span class="s3">- </span><span class="s5">1</span><span class="s3">,</span>
+            <span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfBinary</span><span class="s3">(</span><span class="s1">palette</span><span class="s3">),</span>
+        <span class="s3">]</span>
+        <span class="s1">procset </span><span class="s3">= </span><span class="s4">&quot;ImageI&quot;  </span><span class="s0"># indexed color</span>
+
+        <span class="s2">if </span><span class="s4">&quot;transparency&quot; </span><span class="s2">in </span><span class="s1">im</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+            <span class="s1">smask </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s4">&quot;LA&quot;</span><span class="s3">).</span><span class="s1">getchannel</span><span class="s3">(</span><span class="s4">&quot;A&quot;</span><span class="s3">)</span>
+            <span class="s1">smask</span><span class="s3">.</span><span class="s1">encoderinfo </span><span class="s3">= {}</span>
+
+            <span class="s1">image_ref </span><span class="s3">= </span><span class="s1">_write_image</span><span class="s3">(</span><span class="s1">smask</span><span class="s3">, </span><span class="s1">filename</span><span class="s3">, </span><span class="s1">existing_pdf</span><span class="s3">, </span><span class="s1">image_refs</span><span class="s3">)[</span><span class="s5">0</span><span class="s3">]</span>
+            <span class="s1">dict_obj</span><span class="s3">[</span><span class="s4">&quot;SMask&quot;</span><span class="s3">] = </span><span class="s1">image_ref</span>
+    <span class="s2">elif </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s4">&quot;RGB&quot;</span><span class="s3">:</span>
+        <span class="s1">decode_filter </span><span class="s3">= </span><span class="s4">&quot;DCTDecode&quot;</span>
+        <span class="s1">dict_obj</span><span class="s3">[</span><span class="s4">&quot;ColorSpace&quot;</span><span class="s3">] = </span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfName</span><span class="s3">(</span><span class="s4">&quot;DeviceRGB&quot;</span><span class="s3">)</span>
+        <span class="s1">procset </span><span class="s3">= </span><span class="s4">&quot;ImageC&quot;  </span><span class="s0"># color images</span>
+    <span class="s2">elif </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s4">&quot;RGBA&quot;</span><span class="s3">:</span>
+        <span class="s1">decode_filter </span><span class="s3">= </span><span class="s4">&quot;JPXDecode&quot;</span>
+        <span class="s1">procset </span><span class="s3">= </span><span class="s4">&quot;ImageC&quot;  </span><span class="s0"># color images</span>
+        <span class="s1">dict_obj</span><span class="s3">[</span><span class="s4">&quot;SMaskInData&quot;</span><span class="s3">] = </span><span class="s5">1</span>
+    <span class="s2">elif </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s4">&quot;CMYK&quot;</span><span class="s3">:</span>
+        <span class="s1">decode_filter </span><span class="s3">= </span><span class="s4">&quot;DCTDecode&quot;</span>
+        <span class="s1">dict_obj</span><span class="s3">[</span><span class="s4">&quot;ColorSpace&quot;</span><span class="s3">] = </span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfName</span><span class="s3">(</span><span class="s4">&quot;DeviceCMYK&quot;</span><span class="s3">)</span>
+        <span class="s1">procset </span><span class="s3">= </span><span class="s4">&quot;ImageC&quot;  </span><span class="s0"># color images</span>
+        <span class="s1">decode </span><span class="s3">= [</span><span class="s5">1</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s5">1</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s5">1</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s5">1</span><span class="s3">, </span><span class="s5">0</span><span class="s3">]</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s4">f&quot;cannot save mode </span><span class="s2">{</span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span><span class="s2">}</span><span class="s4">&quot;</span>
+        <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+    <span class="s0">#</span>
+    <span class="s0"># image</span>
+
+    <span class="s1">op </span><span class="s3">= </span><span class="s1">io</span><span class="s3">.</span><span class="s1">BytesIO</span><span class="s3">()</span>
+
+    <span class="s2">if </span><span class="s1">decode_filter </span><span class="s3">== </span><span class="s4">&quot;ASCIIHexDecode&quot;</span><span class="s3">:</span>
+        <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">op</span><span class="s3">, [</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s4">&quot;hex&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s5">0</span><span class="s3">, </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">)])</span>
+    <span class="s2">elif </span><span class="s1">decode_filter </span><span class="s3">== </span><span class="s4">&quot;CCITTFaxDecode&quot;</span><span class="s3">:</span>
+        <span class="s1">im</span><span class="s3">.</span><span class="s1">save</span><span class="s3">(</span>
+            <span class="s1">op</span><span class="s3">,</span>
+            <span class="s4">&quot;TIFF&quot;</span><span class="s3">,</span>
+            <span class="s1">compression</span><span class="s3">=</span><span class="s4">&quot;group4&quot;</span><span class="s3">,</span>
+            <span class="s0"># use a single strip</span>
+            <span class="s1">strip_size</span><span class="s3">=</span><span class="s1">math</span><span class="s3">.</span><span class="s1">ceil</span><span class="s3">(</span><span class="s1">width </span><span class="s3">/ </span><span class="s5">8</span><span class="s3">) * </span><span class="s1">height</span><span class="s3">,</span>
+        <span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">decode_filter </span><span class="s3">== </span><span class="s4">&quot;DCTDecode&quot;</span><span class="s3">:</span>
+        <span class="s1">Image</span><span class="s3">.</span><span class="s1">SAVE</span><span class="s3">[</span><span class="s4">&quot;JPEG&quot;</span><span class="s3">](</span><span class="s1">im</span><span class="s3">, </span><span class="s1">op</span><span class="s3">, </span><span class="s1">filename</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">decode_filter </span><span class="s3">== </span><span class="s4">&quot;JPXDecode&quot;</span><span class="s3">:</span>
+        <span class="s2">del </span><span class="s1">dict_obj</span><span class="s3">[</span><span class="s4">&quot;BitsPerComponent&quot;</span><span class="s3">]</span>
+        <span class="s1">Image</span><span class="s3">.</span><span class="s1">SAVE</span><span class="s3">[</span><span class="s4">&quot;JPEG2000&quot;</span><span class="s3">](</span><span class="s1">im</span><span class="s3">, </span><span class="s1">op</span><span class="s3">, </span><span class="s1">filename</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s4">f&quot;unsupported PDF filter (</span><span class="s2">{</span><span class="s1">decode_filter</span><span class="s2">}</span><span class="s4">)&quot;</span>
+        <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+    <span class="s1">stream </span><span class="s3">= </span><span class="s1">op</span><span class="s3">.</span><span class="s1">getvalue</span><span class="s3">()</span>
+    <span class="s1">filter</span><span class="s3">: </span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfArray </span><span class="s3">| </span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfName</span>
+    <span class="s2">if </span><span class="s1">decode_filter </span><span class="s3">== </span><span class="s4">&quot;CCITTFaxDecode&quot;</span><span class="s3">:</span>
+        <span class="s1">stream </span><span class="s3">= </span><span class="s1">stream</span><span class="s3">[</span><span class="s5">8</span><span class="s3">:]</span>
+        <span class="s1">filter </span><span class="s3">= </span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfArray</span><span class="s3">([</span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfName</span><span class="s3">(</span><span class="s1">decode_filter</span><span class="s3">)])</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">filter </span><span class="s3">= </span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfName</span><span class="s3">(</span><span class="s1">decode_filter</span><span class="s3">)</span>
+
+    <span class="s1">image_ref </span><span class="s3">= </span><span class="s1">image_refs</span><span class="s3">.</span><span class="s1">pop</span><span class="s3">(</span><span class="s5">0</span><span class="s3">)</span>
+    <span class="s1">existing_pdf</span><span class="s3">.</span><span class="s1">write_obj</span><span class="s3">(</span>
+        <span class="s1">image_ref</span><span class="s3">,</span>
+        <span class="s1">stream</span><span class="s3">=</span><span class="s1">stream</span><span class="s3">,</span>
+        <span class="s1">Type</span><span class="s3">=</span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfName</span><span class="s3">(</span><span class="s4">&quot;XObject&quot;</span><span class="s3">),</span>
+        <span class="s1">Subtype</span><span class="s3">=</span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfName</span><span class="s3">(</span><span class="s4">&quot;Image&quot;</span><span class="s3">),</span>
+        <span class="s1">Width</span><span class="s3">=</span><span class="s1">width</span><span class="s3">,  </span><span class="s0"># * 72.0 / x_resolution,</span>
+        <span class="s1">Height</span><span class="s3">=</span><span class="s1">height</span><span class="s3">,  </span><span class="s0"># * 72.0 / y_resolution,</span>
+        <span class="s1">Filter</span><span class="s3">=</span><span class="s1">filter</span><span class="s3">,</span>
+        <span class="s1">Decode</span><span class="s3">=</span><span class="s1">decode</span><span class="s3">,</span>
+        <span class="s1">DecodeParms</span><span class="s3">=</span><span class="s1">params</span><span class="s3">,</span>
+        <span class="s3">**</span><span class="s1">dict_obj</span><span class="s3">,</span>
+    <span class="s3">)</span>
+
+    <span class="s2">return </span><span class="s1">image_ref</span><span class="s3">, </span><span class="s1">procset</span>
+
+
+<span class="s2">def </span><span class="s1">_save</span><span class="s3">(</span>
+    <span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">, </span><span class="s1">save_all</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span>
+<span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s1">is_appending </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">&quot;append&quot;</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+    <span class="s1">filename_str </span><span class="s3">= </span><span class="s1">filename</span><span class="s3">.</span><span class="s1">decode</span><span class="s3">() </span><span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">filename</span><span class="s3">, </span><span class="s1">bytes</span><span class="s3">) </span><span class="s2">else </span><span class="s1">filename</span>
+    <span class="s2">if </span><span class="s1">is_appending</span><span class="s3">:</span>
+        <span class="s1">existing_pdf </span><span class="s3">= </span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfParser</span><span class="s3">(</span><span class="s1">f</span><span class="s3">=</span><span class="s1">fp</span><span class="s3">, </span><span class="s1">filename</span><span class="s3">=</span><span class="s1">filename_str</span><span class="s3">, </span><span class="s1">mode</span><span class="s3">=</span><span class="s4">&quot;r+b&quot;</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">existing_pdf </span><span class="s3">= </span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfParser</span><span class="s3">(</span><span class="s1">f</span><span class="s3">=</span><span class="s1">fp</span><span class="s3">, </span><span class="s1">filename</span><span class="s3">=</span><span class="s1">filename_str</span><span class="s3">, </span><span class="s1">mode</span><span class="s3">=</span><span class="s4">&quot;w+b&quot;</span><span class="s3">)</span>
+
+    <span class="s1">dpi </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">&quot;dpi&quot;</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">dpi</span><span class="s3">:</span>
+        <span class="s1">x_resolution </span><span class="s3">= </span><span class="s1">dpi</span><span class="s3">[</span><span class="s5">0</span><span class="s3">]</span>
+        <span class="s1">y_resolution </span><span class="s3">= </span><span class="s1">dpi</span><span class="s3">[</span><span class="s5">1</span><span class="s3">]</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">x_resolution </span><span class="s3">= </span><span class="s1">y_resolution </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">&quot;resolution&quot;</span><span class="s3">, </span><span class="s5">72.0</span><span class="s3">)</span>
+
+    <span class="s1">info </span><span class="s3">= {</span>
+        <span class="s4">&quot;title&quot;</span><span class="s3">: (</span>
+            <span class="s2">None if </span><span class="s1">is_appending </span><span class="s2">else </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">splitext</span><span class="s3">(</span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">basename</span><span class="s3">(</span><span class="s1">filename</span><span class="s3">))[</span><span class="s5">0</span><span class="s3">]</span>
+        <span class="s3">),</span>
+        <span class="s4">&quot;author&quot;</span><span class="s3">: </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s4">&quot;subject&quot;</span><span class="s3">: </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s4">&quot;keywords&quot;</span><span class="s3">: </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s4">&quot;creator&quot;</span><span class="s3">: </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s4">&quot;producer&quot;</span><span class="s3">: </span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s4">&quot;creationDate&quot;</span><span class="s3">: </span><span class="s2">None if </span><span class="s1">is_appending </span><span class="s2">else </span><span class="s1">time</span><span class="s3">.</span><span class="s1">gmtime</span><span class="s3">(),</span>
+        <span class="s4">&quot;modDate&quot;</span><span class="s3">: </span><span class="s2">None if </span><span class="s1">is_appending </span><span class="s2">else </span><span class="s1">time</span><span class="s3">.</span><span class="s1">gmtime</span><span class="s3">(),</span>
+    <span class="s3">}</span>
+    <span class="s2">for </span><span class="s1">k</span><span class="s3">, </span><span class="s1">default </span><span class="s2">in </span><span class="s1">info</span><span class="s3">.</span><span class="s1">items</span><span class="s3">():</span>
+        <span class="s1">v </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">k</span><span class="s3">) </span><span class="s2">if </span><span class="s1">k </span><span class="s2">in </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo </span><span class="s2">else </span><span class="s1">default</span>
+        <span class="s2">if </span><span class="s1">v</span><span class="s3">:</span>
+            <span class="s1">existing_pdf</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s1">k</span><span class="s3">[</span><span class="s5">0</span><span class="s3">].</span><span class="s1">upper</span><span class="s3">() + </span><span class="s1">k</span><span class="s3">[</span><span class="s5">1</span><span class="s3">:]] = </span><span class="s1">v</span>
+
+    <span class="s0">#</span>
+    <span class="s0"># make sure image data is available</span>
+    <span class="s1">im</span><span class="s3">.</span><span class="s1">load</span><span class="s3">()</span>
+
+    <span class="s1">existing_pdf</span><span class="s3">.</span><span class="s1">start_writing</span><span class="s3">()</span>
+    <span class="s1">existing_pdf</span><span class="s3">.</span><span class="s1">write_header</span><span class="s3">()</span>
+    <span class="s1">existing_pdf</span><span class="s3">.</span><span class="s1">write_comment</span><span class="s3">(</span><span class="s4">f&quot;created by Pillow </span><span class="s2">{</span><span class="s1">__version__</span><span class="s2">} </span><span class="s4">PDF driver&quot;</span><span class="s3">)</span>
+
+    <span class="s0">#</span>
+    <span class="s0"># pages</span>
+    <span class="s1">ims </span><span class="s3">= [</span><span class="s1">im</span><span class="s3">]</span>
+    <span class="s2">if </span><span class="s1">save_all</span><span class="s3">:</span>
+        <span class="s1">append_images </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">&quot;append_images&quot;</span><span class="s3">, [])</span>
+        <span class="s2">for </span><span class="s1">append_im </span><span class="s2">in </span><span class="s1">append_images</span><span class="s3">:</span>
+            <span class="s1">append_im</span><span class="s3">.</span><span class="s1">encoderinfo </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">encoderinfo</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+            <span class="s1">ims</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">append_im</span><span class="s3">)</span>
+    <span class="s1">number_of_pages </span><span class="s3">= </span><span class="s5">0</span>
+    <span class="s1">image_refs </span><span class="s3">= []</span>
+    <span class="s1">page_refs </span><span class="s3">= []</span>
+    <span class="s1">contents_refs </span><span class="s3">= []</span>
+    <span class="s2">for </span><span class="s1">im </span><span class="s2">in </span><span class="s1">ims</span><span class="s3">:</span>
+        <span class="s1">im_number_of_pages </span><span class="s3">= </span><span class="s5">1</span>
+        <span class="s2">if </span><span class="s1">save_all</span><span class="s3">:</span>
+            <span class="s1">im_number_of_pages </span><span class="s3">= </span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s4">&quot;n_frames&quot;</span><span class="s3">, </span><span class="s5">1</span><span class="s3">)</span>
+        <span class="s1">number_of_pages </span><span class="s3">+= </span><span class="s1">im_number_of_pages</span>
+        <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">im_number_of_pages</span><span class="s3">):</span>
+            <span class="s1">image_refs</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">existing_pdf</span><span class="s3">.</span><span class="s1">next_object_id</span><span class="s3">(</span><span class="s5">0</span><span class="s3">))</span>
+            <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s4">&quot;P&quot; </span><span class="s2">and </span><span class="s4">&quot;transparency&quot; </span><span class="s2">in </span><span class="s1">im</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+                <span class="s1">image_refs</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">existing_pdf</span><span class="s3">.</span><span class="s1">next_object_id</span><span class="s3">(</span><span class="s5">0</span><span class="s3">))</span>
+
+            <span class="s1">page_refs</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">existing_pdf</span><span class="s3">.</span><span class="s1">next_object_id</span><span class="s3">(</span><span class="s5">0</span><span class="s3">))</span>
+            <span class="s1">contents_refs</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">existing_pdf</span><span class="s3">.</span><span class="s1">next_object_id</span><span class="s3">(</span><span class="s5">0</span><span class="s3">))</span>
+            <span class="s1">existing_pdf</span><span class="s3">.</span><span class="s1">pages</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">page_refs</span><span class="s3">[-</span><span class="s5">1</span><span class="s3">])</span>
+
+    <span class="s0">#</span>
+    <span class="s0"># catalog and list of pages</span>
+    <span class="s1">existing_pdf</span><span class="s3">.</span><span class="s1">write_catalog</span><span class="s3">()</span>
+
+    <span class="s1">page_number </span><span class="s3">= </span><span class="s5">0</span>
+    <span class="s2">for </span><span class="s1">im_sequence </span><span class="s2">in </span><span class="s1">ims</span><span class="s3">:</span>
+        <span class="s1">im_pages</span><span class="s3">: </span><span class="s1">ImageSequence</span><span class="s3">.</span><span class="s1">Iterator </span><span class="s3">| </span><span class="s1">list</span><span class="s3">[</span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">] = (</span>
+            <span class="s1">ImageSequence</span><span class="s3">.</span><span class="s1">Iterator</span><span class="s3">(</span><span class="s1">im_sequence</span><span class="s3">) </span><span class="s2">if </span><span class="s1">save_all </span><span class="s2">else </span><span class="s3">[</span><span class="s1">im_sequence</span><span class="s3">]</span>
+        <span class="s3">)</span>
+        <span class="s2">for </span><span class="s1">im </span><span class="s2">in </span><span class="s1">im_pages</span><span class="s3">:</span>
+            <span class="s1">image_ref</span><span class="s3">, </span><span class="s1">procset </span><span class="s3">= </span><span class="s1">_write_image</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">filename</span><span class="s3">, </span><span class="s1">existing_pdf</span><span class="s3">, </span><span class="s1">image_refs</span><span class="s3">)</span>
+
+            <span class="s0">#</span>
+            <span class="s0"># page</span>
+
+            <span class="s1">existing_pdf</span><span class="s3">.</span><span class="s1">write_page</span><span class="s3">(</span>
+                <span class="s1">page_refs</span><span class="s3">[</span><span class="s1">page_number</span><span class="s3">],</span>
+                <span class="s1">Resources</span><span class="s3">=</span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfDict</span><span class="s3">(</span>
+                    <span class="s1">ProcSet</span><span class="s3">=[</span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfName</span><span class="s3">(</span><span class="s4">&quot;PDF&quot;</span><span class="s3">), </span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfName</span><span class="s3">(</span><span class="s1">procset</span><span class="s3">)],</span>
+                    <span class="s1">XObject</span><span class="s3">=</span><span class="s1">PdfParser</span><span class="s3">.</span><span class="s1">PdfDict</span><span class="s3">(</span><span class="s1">image</span><span class="s3">=</span><span class="s1">image_ref</span><span class="s3">),</span>
+                <span class="s3">),</span>
+                <span class="s1">MediaBox</span><span class="s3">=[</span>
+                    <span class="s5">0</span><span class="s3">,</span>
+                    <span class="s5">0</span><span class="s3">,</span>
+                    <span class="s1">im</span><span class="s3">.</span><span class="s1">width </span><span class="s3">* </span><span class="s5">72.0 </span><span class="s3">/ </span><span class="s1">x_resolution</span><span class="s3">,</span>
+                    <span class="s1">im</span><span class="s3">.</span><span class="s1">height </span><span class="s3">* </span><span class="s5">72.0 </span><span class="s3">/ </span><span class="s1">y_resolution</span><span class="s3">,</span>
+                <span class="s3">],</span>
+                <span class="s1">Contents</span><span class="s3">=</span><span class="s1">contents_refs</span><span class="s3">[</span><span class="s1">page_number</span><span class="s3">],</span>
+            <span class="s3">)</span>
+
+            <span class="s0">#</span>
+            <span class="s0"># page contents</span>
+
+            <span class="s1">page_contents </span><span class="s3">= </span><span class="s6">b&quot;q %f 0 0 %f 0 0 cm /image Do Q</span><span class="s2">\n</span><span class="s6">&quot; </span><span class="s3">% (</span>
+                <span class="s1">im</span><span class="s3">.</span><span class="s1">width </span><span class="s3">* </span><span class="s5">72.0 </span><span class="s3">/ </span><span class="s1">x_resolution</span><span class="s3">,</span>
+                <span class="s1">im</span><span class="s3">.</span><span class="s1">height </span><span class="s3">* </span><span class="s5">72.0 </span><span class="s3">/ </span><span class="s1">y_resolution</span><span class="s3">,</span>
+            <span class="s3">)</span>
+
+            <span class="s1">existing_pdf</span><span class="s3">.</span><span class="s1">write_obj</span><span class="s3">(</span><span class="s1">contents_refs</span><span class="s3">[</span><span class="s1">page_number</span><span class="s3">], </span><span class="s1">stream</span><span class="s3">=</span><span class="s1">page_contents</span><span class="s3">)</span>
+
+            <span class="s1">page_number </span><span class="s3">+= </span><span class="s5">1</span>
+
+    <span class="s0">#</span>
+    <span class="s0"># trailer</span>
+    <span class="s1">existing_pdf</span><span class="s3">.</span><span class="s1">write_xref_and_trailer</span><span class="s3">()</span>
+    <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">fp</span><span class="s3">, </span><span class="s4">&quot;flush&quot;</span><span class="s3">):</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">flush</span><span class="s3">()</span>
+    <span class="s1">existing_pdf</span><span class="s3">.</span><span class="s1">close</span><span class="s3">()</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># --------------------------------------------------------------------</span>
+
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_save</span><span class="s3">(</span><span class="s4">&quot;PDF&quot;</span><span class="s3">, </span><span class="s1">_save</span><span class="s3">)</span>
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_save_all</span><span class="s3">(</span><span class="s4">&quot;PDF&quot;</span><span class="s3">, </span><span class="s1">_save_all</span><span class="s3">)</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_extension</span><span class="s3">(</span><span class="s4">&quot;PDF&quot;</span><span class="s3">, </span><span class="s4">&quot;.pdf&quot;</span><span class="s3">)</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_mime</span><span class="s3">(</span><span class="s4">&quot;PDF&quot;</span><span class="s3">, </span><span class="s4">&quot;application/pdf&quot;</span><span class="s3">)</span>
+</pre>
+</body>
+</html>

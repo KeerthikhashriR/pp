@@ -1,0 +1,85 @@
+<html>
+<head>
+<title>compat.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+compat.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;Stuff that differs in different Python versions and platform 
+distributions.&quot;&quot;&quot;</span>
+
+<span class="s2">import </span><span class="s1">logging</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">sys</span>
+
+<span class="s1">__all__ </span><span class="s3">= [</span><span class="s4">&quot;get_path_uid&quot;</span><span class="s3">, </span><span class="s4">&quot;stdlib_pkgs&quot;</span><span class="s3">, </span><span class="s4">&quot;WINDOWS&quot;</span><span class="s3">]</span>
+
+
+<span class="s1">logger </span><span class="s3">= </span><span class="s1">logging</span><span class="s3">.</span><span class="s1">getLogger</span><span class="s3">(</span><span class="s1">__name__</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">has_tls</span><span class="s3">() </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">import </span><span class="s1">_ssl  </span><span class="s5"># noqa: F401  # ignore unused</span>
+
+        <span class="s2">return True</span>
+    <span class="s2">except </span><span class="s1">ImportError</span><span class="s3">:</span>
+        <span class="s2">pass</span>
+
+    <span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">urllib3</span><span class="s3">.</span><span class="s1">util </span><span class="s2">import </span><span class="s1">IS_PYOPENSSL</span>
+
+    <span class="s2">return </span><span class="s1">IS_PYOPENSSL</span>
+
+
+<span class="s2">def </span><span class="s1">get_path_uid</span><span class="s3">(</span><span class="s1">path</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Return path's uid. 
+ 
+    Does not follow symlinks: 
+        https://github.com/pypa/pip/pull/935#discussion_r5307003 
+ 
+    Placed this function in compat due to differences on AIX and 
+    Jython, that should eventually go away. 
+ 
+    :raises OSError: When path is a symlink or can't be read. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">os</span><span class="s3">, </span><span class="s4">&quot;O_NOFOLLOW&quot;</span><span class="s3">):</span>
+        <span class="s1">fd </span><span class="s3">= </span><span class="s1">os</span><span class="s3">.</span><span class="s1">open</span><span class="s3">(</span><span class="s1">path</span><span class="s3">, </span><span class="s1">os</span><span class="s3">.</span><span class="s1">O_RDONLY </span><span class="s3">| </span><span class="s1">os</span><span class="s3">.</span><span class="s1">O_NOFOLLOW</span><span class="s3">)</span>
+        <span class="s1">file_uid </span><span class="s3">= </span><span class="s1">os</span><span class="s3">.</span><span class="s1">fstat</span><span class="s3">(</span><span class="s1">fd</span><span class="s3">).</span><span class="s1">st_uid</span>
+        <span class="s1">os</span><span class="s3">.</span><span class="s1">close</span><span class="s3">(</span><span class="s1">fd</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:  </span><span class="s5"># AIX and Jython</span>
+        <span class="s5"># WARNING: time of check vulnerability, but best we can do w/o NOFOLLOW</span>
+        <span class="s2">if not </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">islink</span><span class="s3">(</span><span class="s1">path</span><span class="s3">):</span>
+            <span class="s5"># older versions of Jython don't have `os.fstat`</span>
+            <span class="s1">file_uid </span><span class="s3">= </span><span class="s1">os</span><span class="s3">.</span><span class="s1">stat</span><span class="s3">(</span><span class="s1">path</span><span class="s3">).</span><span class="s1">st_uid</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s5"># raise OSError for parity with os.O_NOFOLLOW above</span>
+            <span class="s2">raise </span><span class="s1">OSError</span><span class="s3">(</span><span class="s4">f&quot;</span><span class="s2">{</span><span class="s1">path</span><span class="s2">} </span><span class="s4">is a symlink; Will not return uid for symlinks&quot;</span><span class="s3">)</span>
+    <span class="s2">return </span><span class="s1">file_uid</span>
+
+
+<span class="s5"># packages in the stdlib that may have installation metadata, but should not be</span>
+<span class="s5"># considered 'installed'.  this theoretically could be determined based on</span>
+<span class="s5"># dist.location (py27:`sysconfig.get_paths()['stdlib']`,</span>
+<span class="s5"># py26:sysconfig.get_config_vars('LIBDEST')), but fear platform variation may</span>
+<span class="s5"># make this ineffective, so hard-coding</span>
+<span class="s1">stdlib_pkgs </span><span class="s3">= {</span><span class="s4">&quot;python&quot;</span><span class="s3">, </span><span class="s4">&quot;wsgiref&quot;</span><span class="s3">, </span><span class="s4">&quot;argparse&quot;</span><span class="s3">}</span>
+
+
+<span class="s5"># windows detection, covers cpython and ironpython</span>
+<span class="s1">WINDOWS </span><span class="s3">= </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">platform</span><span class="s3">.</span><span class="s1">startswith</span><span class="s3">(</span><span class="s4">&quot;win&quot;</span><span class="s3">) </span><span class="s2">or </span><span class="s3">(</span><span class="s1">sys</span><span class="s3">.</span><span class="s1">platform </span><span class="s3">== </span><span class="s4">&quot;cli&quot; </span><span class="s2">and </span><span class="s1">os</span><span class="s3">.</span><span class="s1">name </span><span class="s3">== </span><span class="s4">&quot;nt&quot;</span><span class="s3">)</span>
+</pre>
+</body>
+</html>

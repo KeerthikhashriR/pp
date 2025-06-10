@@ -1,0 +1,669 @@
+<html>
+<head>
+<title>img.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #7a7e85;}
+.s5 { color: #6aab73;}
+.s6 { color: #2aacb8;}
+.s7 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+img.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot; 
+    pygments.formatters.img 
+    ~~~~~~~~~~~~~~~~~~~~~~~ 
+ 
+    Formatter for Pixmap output. 
+ 
+    :copyright: Copyright 2006-2023 by the Pygments team, see AUTHORS. 
+    :license: BSD, see LICENSE for details. 
+&quot;&quot;&quot;</span>
+
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">sys</span>
+
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">formatter </span><span class="s2">import </span><span class="s1">Formatter</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">util </span><span class="s2">import </span><span class="s1">get_bool_opt</span><span class="s3">, </span><span class="s1">get_int_opt</span><span class="s3">, </span><span class="s1">get_list_opt</span><span class="s3">, </span><span class="s1">\</span>
+    <span class="s1">get_choice_opt</span>
+
+<span class="s2">import </span><span class="s1">subprocess</span>
+
+<span class="s4"># Import this carefully</span>
+<span class="s2">try</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s1">PIL </span><span class="s2">import </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">ImageDraw</span><span class="s3">, </span><span class="s1">ImageFont</span>
+    <span class="s1">pil_available </span><span class="s3">= </span><span class="s2">True</span>
+<span class="s2">except </span><span class="s1">ImportError</span><span class="s3">:</span>
+    <span class="s1">pil_available </span><span class="s3">= </span><span class="s2">False</span>
+
+<span class="s2">try</span><span class="s3">:</span>
+    <span class="s2">import </span><span class="s1">_winreg</span>
+<span class="s2">except </span><span class="s1">ImportError</span><span class="s3">:</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s2">import </span><span class="s1">winreg </span><span class="s2">as </span><span class="s1">_winreg</span>
+    <span class="s2">except </span><span class="s1">ImportError</span><span class="s3">:</span>
+        <span class="s1">_winreg </span><span class="s3">= </span><span class="s2">None</span>
+
+<span class="s1">__all__ </span><span class="s3">= [</span><span class="s5">'ImageFormatter'</span><span class="s3">, </span><span class="s5">'GifImageFormatter'</span><span class="s3">, </span><span class="s5">'JpgImageFormatter'</span><span class="s3">,</span>
+           <span class="s5">'BmpImageFormatter'</span><span class="s3">]</span>
+
+
+<span class="s4"># For some unknown reason every font calls it something different</span>
+<span class="s1">STYLES </span><span class="s3">= {</span>
+    <span class="s5">'NORMAL'</span><span class="s3">:     [</span><span class="s5">''</span><span class="s3">, </span><span class="s5">'Roman'</span><span class="s3">, </span><span class="s5">'Book'</span><span class="s3">, </span><span class="s5">'Normal'</span><span class="s3">, </span><span class="s5">'Regular'</span><span class="s3">, </span><span class="s5">'Medium'</span><span class="s3">],</span>
+    <span class="s5">'ITALIC'</span><span class="s3">:     [</span><span class="s5">'Oblique'</span><span class="s3">, </span><span class="s5">'Italic'</span><span class="s3">],</span>
+    <span class="s5">'BOLD'</span><span class="s3">:       [</span><span class="s5">'Bold'</span><span class="s3">],</span>
+    <span class="s5">'BOLDITALIC'</span><span class="s3">: [</span><span class="s5">'Bold Oblique'</span><span class="s3">, </span><span class="s5">'Bold Italic'</span><span class="s3">],</span>
+<span class="s3">}</span>
+
+<span class="s4"># A sane default for modern systems</span>
+<span class="s1">DEFAULT_FONT_NAME_NIX </span><span class="s3">= </span><span class="s5">'DejaVu Sans Mono'</span>
+<span class="s1">DEFAULT_FONT_NAME_WIN </span><span class="s3">= </span><span class="s5">'Courier New'</span>
+<span class="s1">DEFAULT_FONT_NAME_MAC </span><span class="s3">= </span><span class="s5">'Menlo'</span>
+
+
+<span class="s2">class </span><span class="s1">PilNotAvailable</span><span class="s3">(</span><span class="s1">ImportError</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;When Python imaging library is not available&quot;&quot;&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">FontNotFound</span><span class="s3">(</span><span class="s1">Exception</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;When there are no usable fonts specified&quot;&quot;&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">FontManager</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Manages a set of fonts: normal, italic, bold, etc... 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">font_name</span><span class="s3">, </span><span class="s1">font_size</span><span class="s3">=</span><span class="s6">14</span><span class="s3">):</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">font_name </span><span class="s3">= </span><span class="s1">font_name</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">font_size </span><span class="s3">= </span><span class="s1">font_size</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">fonts </span><span class="s3">= {}</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">encoding </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s2">if </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">platform</span><span class="s3">.</span><span class="s1">startswith</span><span class="s3">(</span><span class="s5">'win'</span><span class="s3">):</span>
+            <span class="s2">if not </span><span class="s1">font_name</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">font_name </span><span class="s3">= </span><span class="s1">DEFAULT_FONT_NAME_WIN</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_create_win</span><span class="s3">()</span>
+        <span class="s2">elif </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">platform</span><span class="s3">.</span><span class="s1">startswith</span><span class="s3">(</span><span class="s5">'darwin'</span><span class="s3">):</span>
+            <span class="s2">if not </span><span class="s1">font_name</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">font_name </span><span class="s3">= </span><span class="s1">DEFAULT_FONT_NAME_MAC</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_create_mac</span><span class="s3">()</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">if not </span><span class="s1">font_name</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">font_name </span><span class="s3">= </span><span class="s1">DEFAULT_FONT_NAME_NIX</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_create_nix</span><span class="s3">()</span>
+
+    <span class="s2">def </span><span class="s1">_get_nix_font_path</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">name</span><span class="s3">, </span><span class="s1">style</span><span class="s3">):</span>
+        <span class="s1">proc </span><span class="s3">= </span><span class="s1">subprocess</span><span class="s3">.</span><span class="s1">Popen</span><span class="s3">([</span><span class="s5">'fc-list'</span><span class="s3">, </span><span class="s5">&quot;%s:style=%s&quot; </span><span class="s3">% (</span><span class="s1">name</span><span class="s3">, </span><span class="s1">style</span><span class="s3">), </span><span class="s5">'file'</span><span class="s3">],</span>
+                                <span class="s1">stdout</span><span class="s3">=</span><span class="s1">subprocess</span><span class="s3">.</span><span class="s1">PIPE</span><span class="s3">, </span><span class="s1">stderr</span><span class="s3">=</span><span class="s2">None</span><span class="s3">)</span>
+        <span class="s1">stdout</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">proc</span><span class="s3">.</span><span class="s1">communicate</span><span class="s3">()</span>
+        <span class="s2">if </span><span class="s1">proc</span><span class="s3">.</span><span class="s1">returncode </span><span class="s3">== </span><span class="s6">0</span><span class="s3">:</span>
+            <span class="s1">lines </span><span class="s3">= </span><span class="s1">stdout</span><span class="s3">.</span><span class="s1">splitlines</span><span class="s3">()</span>
+            <span class="s2">for </span><span class="s1">line </span><span class="s2">in </span><span class="s1">lines</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s1">line</span><span class="s3">.</span><span class="s1">startswith</span><span class="s3">(</span><span class="s7">b'Fontconfig warning:'</span><span class="s3">):</span>
+                    <span class="s2">continue</span>
+                <span class="s1">path </span><span class="s3">= </span><span class="s1">line</span><span class="s3">.</span><span class="s1">decode</span><span class="s3">().</span><span class="s1">strip</span><span class="s3">().</span><span class="s1">strip</span><span class="s3">(</span><span class="s5">':'</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">path</span><span class="s3">:</span>
+                    <span class="s2">return </span><span class="s1">path</span>
+            <span class="s2">return None</span>
+
+    <span class="s2">def </span><span class="s1">_create_nix</span><span class="s3">(</span><span class="s1">self</span><span class="s3">):</span>
+        <span class="s2">for </span><span class="s1">name </span><span class="s2">in </span><span class="s1">STYLES</span><span class="s3">[</span><span class="s5">'NORMAL'</span><span class="s3">]:</span>
+            <span class="s1">path </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_get_nix_font_path</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">font_name</span><span class="s3">, </span><span class="s1">name</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">path </span><span class="s2">is not None</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s5">'NORMAL'</span><span class="s3">] = </span><span class="s1">ImageFont</span><span class="s3">.</span><span class="s1">truetype</span><span class="s3">(</span><span class="s1">path</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">font_size</span><span class="s3">)</span>
+                <span class="s2">break</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">FontNotFound</span><span class="s3">(</span><span class="s5">'No usable fonts named: &quot;%s&quot;' </span><span class="s3">%</span>
+                               <span class="s1">self</span><span class="s3">.</span><span class="s1">font_name</span><span class="s3">)</span>
+        <span class="s2">for </span><span class="s1">style </span><span class="s2">in </span><span class="s3">(</span><span class="s5">'ITALIC'</span><span class="s3">, </span><span class="s5">'BOLD'</span><span class="s3">, </span><span class="s5">'BOLDITALIC'</span><span class="s3">):</span>
+            <span class="s2">for </span><span class="s1">stylename </span><span class="s2">in </span><span class="s1">STYLES</span><span class="s3">[</span><span class="s1">style</span><span class="s3">]:</span>
+                <span class="s1">path </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_get_nix_font_path</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">font_name</span><span class="s3">, </span><span class="s1">stylename</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">path </span><span class="s2">is not None</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s1">style</span><span class="s3">] = </span><span class="s1">ImageFont</span><span class="s3">.</span><span class="s1">truetype</span><span class="s3">(</span><span class="s1">path</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">font_size</span><span class="s3">)</span>
+                    <span class="s2">break</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s1">style </span><span class="s3">== </span><span class="s5">'BOLDITALIC'</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s1">style</span><span class="s3">] = </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s5">'BOLD'</span><span class="s3">]</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s1">style</span><span class="s3">] = </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s5">'NORMAL'</span><span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">_get_mac_font_path</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">font_map</span><span class="s3">, </span><span class="s1">name</span><span class="s3">, </span><span class="s1">style</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">font_map</span><span class="s3">.</span><span class="s1">get</span><span class="s3">((</span><span class="s1">name </span><span class="s3">+ </span><span class="s5">' ' </span><span class="s3">+ </span><span class="s1">style</span><span class="s3">).</span><span class="s1">strip</span><span class="s3">().</span><span class="s1">lower</span><span class="s3">())</span>
+
+    <span class="s2">def </span><span class="s1">_create_mac</span><span class="s3">(</span><span class="s1">self</span><span class="s3">):</span>
+        <span class="s1">font_map </span><span class="s3">= {}</span>
+        <span class="s2">for </span><span class="s1">font_dir </span><span class="s2">in </span><span class="s3">(</span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">os</span><span class="s3">.</span><span class="s1">getenv</span><span class="s3">(</span><span class="s5">&quot;HOME&quot;</span><span class="s3">), </span><span class="s5">'Library/Fonts/'</span><span class="s3">),</span>
+                         <span class="s5">'/Library/Fonts/'</span><span class="s3">, </span><span class="s5">'/System/Library/Fonts/'</span><span class="s3">):</span>
+            <span class="s1">font_map</span><span class="s3">.</span><span class="s1">update</span><span class="s3">(</span>
+                <span class="s3">(</span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">splitext</span><span class="s3">(</span><span class="s1">f</span><span class="s3">)[</span><span class="s6">0</span><span class="s3">].</span><span class="s1">lower</span><span class="s3">(), </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">font_dir</span><span class="s3">, </span><span class="s1">f</span><span class="s3">))</span>
+                <span class="s2">for </span><span class="s1">f </span><span class="s2">in </span><span class="s1">os</span><span class="s3">.</span><span class="s1">listdir</span><span class="s3">(</span><span class="s1">font_dir</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">f</span><span class="s3">.</span><span class="s1">lower</span><span class="s3">().</span><span class="s1">endswith</span><span class="s3">((</span><span class="s5">'ttf'</span><span class="s3">, </span><span class="s5">'ttc'</span><span class="s3">)))</span>
+
+        <span class="s2">for </span><span class="s1">name </span><span class="s2">in </span><span class="s1">STYLES</span><span class="s3">[</span><span class="s5">'NORMAL'</span><span class="s3">]:</span>
+            <span class="s1">path </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_get_mac_font_path</span><span class="s3">(</span><span class="s1">font_map</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">font_name</span><span class="s3">, </span><span class="s1">name</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">path </span><span class="s2">is not None</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s5">'NORMAL'</span><span class="s3">] = </span><span class="s1">ImageFont</span><span class="s3">.</span><span class="s1">truetype</span><span class="s3">(</span><span class="s1">path</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">font_size</span><span class="s3">)</span>
+                <span class="s2">break</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">FontNotFound</span><span class="s3">(</span><span class="s5">'No usable fonts named: &quot;%s&quot;' </span><span class="s3">%</span>
+                               <span class="s1">self</span><span class="s3">.</span><span class="s1">font_name</span><span class="s3">)</span>
+        <span class="s2">for </span><span class="s1">style </span><span class="s2">in </span><span class="s3">(</span><span class="s5">'ITALIC'</span><span class="s3">, </span><span class="s5">'BOLD'</span><span class="s3">, </span><span class="s5">'BOLDITALIC'</span><span class="s3">):</span>
+            <span class="s2">for </span><span class="s1">stylename </span><span class="s2">in </span><span class="s1">STYLES</span><span class="s3">[</span><span class="s1">style</span><span class="s3">]:</span>
+                <span class="s1">path </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_get_mac_font_path</span><span class="s3">(</span><span class="s1">font_map</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">font_name</span><span class="s3">, </span><span class="s1">stylename</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">path </span><span class="s2">is not None</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s1">style</span><span class="s3">] = </span><span class="s1">ImageFont</span><span class="s3">.</span><span class="s1">truetype</span><span class="s3">(</span><span class="s1">path</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">font_size</span><span class="s3">)</span>
+                    <span class="s2">break</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s1">style </span><span class="s3">== </span><span class="s5">'BOLDITALIC'</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s1">style</span><span class="s3">] = </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s5">'BOLD'</span><span class="s3">]</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s1">style</span><span class="s3">] = </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s5">'NORMAL'</span><span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">_lookup_win</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">key</span><span class="s3">, </span><span class="s1">basename</span><span class="s3">, </span><span class="s1">styles</span><span class="s3">, </span><span class="s1">fail</span><span class="s3">=</span><span class="s2">False</span><span class="s3">):</span>
+        <span class="s2">for </span><span class="s1">suffix </span><span class="s2">in </span><span class="s3">(</span><span class="s5">''</span><span class="s3">, </span><span class="s5">' (TrueType)'</span><span class="s3">):</span>
+            <span class="s2">for </span><span class="s1">style </span><span class="s2">in </span><span class="s1">styles</span><span class="s3">:</span>
+                <span class="s2">try</span><span class="s3">:</span>
+                    <span class="s1">valname </span><span class="s3">= </span><span class="s5">'%s%s%s' </span><span class="s3">% (</span><span class="s1">basename</span><span class="s3">, </span><span class="s1">style </span><span class="s2">and </span><span class="s5">' '</span><span class="s3">+</span><span class="s1">style</span><span class="s3">, </span><span class="s1">suffix</span><span class="s3">)</span>
+                    <span class="s1">val</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">_winreg</span><span class="s3">.</span><span class="s1">QueryValueEx</span><span class="s3">(</span><span class="s1">key</span><span class="s3">, </span><span class="s1">valname</span><span class="s3">)</span>
+                    <span class="s2">return </span><span class="s1">val</span>
+                <span class="s2">except </span><span class="s1">OSError</span><span class="s3">:</span>
+                    <span class="s2">continue</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">fail</span><span class="s3">:</span>
+                <span class="s2">raise </span><span class="s1">FontNotFound</span><span class="s3">(</span><span class="s5">'Font %s (%s) not found in registry' </span><span class="s3">%</span>
+                                   <span class="s3">(</span><span class="s1">basename</span><span class="s3">, </span><span class="s1">styles</span><span class="s3">[</span><span class="s6">0</span><span class="s3">]))</span>
+            <span class="s2">return None</span>
+
+    <span class="s2">def </span><span class="s1">_create_win</span><span class="s3">(</span><span class="s1">self</span><span class="s3">):</span>
+        <span class="s1">lookuperror </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s1">keynames </span><span class="s3">= [ (</span><span class="s1">_winreg</span><span class="s3">.</span><span class="s1">HKEY_CURRENT_USER</span><span class="s3">, </span><span class="s5">r'Software\Microsoft\Windows NT\CurrentVersion\Fonts'</span><span class="s3">),</span>
+                     <span class="s3">(</span><span class="s1">_winreg</span><span class="s3">.</span><span class="s1">HKEY_CURRENT_USER</span><span class="s3">, </span><span class="s5">r'Software\Microsoft\Windows\CurrentVersion\Fonts'</span><span class="s3">),</span>
+                     <span class="s3">(</span><span class="s1">_winreg</span><span class="s3">.</span><span class="s1">HKEY_LOCAL_MACHINE</span><span class="s3">, </span><span class="s5">r'Software\Microsoft\Windows NT\CurrentVersion\Fonts'</span><span class="s3">),</span>
+                     <span class="s3">(</span><span class="s1">_winreg</span><span class="s3">.</span><span class="s1">HKEY_LOCAL_MACHINE</span><span class="s3">, </span><span class="s5">r'Software\Microsoft\Windows\CurrentVersion\Fonts'</span><span class="s3">) ]</span>
+        <span class="s2">for </span><span class="s1">keyname </span><span class="s2">in </span><span class="s1">keynames</span><span class="s3">:</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">key </span><span class="s3">= </span><span class="s1">_winreg</span><span class="s3">.</span><span class="s1">OpenKey</span><span class="s3">(*</span><span class="s1">keyname</span><span class="s3">)</span>
+                <span class="s2">try</span><span class="s3">:</span>
+                    <span class="s1">path </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_lookup_win</span><span class="s3">(</span><span class="s1">key</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">font_name</span><span class="s3">, </span><span class="s1">STYLES</span><span class="s3">[</span><span class="s5">'NORMAL'</span><span class="s3">], </span><span class="s2">True</span><span class="s3">)</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s5">'NORMAL'</span><span class="s3">] = </span><span class="s1">ImageFont</span><span class="s3">.</span><span class="s1">truetype</span><span class="s3">(</span><span class="s1">path</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">font_size</span><span class="s3">)</span>
+                    <span class="s2">for </span><span class="s1">style </span><span class="s2">in </span><span class="s3">(</span><span class="s5">'ITALIC'</span><span class="s3">, </span><span class="s5">'BOLD'</span><span class="s3">, </span><span class="s5">'BOLDITALIC'</span><span class="s3">):</span>
+                        <span class="s1">path </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_lookup_win</span><span class="s3">(</span><span class="s1">key</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">font_name</span><span class="s3">, </span><span class="s1">STYLES</span><span class="s3">[</span><span class="s1">style</span><span class="s3">])</span>
+                        <span class="s2">if </span><span class="s1">path</span><span class="s3">:</span>
+                            <span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s1">style</span><span class="s3">] = </span><span class="s1">ImageFont</span><span class="s3">.</span><span class="s1">truetype</span><span class="s3">(</span><span class="s1">path</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">font_size</span><span class="s3">)</span>
+                        <span class="s2">else</span><span class="s3">:</span>
+                            <span class="s2">if </span><span class="s1">style </span><span class="s3">== </span><span class="s5">'BOLDITALIC'</span><span class="s3">:</span>
+                                <span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s1">style</span><span class="s3">] = </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s5">'BOLD'</span><span class="s3">]</span>
+                            <span class="s2">else</span><span class="s3">:</span>
+                                <span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s1">style</span><span class="s3">] = </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s5">'NORMAL'</span><span class="s3">]</span>
+                    <span class="s2">return</span>
+                <span class="s2">except </span><span class="s1">FontNotFound </span><span class="s2">as </span><span class="s1">err</span><span class="s3">:</span>
+                    <span class="s1">lookuperror </span><span class="s3">= </span><span class="s1">err</span>
+                <span class="s2">finally</span><span class="s3">:</span>
+                    <span class="s1">_winreg</span><span class="s3">.</span><span class="s1">CloseKey</span><span class="s3">(</span><span class="s1">key</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">OSError</span><span class="s3">:</span>
+                <span class="s2">pass</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s4"># If we get here, we checked all registry keys and had no luck</span>
+            <span class="s4"># We can be in one of two situations now:</span>
+            <span class="s4"># * All key lookups failed. In this case lookuperror is None and we</span>
+            <span class="s4">#   will raise a generic error</span>
+            <span class="s4"># * At least one lookup failed with a FontNotFound error. In this</span>
+            <span class="s4">#   case, we will raise that as a more specific error</span>
+            <span class="s2">if </span><span class="s1">lookuperror</span><span class="s3">:</span>
+                <span class="s2">raise </span><span class="s1">lookuperror</span>
+            <span class="s2">raise </span><span class="s1">FontNotFound</span><span class="s3">(</span><span class="s5">'Can</span><span class="s2">\'</span><span class="s5">t open Windows font registry key'</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">get_char_size</span><span class="s3">(</span><span class="s1">self</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Get the character size. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">get_text_size</span><span class="s3">(</span><span class="s5">'M'</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">get_text_size</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">text</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Get the text size (width, height). 
+        &quot;&quot;&quot;</span>
+        <span class="s1">font </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s5">'NORMAL'</span><span class="s3">]</span>
+        <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">font</span><span class="s3">, </span><span class="s5">'getbbox'</span><span class="s3">):  </span><span class="s4"># Pillow &gt;= 9.2.0</span>
+            <span class="s2">return </span><span class="s1">font</span><span class="s3">.</span><span class="s1">getbbox</span><span class="s3">(</span><span class="s1">text</span><span class="s3">)[</span><span class="s6">2</span><span class="s3">:</span><span class="s6">4</span><span class="s3">]</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">font</span><span class="s3">.</span><span class="s1">getsize</span><span class="s3">(</span><span class="s1">text</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">get_font</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">bold</span><span class="s3">, </span><span class="s1">oblique</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Get the font based on bold and italic flags. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">bold </span><span class="s2">and </span><span class="s1">oblique</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s5">'BOLDITALIC'</span><span class="s3">]</span>
+        <span class="s2">elif </span><span class="s1">bold</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s5">'BOLD'</span><span class="s3">]</span>
+        <span class="s2">elif </span><span class="s1">oblique</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s5">'ITALIC'</span><span class="s3">]</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">[</span><span class="s5">'NORMAL'</span><span class="s3">]</span>
+
+
+<span class="s2">class </span><span class="s1">ImageFormatter</span><span class="s3">(</span><span class="s1">Formatter</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Create a PNG image from source code. This uses the Python Imaging Library to 
+    generate a pixmap from the source code. 
+ 
+    .. versionadded:: 0.10 
+ 
+    Additional options accepted: 
+ 
+    `image_format` 
+        An image format to output to that is recognised by PIL, these include: 
+ 
+        * &quot;PNG&quot; (default) 
+        * &quot;JPEG&quot; 
+        * &quot;BMP&quot; 
+        * &quot;GIF&quot; 
+ 
+    `line_pad` 
+        The extra spacing (in pixels) between each line of text. 
+ 
+        Default: 2 
+ 
+    `font_name` 
+        The font name to be used as the base font from which others, such as 
+        bold and italic fonts will be generated.  This really should be a 
+        monospace font to look sane. 
+ 
+        Default: &quot;Courier New&quot; on Windows, &quot;Menlo&quot; on Mac OS, and 
+                 &quot;DejaVu Sans Mono&quot; on \\*nix 
+ 
+    `font_size` 
+        The font size in points to be used. 
+ 
+        Default: 14 
+ 
+    `image_pad` 
+        The padding, in pixels to be used at each edge of the resulting image. 
+ 
+        Default: 10 
+ 
+    `line_numbers` 
+        Whether line numbers should be shown: True/False 
+ 
+        Default: True 
+ 
+    `line_number_start` 
+        The line number of the first line. 
+ 
+        Default: 1 
+ 
+    `line_number_step` 
+        The step used when printing line numbers. 
+ 
+        Default: 1 
+ 
+    `line_number_bg` 
+        The background colour (in &quot;#123456&quot; format) of the line number bar, or 
+        None to use the style background color. 
+ 
+        Default: &quot;#eed&quot; 
+ 
+    `line_number_fg` 
+        The text color of the line numbers (in &quot;#123456&quot;-like format). 
+ 
+        Default: &quot;#886&quot; 
+ 
+    `line_number_chars` 
+        The number of columns of line numbers allowable in the line number 
+        margin. 
+ 
+        Default: 2 
+ 
+    `line_number_bold` 
+        Whether line numbers will be bold: True/False 
+ 
+        Default: False 
+ 
+    `line_number_italic` 
+        Whether line numbers will be italicized: True/False 
+ 
+        Default: False 
+ 
+    `line_number_separator` 
+        Whether a line will be drawn between the line number area and the 
+        source code area: True/False 
+ 
+        Default: True 
+ 
+    `line_number_pad` 
+        The horizontal padding (in pixels) between the line number margin, and 
+        the source code area. 
+ 
+        Default: 6 
+ 
+    `hl_lines` 
+        Specify a list of lines to be highlighted. 
+ 
+        .. versionadded:: 1.2 
+ 
+        Default: empty list 
+ 
+    `hl_color` 
+        Specify the color for highlighting lines. 
+ 
+        .. versionadded:: 1.2 
+ 
+        Default: highlight color of the selected style 
+    &quot;&quot;&quot;</span>
+
+    <span class="s4"># Required by the pygments mapper</span>
+    <span class="s1">name </span><span class="s3">= </span><span class="s5">'img'</span>
+    <span class="s1">aliases </span><span class="s3">= [</span><span class="s5">'img'</span><span class="s3">, </span><span class="s5">'IMG'</span><span class="s3">, </span><span class="s5">'png'</span><span class="s3">]</span>
+    <span class="s1">filenames </span><span class="s3">= [</span><span class="s5">'*.png'</span><span class="s3">]</span>
+
+    <span class="s1">unicodeoutput </span><span class="s3">= </span><span class="s2">False</span>
+
+    <span class="s1">default_image_format </span><span class="s3">= </span><span class="s5">'png'</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        See the class docstring for explanation of options. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">pil_available</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">PilNotAvailable</span><span class="s3">(</span>
+                <span class="s5">'Python Imaging Library is required for this formatter'</span><span class="s3">)</span>
+        <span class="s1">Formatter</span><span class="s3">.</span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">encoding </span><span class="s3">= </span><span class="s5">'latin1'  </span><span class="s4"># let pygments.format() do the right thing</span>
+        <span class="s4"># Read the style</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">styles </span><span class="s3">= </span><span class="s1">dict</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">style</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">style</span><span class="s3">.</span><span class="s1">background_color </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">background_color </span><span class="s3">= </span><span class="s5">'#fff'</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">background_color </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">style</span><span class="s3">.</span><span class="s1">background_color</span>
+        <span class="s4"># Image options</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">image_format </span><span class="s3">= </span><span class="s1">get_choice_opt</span><span class="s3">(</span>
+            <span class="s1">options</span><span class="s3">, </span><span class="s5">'image_format'</span><span class="s3">, [</span><span class="s5">'png'</span><span class="s3">, </span><span class="s5">'jpeg'</span><span class="s3">, </span><span class="s5">'gif'</span><span class="s3">, </span><span class="s5">'bmp'</span><span class="s3">],</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">default_image_format</span><span class="s3">, </span><span class="s1">normcase</span><span class="s3">=</span><span class="s2">True</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">image_pad </span><span class="s3">= </span><span class="s1">get_int_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s5">'image_pad'</span><span class="s3">, </span><span class="s6">10</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">line_pad </span><span class="s3">= </span><span class="s1">get_int_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s5">'line_pad'</span><span class="s3">, </span><span class="s6">2</span><span class="s3">)</span>
+        <span class="s4"># The fonts</span>
+        <span class="s1">fontsize </span><span class="s3">= </span><span class="s1">get_int_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s5">'font_size'</span><span class="s3">, </span><span class="s6">14</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">fonts </span><span class="s3">= </span><span class="s1">FontManager</span><span class="s3">(</span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">'font_name'</span><span class="s3">, </span><span class="s5">''</span><span class="s3">), </span><span class="s1">fontsize</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">fontw</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fonth </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">.</span><span class="s1">get_char_size</span><span class="s3">()</span>
+        <span class="s4"># Line number options</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_fg </span><span class="s3">= </span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">'line_number_fg'</span><span class="s3">, </span><span class="s5">'#886'</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_bg </span><span class="s3">= </span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">'line_number_bg'</span><span class="s3">, </span><span class="s5">'#eed'</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_chars </span><span class="s3">= </span><span class="s1">get_int_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">,</span>
+                                             <span class="s5">'line_number_chars'</span><span class="s3">, </span><span class="s6">2</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_bold </span><span class="s3">= </span><span class="s1">get_bool_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">,</span>
+                                             <span class="s5">'line_number_bold'</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_italic </span><span class="s3">= </span><span class="s1">get_bool_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">,</span>
+                                               <span class="s5">'line_number_italic'</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_pad </span><span class="s3">= </span><span class="s1">get_int_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s5">'line_number_pad'</span><span class="s3">, </span><span class="s6">6</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">line_numbers </span><span class="s3">= </span><span class="s1">get_bool_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s5">'line_numbers'</span><span class="s3">, </span><span class="s2">True</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_separator </span><span class="s3">= </span><span class="s1">get_bool_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">,</span>
+                                                  <span class="s5">'line_number_separator'</span><span class="s3">, </span><span class="s2">True</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_step </span><span class="s3">= </span><span class="s1">get_int_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s5">'line_number_step'</span><span class="s3">, </span><span class="s6">1</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_start </span><span class="s3">= </span><span class="s1">get_int_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s5">'line_number_start'</span><span class="s3">, </span><span class="s6">1</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_numbers</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_width </span><span class="s3">= (</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fontw </span><span class="s3">* </span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_chars </span><span class="s3">+</span>
+                                      <span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_pad </span><span class="s3">* </span><span class="s6">2</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_width </span><span class="s3">= </span><span class="s6">0</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">hl_lines </span><span class="s3">= []</span>
+        <span class="s1">hl_lines_str </span><span class="s3">= </span><span class="s1">get_list_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s5">'hl_lines'</span><span class="s3">, [])</span>
+        <span class="s2">for </span><span class="s1">line </span><span class="s2">in </span><span class="s1">hl_lines_str</span><span class="s3">:</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">hl_lines</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">int</span><span class="s3">(</span><span class="s1">line</span><span class="s3">))</span>
+            <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+                <span class="s2">pass</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">hl_color </span><span class="s3">= </span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s5">'hl_color'</span><span class="s3">,</span>
+                                    <span class="s1">self</span><span class="s3">.</span><span class="s1">style</span><span class="s3">.</span><span class="s1">highlight_color</span><span class="s3">) </span><span class="s2">or </span><span class="s5">'#f90'</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">drawables </span><span class="s3">= []</span>
+
+    <span class="s2">def </span><span class="s1">get_style_defs</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">arg</span><span class="s3">=</span><span class="s5">''</span><span class="s3">):</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError</span><span class="s3">(</span><span class="s5">'The -S option is meaningless for the image '</span>
+                                  <span class="s5">'formatter. Use -O style=&lt;stylename&gt; instead.'</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">_get_line_height</span><span class="s3">(</span><span class="s1">self</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Get the height of a line. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fonth </span><span class="s3">+ </span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_pad</span>
+
+    <span class="s2">def </span><span class="s1">_get_line_y</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">lineno</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Get the Y coordinate of a line number. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">lineno </span><span class="s3">* </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_get_line_height</span><span class="s3">() + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">image_pad</span>
+
+    <span class="s2">def </span><span class="s1">_get_char_width</span><span class="s3">(</span><span class="s1">self</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Get the width of a character. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fontw</span>
+
+    <span class="s2">def </span><span class="s1">_get_char_x</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">linelength</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Get the X coordinate of a character position. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">linelength </span><span class="s3">+ </span><span class="s1">self</span><span class="s3">.</span><span class="s1">image_pad </span><span class="s3">+ </span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_width</span>
+
+    <span class="s2">def </span><span class="s1">_get_text_pos</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">linelength</span><span class="s3">, </span><span class="s1">lineno</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Get the actual position for a character and line position. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_get_char_x</span><span class="s3">(</span><span class="s1">linelength</span><span class="s3">), </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_get_line_y</span><span class="s3">(</span><span class="s1">lineno</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">_get_linenumber_pos</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">lineno</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Get the actual position for the start of a line number. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">image_pad</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_get_line_y</span><span class="s3">(</span><span class="s1">lineno</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">_get_text_color</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">style</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Get the correct color for the token from the style. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">style</span><span class="s3">[</span><span class="s5">'color'</span><span class="s3">] </span><span class="s2">is not None</span><span class="s3">:</span>
+            <span class="s1">fill </span><span class="s3">= </span><span class="s5">'#' </span><span class="s3">+ </span><span class="s1">style</span><span class="s3">[</span><span class="s5">'color'</span><span class="s3">]</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">fill </span><span class="s3">= </span><span class="s5">'#000'</span>
+        <span class="s2">return </span><span class="s1">fill</span>
+
+    <span class="s2">def </span><span class="s1">_get_text_bg_color</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">style</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Get the correct background color for the token from the style. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">style</span><span class="s3">[</span><span class="s5">'bgcolor'</span><span class="s3">] </span><span class="s2">is not None</span><span class="s3">:</span>
+            <span class="s1">bg_color </span><span class="s3">= </span><span class="s5">'#' </span><span class="s3">+ </span><span class="s1">style</span><span class="s3">[</span><span class="s5">'bgcolor'</span><span class="s3">]</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">bg_color </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s2">return </span><span class="s1">bg_color</span>
+
+    <span class="s2">def </span><span class="s1">_get_style_font</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">style</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Get the correct font for the style. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">.</span><span class="s1">get_font</span><span class="s3">(</span><span class="s1">style</span><span class="s3">[</span><span class="s5">'bold'</span><span class="s3">], </span><span class="s1">style</span><span class="s3">[</span><span class="s5">'italic'</span><span class="s3">])</span>
+
+    <span class="s2">def </span><span class="s1">_get_image_size</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">maxlinelength</span><span class="s3">, </span><span class="s1">maxlineno</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Get the required image size. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_get_char_x</span><span class="s3">(</span><span class="s1">maxlinelength</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">image_pad</span><span class="s3">,</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">_get_line_y</span><span class="s3">(</span><span class="s1">maxlineno </span><span class="s3">+ </span><span class="s6">0</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">image_pad</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">_draw_linenumber</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">posno</span><span class="s3">, </span><span class="s1">lineno</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Remember a line number drawable to paint later. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_draw_text</span><span class="s3">(</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_get_linenumber_pos</span><span class="s3">(</span><span class="s1">posno</span><span class="s3">),</span>
+            <span class="s1">str</span><span class="s3">(</span><span class="s1">lineno</span><span class="s3">).</span><span class="s1">rjust</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_chars</span><span class="s3">),</span>
+            <span class="s1">font</span><span class="s3">=</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">.</span><span class="s1">get_font</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_bold</span><span class="s3">,</span>
+                                     <span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_italic</span><span class="s3">),</span>
+            <span class="s1">text_fg</span><span class="s3">=</span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_fg</span><span class="s3">,</span>
+            <span class="s1">text_bg</span><span class="s3">=</span><span class="s2">None</span><span class="s3">,</span>
+        <span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">_draw_text</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">pos</span><span class="s3">, </span><span class="s1">text</span><span class="s3">, </span><span class="s1">font</span><span class="s3">, </span><span class="s1">text_fg</span><span class="s3">, </span><span class="s1">text_bg</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Remember a single drawable tuple to paint later. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">drawables</span><span class="s3">.</span><span class="s1">append</span><span class="s3">((</span><span class="s1">pos</span><span class="s3">, </span><span class="s1">text</span><span class="s3">, </span><span class="s1">font</span><span class="s3">, </span><span class="s1">text_fg</span><span class="s3">, </span><span class="s1">text_bg</span><span class="s3">))</span>
+
+    <span class="s2">def </span><span class="s1">_create_drawables</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">tokensource</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Create drawables for the token content. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">lineno </span><span class="s3">= </span><span class="s1">charno </span><span class="s3">= </span><span class="s1">maxcharno </span><span class="s3">= </span><span class="s6">0</span>
+        <span class="s1">maxlinelength </span><span class="s3">= </span><span class="s1">linelength </span><span class="s3">= </span><span class="s6">0</span>
+        <span class="s2">for </span><span class="s1">ttype</span><span class="s3">, </span><span class="s1">value </span><span class="s2">in </span><span class="s1">tokensource</span><span class="s3">:</span>
+            <span class="s2">while </span><span class="s1">ttype </span><span class="s2">not in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">styles</span><span class="s3">:</span>
+                <span class="s1">ttype </span><span class="s3">= </span><span class="s1">ttype</span><span class="s3">.</span><span class="s1">parent</span>
+            <span class="s1">style </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">styles</span><span class="s3">[</span><span class="s1">ttype</span><span class="s3">]</span>
+            <span class="s4"># TODO: make sure tab expansion happens earlier in the chain.  It</span>
+            <span class="s4"># really ought to be done on the input, as to do it right here is</span>
+            <span class="s4"># quite complex.</span>
+            <span class="s1">value </span><span class="s3">= </span><span class="s1">value</span><span class="s3">.</span><span class="s1">expandtabs</span><span class="s3">(</span><span class="s6">4</span><span class="s3">)</span>
+            <span class="s1">lines </span><span class="s3">= </span><span class="s1">value</span><span class="s3">.</span><span class="s1">splitlines</span><span class="s3">(</span><span class="s2">True</span><span class="s3">)</span>
+            <span class="s4"># print lines</span>
+            <span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">line </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">lines</span><span class="s3">):</span>
+                <span class="s1">temp </span><span class="s3">= </span><span class="s1">line</span><span class="s3">.</span><span class="s1">rstrip</span><span class="s3">(</span><span class="s5">'</span><span class="s2">\n</span><span class="s5">'</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">temp</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">_draw_text</span><span class="s3">(</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">_get_text_pos</span><span class="s3">(</span><span class="s1">linelength</span><span class="s3">, </span><span class="s1">lineno</span><span class="s3">),</span>
+                        <span class="s1">temp</span><span class="s3">,</span>
+                        <span class="s1">font </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_get_style_font</span><span class="s3">(</span><span class="s1">style</span><span class="s3">),</span>
+                        <span class="s1">text_fg </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_get_text_color</span><span class="s3">(</span><span class="s1">style</span><span class="s3">),</span>
+                        <span class="s1">text_bg </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_get_text_bg_color</span><span class="s3">(</span><span class="s1">style</span><span class="s3">),</span>
+                    <span class="s3">)</span>
+                    <span class="s1">temp_width</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fonts</span><span class="s3">.</span><span class="s1">get_text_size</span><span class="s3">(</span><span class="s1">temp</span><span class="s3">)</span>
+                    <span class="s1">linelength </span><span class="s3">+= </span><span class="s1">temp_width</span>
+                    <span class="s1">maxlinelength </span><span class="s3">= </span><span class="s1">max</span><span class="s3">(</span><span class="s1">maxlinelength</span><span class="s3">, </span><span class="s1">linelength</span><span class="s3">)</span>
+                    <span class="s1">charno </span><span class="s3">+= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">temp</span><span class="s3">)</span>
+                    <span class="s1">maxcharno </span><span class="s3">= </span><span class="s1">max</span><span class="s3">(</span><span class="s1">maxcharno</span><span class="s3">, </span><span class="s1">charno</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">line</span><span class="s3">.</span><span class="s1">endswith</span><span class="s3">(</span><span class="s5">'</span><span class="s2">\n</span><span class="s5">'</span><span class="s3">):</span>
+                    <span class="s4"># add a line for each extra line in the value</span>
+                    <span class="s1">linelength </span><span class="s3">= </span><span class="s6">0</span>
+                    <span class="s1">charno </span><span class="s3">= </span><span class="s6">0</span>
+                    <span class="s1">lineno </span><span class="s3">+= </span><span class="s6">1</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">maxlinelength </span><span class="s3">= </span><span class="s1">maxlinelength</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">maxcharno </span><span class="s3">= </span><span class="s1">maxcharno</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">maxlineno </span><span class="s3">= </span><span class="s1">lineno</span>
+
+    <span class="s2">def </span><span class="s1">_draw_line_numbers</span><span class="s3">(</span><span class="s1">self</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Create drawables for the line numbers. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_numbers</span><span class="s3">:</span>
+            <span class="s2">return</span>
+        <span class="s2">for </span><span class="s1">p </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">maxlineno</span><span class="s3">):</span>
+            <span class="s1">n </span><span class="s3">= </span><span class="s1">p </span><span class="s3">+ </span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_start</span>
+            <span class="s2">if </span><span class="s3">(</span><span class="s1">n </span><span class="s3">% </span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_step</span><span class="s3">) == </span><span class="s6">0</span><span class="s3">:</span>
+                <span class="s1">self</span><span class="s3">.</span><span class="s1">_draw_linenumber</span><span class="s3">(</span><span class="s1">p</span><span class="s3">, </span><span class="s1">n</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">_paint_line_number_bg</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">im</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Paint the line number background on the image. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_numbers</span><span class="s3">:</span>
+            <span class="s2">return</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_fg </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s2">return</span>
+        <span class="s1">draw </span><span class="s3">= </span><span class="s1">ImageDraw</span><span class="s3">.</span><span class="s1">Draw</span><span class="s3">(</span><span class="s1">im</span><span class="s3">)</span>
+        <span class="s1">recth </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[-</span><span class="s6">1</span><span class="s3">]</span>
+        <span class="s1">rectw </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">image_pad </span><span class="s3">+ </span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_width </span><span class="s3">- </span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_pad</span>
+        <span class="s1">draw</span><span class="s3">.</span><span class="s1">rectangle</span><span class="s3">([(</span><span class="s6">0</span><span class="s3">, </span><span class="s6">0</span><span class="s3">), (</span><span class="s1">rectw</span><span class="s3">, </span><span class="s1">recth</span><span class="s3">)],</span>
+                       <span class="s1">fill</span><span class="s3">=</span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_bg</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_separator</span><span class="s3">:</span>
+            <span class="s1">draw</span><span class="s3">.</span><span class="s1">line</span><span class="s3">([(</span><span class="s1">rectw</span><span class="s3">, </span><span class="s6">0</span><span class="s3">), (</span><span class="s1">rectw</span><span class="s3">, </span><span class="s1">recth</span><span class="s3">)], </span><span class="s1">fill</span><span class="s3">=</span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_fg</span><span class="s3">)</span>
+        <span class="s2">del </span><span class="s1">draw</span>
+
+    <span class="s2">def </span><span class="s1">format</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">tokensource</span><span class="s3">, </span><span class="s1">outfile</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Format ``tokensource``, an iterable of ``(tokentype, tokenstring)`` 
+        tuples and write it into ``outfile``. 
+ 
+        This implementation calculates where it should draw each token on the 
+        pixmap, then calculates the required pixmap size and draws the items. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_create_drawables</span><span class="s3">(</span><span class="s1">tokensource</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_draw_line_numbers</span><span class="s3">()</span>
+        <span class="s1">im </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">new</span><span class="s3">(</span>
+            <span class="s5">'RGB'</span><span class="s3">,</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_get_image_size</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">maxlinelength</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">maxlineno</span><span class="s3">),</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">background_color</span>
+        <span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_paint_line_number_bg</span><span class="s3">(</span><span class="s1">im</span><span class="s3">)</span>
+        <span class="s1">draw </span><span class="s3">= </span><span class="s1">ImageDraw</span><span class="s3">.</span><span class="s1">Draw</span><span class="s3">(</span><span class="s1">im</span><span class="s3">)</span>
+        <span class="s4"># Highlight</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">hl_lines</span><span class="s3">:</span>
+            <span class="s1">x </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">image_pad </span><span class="s3">+ </span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_width </span><span class="s3">- </span><span class="s1">self</span><span class="s3">.</span><span class="s1">line_number_pad </span><span class="s3">+ </span><span class="s6">1</span>
+            <span class="s1">recth </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_get_line_height</span><span class="s3">()</span>
+            <span class="s1">rectw </span><span class="s3">= </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] - </span><span class="s1">x</span>
+            <span class="s2">for </span><span class="s1">linenumber </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">hl_lines</span><span class="s3">:</span>
+                <span class="s1">y </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_get_line_y</span><span class="s3">(</span><span class="s1">linenumber </span><span class="s3">- </span><span class="s6">1</span><span class="s3">)</span>
+                <span class="s1">draw</span><span class="s3">.</span><span class="s1">rectangle</span><span class="s3">([(</span><span class="s1">x</span><span class="s3">, </span><span class="s1">y</span><span class="s3">), (</span><span class="s1">x </span><span class="s3">+ </span><span class="s1">rectw</span><span class="s3">, </span><span class="s1">y </span><span class="s3">+ </span><span class="s1">recth</span><span class="s3">)],</span>
+                               <span class="s1">fill</span><span class="s3">=</span><span class="s1">self</span><span class="s3">.</span><span class="s1">hl_color</span><span class="s3">)</span>
+        <span class="s2">for </span><span class="s1">pos</span><span class="s3">, </span><span class="s1">value</span><span class="s3">, </span><span class="s1">font</span><span class="s3">, </span><span class="s1">text_fg</span><span class="s3">, </span><span class="s1">text_bg </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">drawables</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">text_bg</span><span class="s3">:</span>
+                <span class="s1">text_size </span><span class="s3">= </span><span class="s1">draw</span><span class="s3">.</span><span class="s1">textsize</span><span class="s3">(</span><span class="s1">text</span><span class="s3">=</span><span class="s1">value</span><span class="s3">, </span><span class="s1">font</span><span class="s3">=</span><span class="s1">font</span><span class="s3">)</span>
+                <span class="s1">draw</span><span class="s3">.</span><span class="s1">rectangle</span><span class="s3">([</span><span class="s1">pos</span><span class="s3">[</span><span class="s6">0</span><span class="s3">], </span><span class="s1">pos</span><span class="s3">[</span><span class="s6">1</span><span class="s3">], </span><span class="s1">pos</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] + </span><span class="s1">text_size</span><span class="s3">[</span><span class="s6">0</span><span class="s3">], </span><span class="s1">pos</span><span class="s3">[</span><span class="s6">1</span><span class="s3">] + </span><span class="s1">text_size</span><span class="s3">[</span><span class="s6">1</span><span class="s3">]], </span><span class="s1">fill</span><span class="s3">=</span><span class="s1">text_bg</span><span class="s3">)</span>
+            <span class="s1">draw</span><span class="s3">.</span><span class="s1">text</span><span class="s3">(</span><span class="s1">pos</span><span class="s3">, </span><span class="s1">value</span><span class="s3">, </span><span class="s1">font</span><span class="s3">=</span><span class="s1">font</span><span class="s3">, </span><span class="s1">fill</span><span class="s3">=</span><span class="s1">text_fg</span><span class="s3">)</span>
+        <span class="s1">im</span><span class="s3">.</span><span class="s1">save</span><span class="s3">(</span><span class="s1">outfile</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">image_format</span><span class="s3">.</span><span class="s1">upper</span><span class="s3">())</span>
+
+
+<span class="s4"># Add one formatter per format, so that the &quot;-f gif&quot; option gives the correct result</span>
+<span class="s4"># when used in pygmentize.</span>
+
+<span class="s2">class </span><span class="s1">GifImageFormatter</span><span class="s3">(</span><span class="s1">ImageFormatter</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Create a GIF image from source code. This uses the Python Imaging Library to 
+    generate a pixmap from the source code. 
+ 
+    .. versionadded:: 1.0 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">name </span><span class="s3">= </span><span class="s5">'img_gif'</span>
+    <span class="s1">aliases </span><span class="s3">= [</span><span class="s5">'gif'</span><span class="s3">]</span>
+    <span class="s1">filenames </span><span class="s3">= [</span><span class="s5">'*.gif'</span><span class="s3">]</span>
+    <span class="s1">default_image_format </span><span class="s3">= </span><span class="s5">'gif'</span>
+
+
+<span class="s2">class </span><span class="s1">JpgImageFormatter</span><span class="s3">(</span><span class="s1">ImageFormatter</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Create a JPEG image from source code. This uses the Python Imaging Library to 
+    generate a pixmap from the source code. 
+ 
+    .. versionadded:: 1.0 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">name </span><span class="s3">= </span><span class="s5">'img_jpg'</span>
+    <span class="s1">aliases </span><span class="s3">= [</span><span class="s5">'jpg'</span><span class="s3">, </span><span class="s5">'jpeg'</span><span class="s3">]</span>
+    <span class="s1">filenames </span><span class="s3">= [</span><span class="s5">'*.jpg'</span><span class="s3">]</span>
+    <span class="s1">default_image_format </span><span class="s3">= </span><span class="s5">'jpeg'</span>
+
+
+<span class="s2">class </span><span class="s1">BmpImageFormatter</span><span class="s3">(</span><span class="s1">ImageFormatter</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Create a bitmap image from source code. This uses the Python Imaging Library to 
+    generate a pixmap from the source code. 
+ 
+    .. versionadded:: 1.0 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">name </span><span class="s3">= </span><span class="s5">'img_bmp'</span>
+    <span class="s1">aliases </span><span class="s3">= [</span><span class="s5">'bmp'</span><span class="s3">, </span><span class="s5">'bitmap'</span><span class="s3">]</span>
+    <span class="s1">filenames </span><span class="s3">= [</span><span class="s5">'*.bmp'</span><span class="s3">]</span>
+    <span class="s1">default_image_format </span><span class="s3">= </span><span class="s5">'bmp'</span>
+</pre>
+</body>
+</html>

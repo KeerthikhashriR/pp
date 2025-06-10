@@ -1,0 +1,755 @@
+<html>
+<head>
+<title>testclient.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+.s5 { color: #6aab73;}
+.s6 { color: #5f826b; font-style: italic;}
+.s7 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+testclient.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">contextlib</span>
+<span class="s0">import </span><span class="s1">inspect</span>
+<span class="s0">import </span><span class="s1">io</span>
+<span class="s0">import </span><span class="s1">json</span>
+<span class="s0">import </span><span class="s1">math</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">import </span><span class="s1">typing</span>
+<span class="s0">import </span><span class="s1">warnings</span>
+<span class="s0">from </span><span class="s1">concurrent</span><span class="s2">.</span><span class="s1">futures </span><span class="s0">import </span><span class="s1">Future</span>
+<span class="s0">from </span><span class="s1">types </span><span class="s0">import </span><span class="s1">GeneratorType</span>
+<span class="s0">from </span><span class="s1">urllib</span><span class="s2">.</span><span class="s1">parse </span><span class="s0">import </span><span class="s1">unquote</span><span class="s2">, </span><span class="s1">urljoin</span>
+
+<span class="s0">import </span><span class="s1">anyio</span>
+<span class="s0">import </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">abc</span>
+<span class="s0">import </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">from_thread</span>
+<span class="s0">from </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">streams</span><span class="s2">.</span><span class="s1">stapled </span><span class="s0">import </span><span class="s1">StapledObjectStream</span>
+
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">_utils </span><span class="s0">import </span><span class="s1">is_async_callable</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">ASGIApp</span><span class="s2">, </span><span class="s1">Message</span><span class="s2">, </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">Send</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">websockets </span><span class="s0">import </span><span class="s1">WebSocketDisconnect</span>
+
+<span class="s0">if </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">version_info </span><span class="s2">&gt;= (</span><span class="s3">3</span><span class="s2">, </span><span class="s3">10</span><span class="s2">):  </span><span class="s4"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">TypeGuard</span>
+<span class="s0">else</span><span class="s2">:  </span><span class="s4"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s1">typing_extensions </span><span class="s0">import </span><span class="s1">TypeGuard</span>
+
+<span class="s0">try</span><span class="s2">:</span>
+    <span class="s0">import </span><span class="s1">httpx</span>
+<span class="s0">except </span><span class="s1">ModuleNotFoundError</span><span class="s2">:  </span><span class="s4"># pragma: no cover</span>
+    <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span>
+        <span class="s5">&quot;The starlette.testclient module requires the httpx package to be installed.</span><span class="s0">\n</span><span class="s5">&quot;</span>
+        <span class="s5">&quot;You can install this with:</span><span class="s0">\n</span><span class="s5">&quot;</span>
+        <span class="s5">&quot;    $ pip install httpx</span><span class="s0">\n</span><span class="s5">&quot;</span>
+    <span class="s2">)</span>
+<span class="s1">_PortalFactoryType </span><span class="s2">= </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[], </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">ContextManager</span><span class="s2">[</span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">abc</span><span class="s2">.</span><span class="s1">BlockingPortal</span><span class="s2">]]</span>
+
+<span class="s1">ASGIInstance </span><span class="s2">= </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">Send</span><span class="s2">], </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Awaitable</span><span class="s2">[</span><span class="s0">None</span><span class="s2">]]</span>
+<span class="s1">ASGI2App </span><span class="s2">= </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Scope</span><span class="s2">], </span><span class="s1">ASGIInstance</span><span class="s2">]</span>
+<span class="s1">ASGI3App </span><span class="s2">= </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">Send</span><span class="s2">], </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Awaitable</span><span class="s2">[</span><span class="s0">None</span><span class="s2">]]</span>
+
+
+<span class="s1">_RequestData </span><span class="s2">= </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Union</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">str</span><span class="s2">], </span><span class="s1">bytes</span><span class="s2">]]</span>
+
+
+<span class="s0">def </span><span class="s1">_is_asgi3</span><span class="s2">(</span><span class="s1">app</span><span class="s2">: </span><span class="s1">ASGI2App </span><span class="s2">| </span><span class="s1">ASGI3App</span><span class="s2">) </span><span class="s1">-&gt; TypeGuard</span><span class="s2">[</span><span class="s1">ASGI3App</span><span class="s2">]:</span>
+    <span class="s0">if </span><span class="s1">inspect</span><span class="s2">.</span><span class="s1">isclass</span><span class="s2">(</span><span class="s1">app</span><span class="s2">):</span>
+        <span class="s0">return </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">app</span><span class="s2">, </span><span class="s5">&quot;__await__&quot;</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">is_async_callable</span><span class="s2">(</span><span class="s1">app</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">_WrapASGI2</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Provide an ASGI3 interface onto an ASGI2 app. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">app</span><span class="s2">: </span><span class="s1">ASGI2App</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app </span><span class="s2">= </span><span class="s1">app</span>
+
+    <span class="s0">async def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">: </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">: </span><span class="s1">Send</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">instance </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">)</span>
+        <span class="s0">await </span><span class="s1">instance</span><span class="s2">(</span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">_AsyncBackend</span><span class="s2">(</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">TypedDict</span><span class="s2">):</span>
+    <span class="s1">backend</span><span class="s2">: </span><span class="s1">str</span>
+    <span class="s1">backend_options</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]</span>
+
+
+<span class="s0">class </span><span class="s1">_Upgrade</span><span class="s2">(</span><span class="s1">Exception</span><span class="s2">):</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">session</span><span class="s2">: </span><span class="s1">WebSocketTestSession</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">session </span><span class="s2">= </span><span class="s1">session</span>
+
+
+<span class="s0">class </span><span class="s1">WebSocketDenialResponse</span><span class="s2">(  </span><span class="s4"># type: ignore[misc]</span>
+    <span class="s1">httpx</span><span class="s2">.</span><span class="s1">Response</span><span class="s2">,</span>
+    <span class="s1">WebSocketDisconnect</span><span class="s2">,</span>
+<span class="s2">):</span>
+    <span class="s6">&quot;&quot;&quot; 
+    A special case of `WebSocketDisconnect`, raised in the `TestClient` if the 
+    `WebSocket` is closed before being accepted with a `send_denial_response()`. 
+    &quot;&quot;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">WebSocketTestSession</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">app</span><span class="s2">: </span><span class="s1">ASGI3App</span><span class="s2">,</span>
+        <span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">,</span>
+        <span class="s1">portal_factory</span><span class="s2">: </span><span class="s1">_PortalFactoryType</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app </span><span class="s2">= </span><span class="s1">app</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">scope </span><span class="s2">= </span><span class="s1">scope</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">accepted_subprotocol </span><span class="s2">= </span><span class="s0">None</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">portal_factory </span><span class="s2">= </span><span class="s1">portal_factory</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">extra_headers </span><span class="s2">= </span><span class="s0">None</span>
+
+    <span class="s0">def </span><span class="s1">__enter__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; WebSocketTestSession</span><span class="s2">:</span>
+        <span class="s0">with </span><span class="s1">contextlib</span><span class="s2">.</span><span class="s1">ExitStack</span><span class="s2">() </span><span class="s0">as </span><span class="s1">stack</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">portal </span><span class="s2">= </span><span class="s1">portal </span><span class="s2">= </span><span class="s1">stack</span><span class="s2">.</span><span class="s1">enter_context</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">portal_factory</span><span class="s2">())</span>
+            <span class="s1">fut</span><span class="s2">, </span><span class="s1">cs </span><span class="s2">= </span><span class="s1">portal</span><span class="s2">.</span><span class="s1">start_task</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_run</span><span class="s2">)</span>
+            <span class="s1">stack</span><span class="s2">.</span><span class="s1">callback</span><span class="s2">(</span><span class="s1">fut</span><span class="s2">.</span><span class="s1">result</span><span class="s2">)</span>
+            <span class="s1">stack</span><span class="s2">.</span><span class="s1">callback</span><span class="s2">(</span><span class="s1">portal</span><span class="s2">.</span><span class="s1">call</span><span class="s2">, </span><span class="s1">cs</span><span class="s2">.</span><span class="s1">cancel</span><span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">({</span><span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;websocket.connect&quot;</span><span class="s2">})</span>
+            <span class="s1">message </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">()</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_raise_on_close</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">accepted_subprotocol </span><span class="s2">= </span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;subprotocol&quot;</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">extra_headers </span><span class="s2">= </span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;headers&quot;</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+            <span class="s1">stack</span><span class="s2">.</span><span class="s1">callback</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">close</span><span class="s2">, </span><span class="s3">1000</span><span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">exit_stack </span><span class="s2">= </span><span class="s1">stack</span><span class="s2">.</span><span class="s1">pop_all</span><span class="s2">()</span>
+            <span class="s0">return </span><span class="s1">self</span>
+
+    <span class="s0">def </span><span class="s1">__exit__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; bool </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">exit_stack</span><span class="s2">.</span><span class="s1">__exit__</span><span class="s2">(*</span><span class="s1">args</span><span class="s2">)</span>
+
+    <span class="s0">async def </span><span class="s1">_run</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, *, </span><span class="s1">task_status</span><span class="s2">: </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">abc</span><span class="s2">.</span><span class="s1">TaskStatus</span><span class="s2">[</span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">CancelScope</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        The sub-thread in which the websocket session runs. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">send</span><span class="s2">: </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">create_memory_object_stream</span><span class="s2">[</span><span class="s1">Message</span><span class="s2">] = </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">create_memory_object_stream</span><span class="s2">(</span><span class="s1">math</span><span class="s2">.</span><span class="s1">inf</span><span class="s2">)</span>
+        <span class="s1">send_tx</span><span class="s2">, </span><span class="s1">send_rx </span><span class="s2">= </span><span class="s1">send</span>
+        <span class="s1">receive</span><span class="s2">: </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">create_memory_object_stream</span><span class="s2">[</span><span class="s1">Message</span><span class="s2">] = </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">create_memory_object_stream</span><span class="s2">(</span><span class="s1">math</span><span class="s2">.</span><span class="s1">inf</span><span class="s2">)</span>
+        <span class="s1">receive_tx</span><span class="s2">, </span><span class="s1">receive_rx </span><span class="s2">= </span><span class="s1">receive</span>
+        <span class="s0">with </span><span class="s1">send_tx</span><span class="s2">, </span><span class="s1">send_rx</span><span class="s2">, </span><span class="s1">receive_tx</span><span class="s2">, </span><span class="s1">receive_rx</span><span class="s2">, </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">CancelScope</span><span class="s2">() </span><span class="s0">as </span><span class="s1">cs</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_receive_tx </span><span class="s2">= </span><span class="s1">receive_tx</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_send_rx </span><span class="s2">= </span><span class="s1">send_rx</span>
+            <span class="s1">task_status</span><span class="s2">.</span><span class="s1">started</span><span class="s2">(</span><span class="s1">cs</span><span class="s2">)</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive_rx</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send_tx</span><span class="s2">.</span><span class="s1">send</span><span class="s2">)</span>
+
+            <span class="s4"># wait for cs.cancel to be called before closing streams</span>
+            <span class="s0">await </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">sleep_forever</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">_raise_on_close</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">message</span><span class="s2">: </span><span class="s1">Message</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;type&quot;</span><span class="s2">] == </span><span class="s5">&quot;websocket.close&quot;</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">WebSocketDisconnect</span><span class="s2">(</span><span class="s1">code</span><span class="s2">=</span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;code&quot;</span><span class="s2">, </span><span class="s3">1000</span><span class="s2">), </span><span class="s1">reason</span><span class="s2">=</span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;reason&quot;</span><span class="s2">, </span><span class="s5">&quot;&quot;</span><span class="s2">))</span>
+        <span class="s0">elif </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;type&quot;</span><span class="s2">] == </span><span class="s5">&quot;websocket.http.response.start&quot;</span><span class="s2">:</span>
+            <span class="s1">status_code</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;status&quot;</span><span class="s2">]</span>
+            <span class="s1">headers</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">]] = </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;headers&quot;</span><span class="s2">]</span>
+            <span class="s1">body</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">bytes</span><span class="s2">] = []</span>
+            <span class="s0">while True</span><span class="s2">:</span>
+                <span class="s1">message </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">()</span>
+                <span class="s0">assert </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;type&quot;</span><span class="s2">] == </span><span class="s5">&quot;websocket.http.response.body&quot;</span>
+                <span class="s1">body</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;body&quot;</span><span class="s2">])</span>
+                <span class="s0">if not </span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;more_body&quot;</span><span class="s2">, </span><span class="s0">False</span><span class="s2">):</span>
+                    <span class="s0">break</span>
+            <span class="s0">raise </span><span class="s1">WebSocketDenialResponse</span><span class="s2">(</span><span class="s1">status_code</span><span class="s2">=</span><span class="s1">status_code</span><span class="s2">, </span><span class="s1">headers</span><span class="s2">=</span><span class="s1">headers</span><span class="s2">, </span><span class="s1">content</span><span class="s2">=</span><span class="s7">b&quot;&quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">body</span><span class="s2">))</span>
+
+    <span class="s0">def </span><span class="s1">send</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">message</span><span class="s2">: </span><span class="s1">Message</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">portal</span><span class="s2">.</span><span class="s1">call</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_receive_tx</span><span class="s2">.</span><span class="s1">send</span><span class="s2">, </span><span class="s1">message</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">send_text</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">data</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">({</span><span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;websocket.receive&quot;</span><span class="s2">, </span><span class="s5">&quot;text&quot;</span><span class="s2">: </span><span class="s1">data</span><span class="s2">})</span>
+
+    <span class="s0">def </span><span class="s1">send_bytes</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">data</span><span class="s2">: </span><span class="s1">bytes</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">({</span><span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;websocket.receive&quot;</span><span class="s2">, </span><span class="s5">&quot;bytes&quot;</span><span class="s2">: </span><span class="s1">data</span><span class="s2">})</span>
+
+    <span class="s0">def </span><span class="s1">send_json</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">data</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Literal</span><span class="s2">[</span><span class="s5">&quot;text&quot;</span><span class="s2">, </span><span class="s5">&quot;binary&quot;</span><span class="s2">] = </span><span class="s5">&quot;text&quot;</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">text </span><span class="s2">= </span><span class="s1">json</span><span class="s2">.</span><span class="s1">dumps</span><span class="s2">(</span><span class="s1">data</span><span class="s2">, </span><span class="s1">separators</span><span class="s2">=(</span><span class="s5">&quot;,&quot;</span><span class="s2">, </span><span class="s5">&quot;:&quot;</span><span class="s2">), </span><span class="s1">ensure_ascii</span><span class="s2">=</span><span class="s0">False</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">mode </span><span class="s2">== </span><span class="s5">&quot;text&quot;</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">({</span><span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;websocket.receive&quot;</span><span class="s2">, </span><span class="s5">&quot;text&quot;</span><span class="s2">: </span><span class="s1">text</span><span class="s2">})</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">({</span><span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;websocket.receive&quot;</span><span class="s2">, </span><span class="s5">&quot;bytes&quot;</span><span class="s2">: </span><span class="s1">text</span><span class="s2">.</span><span class="s1">encode</span><span class="s2">(</span><span class="s5">&quot;utf-8&quot;</span><span class="s2">)})</span>
+
+    <span class="s0">def </span><span class="s1">close</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">code</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s3">1000</span><span class="s2">, </span><span class="s1">reason</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">({</span><span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;websocket.disconnect&quot;</span><span class="s2">, </span><span class="s5">&quot;code&quot;</span><span class="s2">: </span><span class="s1">code</span><span class="s2">, </span><span class="s5">&quot;reason&quot;</span><span class="s2">: </span><span class="s1">reason</span><span class="s2">})</span>
+
+    <span class="s0">def </span><span class="s1">receive</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; Message</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">portal</span><span class="s2">.</span><span class="s1">call</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_send_rx</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">receive_text</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s1">message </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_raise_on_close</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">cast</span><span class="s2">(</span><span class="s1">str</span><span class="s2">, </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;text&quot;</span><span class="s2">])</span>
+
+    <span class="s0">def </span><span class="s1">receive_bytes</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; bytes</span><span class="s2">:</span>
+        <span class="s1">message </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_raise_on_close</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">cast</span><span class="s2">(</span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;bytes&quot;</span><span class="s2">])</span>
+
+    <span class="s0">def </span><span class="s1">receive_json</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Literal</span><span class="s2">[</span><span class="s5">&quot;text&quot;</span><span class="s2">, </span><span class="s5">&quot;binary&quot;</span><span class="s2">] = </span><span class="s5">&quot;text&quot;</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">:</span>
+        <span class="s1">message </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_raise_on_close</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">mode </span><span class="s2">== </span><span class="s5">&quot;text&quot;</span><span class="s2">:</span>
+            <span class="s1">text </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;text&quot;</span><span class="s2">]</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">text </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;bytes&quot;</span><span class="s2">].</span><span class="s1">decode</span><span class="s2">(</span><span class="s5">&quot;utf-8&quot;</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">json</span><span class="s2">.</span><span class="s1">loads</span><span class="s2">(</span><span class="s1">text</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">_TestClientTransport</span><span class="s2">(</span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">BaseTransport</span><span class="s2">):</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">app</span><span class="s2">: </span><span class="s1">ASGI3App</span><span class="s2">,</span>
+        <span class="s1">portal_factory</span><span class="s2">: </span><span class="s1">_PortalFactoryType</span><span class="s2">,</span>
+        <span class="s1">raise_server_exceptions</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">,</span>
+        <span class="s1">root_path</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s5">&quot;&quot;</span><span class="s2">,</span>
+        <span class="s2">*,</span>
+        <span class="s1">client</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">int</span><span class="s2">],</span>
+        <span class="s1">app_state</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">],</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app </span><span class="s2">= </span><span class="s1">app</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">raise_server_exceptions </span><span class="s2">= </span><span class="s1">raise_server_exceptions</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">root_path </span><span class="s2">= </span><span class="s1">root_path</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">portal_factory </span><span class="s2">= </span><span class="s1">portal_factory</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app_state </span><span class="s2">= </span><span class="s1">app_state</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">client </span><span class="s2">= </span><span class="s1">client</span>
+
+    <span class="s0">def </span><span class="s1">handle_request</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">request</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">Request</span><span class="s2">) </span><span class="s1">-&gt; httpx</span><span class="s2">.</span><span class="s1">Response</span><span class="s2">:</span>
+        <span class="s1">scheme </span><span class="s2">= </span><span class="s1">request</span><span class="s2">.</span><span class="s1">url</span><span class="s2">.</span><span class="s1">scheme</span>
+        <span class="s1">netloc </span><span class="s2">= </span><span class="s1">request</span><span class="s2">.</span><span class="s1">url</span><span class="s2">.</span><span class="s1">netloc</span><span class="s2">.</span><span class="s1">decode</span><span class="s2">(</span><span class="s1">encoding</span><span class="s2">=</span><span class="s5">&quot;ascii&quot;</span><span class="s2">)</span>
+        <span class="s1">path </span><span class="s2">= </span><span class="s1">request</span><span class="s2">.</span><span class="s1">url</span><span class="s2">.</span><span class="s1">path</span>
+        <span class="s1">raw_path </span><span class="s2">= </span><span class="s1">request</span><span class="s2">.</span><span class="s1">url</span><span class="s2">.</span><span class="s1">raw_path</span>
+        <span class="s1">query </span><span class="s2">= </span><span class="s1">request</span><span class="s2">.</span><span class="s1">url</span><span class="s2">.</span><span class="s1">query</span><span class="s2">.</span><span class="s1">decode</span><span class="s2">(</span><span class="s1">encoding</span><span class="s2">=</span><span class="s5">&quot;ascii&quot;</span><span class="s2">)</span>
+
+        <span class="s1">default_port </span><span class="s2">= {</span><span class="s5">&quot;http&quot;</span><span class="s2">: </span><span class="s3">80</span><span class="s2">, </span><span class="s5">&quot;ws&quot;</span><span class="s2">: </span><span class="s3">80</span><span class="s2">, </span><span class="s5">&quot;https&quot;</span><span class="s2">: </span><span class="s3">443</span><span class="s2">, </span><span class="s5">&quot;wss&quot;</span><span class="s2">: </span><span class="s3">443</span><span class="s2">}[</span><span class="s1">scheme</span><span class="s2">]</span>
+
+        <span class="s0">if </span><span class="s5">&quot;:&quot; </span><span class="s0">in </span><span class="s1">netloc</span><span class="s2">:</span>
+            <span class="s1">host</span><span class="s2">, </span><span class="s1">port_string </span><span class="s2">= </span><span class="s1">netloc</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s5">&quot;:&quot;</span><span class="s2">, </span><span class="s3">1</span><span class="s2">)</span>
+            <span class="s1">port </span><span class="s2">= </span><span class="s1">int</span><span class="s2">(</span><span class="s1">port_string</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">host </span><span class="s2">= </span><span class="s1">netloc</span>
+            <span class="s1">port </span><span class="s2">= </span><span class="s1">default_port</span>
+
+        <span class="s4"># Include the 'host' header.</span>
+        <span class="s0">if </span><span class="s5">&quot;host&quot; </span><span class="s0">in </span><span class="s1">request</span><span class="s2">.</span><span class="s1">headers</span><span class="s2">:</span>
+            <span class="s1">headers</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">]] = []</span>
+        <span class="s0">elif </span><span class="s1">port </span><span class="s2">== </span><span class="s1">default_port</span><span class="s2">:  </span><span class="s4"># pragma: no cover</span>
+            <span class="s1">headers </span><span class="s2">= [(</span><span class="s7">b&quot;host&quot;</span><span class="s2">, </span><span class="s1">host</span><span class="s2">.</span><span class="s1">encode</span><span class="s2">())]</span>
+        <span class="s0">else</span><span class="s2">:  </span><span class="s4"># pragma: no cover</span>
+            <span class="s1">headers </span><span class="s2">= [(</span><span class="s7">b&quot;host&quot;</span><span class="s2">, (</span><span class="s5">f&quot;</span><span class="s0">{</span><span class="s1">host</span><span class="s0">}</span><span class="s5">:</span><span class="s0">{</span><span class="s1">port</span><span class="s0">}</span><span class="s5">&quot;</span><span class="s2">).</span><span class="s1">encode</span><span class="s2">())]</span>
+
+        <span class="s4"># Include other request headers.</span>
+        <span class="s1">headers </span><span class="s2">+= [(</span><span class="s1">key</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">().</span><span class="s1">encode</span><span class="s2">(), </span><span class="s1">value</span><span class="s2">.</span><span class="s1">encode</span><span class="s2">()) </span><span class="s0">for </span><span class="s1">key</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">request</span><span class="s2">.</span><span class="s1">headers</span><span class="s2">.</span><span class="s1">multi_items</span><span class="s2">()]</span>
+
+        <span class="s1">scope</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]</span>
+
+        <span class="s0">if </span><span class="s1">scheme </span><span class="s0">in </span><span class="s2">{</span><span class="s5">&quot;ws&quot;</span><span class="s2">, </span><span class="s5">&quot;wss&quot;</span><span class="s2">}:</span>
+            <span class="s1">subprotocol </span><span class="s2">= </span><span class="s1">request</span><span class="s2">.</span><span class="s1">headers</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;sec-websocket-protocol&quot;</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">subprotocol </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s1">subprotocols</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Sequence</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = []</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">subprotocols </span><span class="s2">= [</span><span class="s1">value</span><span class="s2">.</span><span class="s1">strip</span><span class="s2">() </span><span class="s0">for </span><span class="s1">value </span><span class="s0">in </span><span class="s1">subprotocol</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s5">&quot;,&quot;</span><span class="s2">)]</span>
+            <span class="s1">scope </span><span class="s2">= {</span>
+                <span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;websocket&quot;</span><span class="s2">,</span>
+                <span class="s5">&quot;path&quot;</span><span class="s2">: </span><span class="s1">unquote</span><span class="s2">(</span><span class="s1">path</span><span class="s2">),</span>
+                <span class="s5">&quot;raw_path&quot;</span><span class="s2">: </span><span class="s1">raw_path</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s7">b&quot;?&quot;</span><span class="s2">, </span><span class="s3">1</span><span class="s2">)[</span><span class="s3">0</span><span class="s2">],</span>
+                <span class="s5">&quot;root_path&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">root_path</span><span class="s2">,</span>
+                <span class="s5">&quot;scheme&quot;</span><span class="s2">: </span><span class="s1">scheme</span><span class="s2">,</span>
+                <span class="s5">&quot;query_string&quot;</span><span class="s2">: </span><span class="s1">query</span><span class="s2">.</span><span class="s1">encode</span><span class="s2">(),</span>
+                <span class="s5">&quot;headers&quot;</span><span class="s2">: </span><span class="s1">headers</span><span class="s2">,</span>
+                <span class="s5">&quot;client&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">client</span><span class="s2">,</span>
+                <span class="s5">&quot;server&quot;</span><span class="s2">: [</span><span class="s1">host</span><span class="s2">, </span><span class="s1">port</span><span class="s2">],</span>
+                <span class="s5">&quot;subprotocols&quot;</span><span class="s2">: </span><span class="s1">subprotocols</span><span class="s2">,</span>
+                <span class="s5">&quot;state&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app_state</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">(),</span>
+                <span class="s5">&quot;extensions&quot;</span><span class="s2">: {</span><span class="s5">&quot;websocket.http.response&quot;</span><span class="s2">: {}},</span>
+            <span class="s2">}</span>
+            <span class="s1">session </span><span class="s2">= </span><span class="s1">WebSocketTestSession</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">portal_factory</span><span class="s2">)</span>
+            <span class="s0">raise </span><span class="s1">_Upgrade</span><span class="s2">(</span><span class="s1">session</span><span class="s2">)</span>
+
+        <span class="s1">scope </span><span class="s2">= {</span>
+            <span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;http&quot;</span><span class="s2">,</span>
+            <span class="s5">&quot;http_version&quot;</span><span class="s2">: </span><span class="s5">&quot;1.1&quot;</span><span class="s2">,</span>
+            <span class="s5">&quot;method&quot;</span><span class="s2">: </span><span class="s1">request</span><span class="s2">.</span><span class="s1">method</span><span class="s2">,</span>
+            <span class="s5">&quot;path&quot;</span><span class="s2">: </span><span class="s1">unquote</span><span class="s2">(</span><span class="s1">path</span><span class="s2">),</span>
+            <span class="s5">&quot;raw_path&quot;</span><span class="s2">: </span><span class="s1">raw_path</span><span class="s2">.</span><span class="s1">split</span><span class="s2">(</span><span class="s7">b&quot;?&quot;</span><span class="s2">, </span><span class="s3">1</span><span class="s2">)[</span><span class="s3">0</span><span class="s2">],</span>
+            <span class="s5">&quot;root_path&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">root_path</span><span class="s2">,</span>
+            <span class="s5">&quot;scheme&quot;</span><span class="s2">: </span><span class="s1">scheme</span><span class="s2">,</span>
+            <span class="s5">&quot;query_string&quot;</span><span class="s2">: </span><span class="s1">query</span><span class="s2">.</span><span class="s1">encode</span><span class="s2">(),</span>
+            <span class="s5">&quot;headers&quot;</span><span class="s2">: </span><span class="s1">headers</span><span class="s2">,</span>
+            <span class="s5">&quot;client&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">client</span><span class="s2">,</span>
+            <span class="s5">&quot;server&quot;</span><span class="s2">: [</span><span class="s1">host</span><span class="s2">, </span><span class="s1">port</span><span class="s2">],</span>
+            <span class="s5">&quot;extensions&quot;</span><span class="s2">: {</span><span class="s5">&quot;http.response.debug&quot;</span><span class="s2">: {}},</span>
+            <span class="s5">&quot;state&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app_state</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">(),</span>
+        <span class="s2">}</span>
+
+        <span class="s1">request_complete </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">response_started </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">response_complete</span><span class="s2">: </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">Event</span>
+        <span class="s1">raw_kwargs</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] = {</span><span class="s5">&quot;stream&quot;</span><span class="s2">: </span><span class="s1">io</span><span class="s2">.</span><span class="s1">BytesIO</span><span class="s2">()}</span>
+        <span class="s1">template </span><span class="s2">= </span><span class="s0">None</span>
+        <span class="s1">context </span><span class="s2">= </span><span class="s0">None</span>
+
+        <span class="s0">async def </span><span class="s1">receive</span><span class="s2">() </span><span class="s1">-&gt; Message</span><span class="s2">:</span>
+            <span class="s0">nonlocal </span><span class="s1">request_complete</span>
+
+            <span class="s0">if </span><span class="s1">request_complete</span><span class="s2">:</span>
+                <span class="s0">if not </span><span class="s1">response_complete</span><span class="s2">.</span><span class="s1">is_set</span><span class="s2">():</span>
+                    <span class="s0">await </span><span class="s1">response_complete</span><span class="s2">.</span><span class="s1">wait</span><span class="s2">()</span>
+                <span class="s0">return </span><span class="s2">{</span><span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;http.disconnect&quot;</span><span class="s2">}</span>
+
+            <span class="s1">body </span><span class="s2">= </span><span class="s1">request</span><span class="s2">.</span><span class="s1">read</span><span class="s2">()</span>
+            <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">body</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+                <span class="s1">body_bytes</span><span class="s2">: </span><span class="s1">bytes </span><span class="s2">= </span><span class="s1">body</span><span class="s2">.</span><span class="s1">encode</span><span class="s2">(</span><span class="s5">&quot;utf-8&quot;</span><span class="s2">)  </span><span class="s4"># pragma: no cover</span>
+            <span class="s0">elif </span><span class="s1">body </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s1">body_bytes </span><span class="s2">= </span><span class="s7">b&quot;&quot;  </span><span class="s4"># pragma: no cover</span>
+            <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">body</span><span class="s2">, </span><span class="s1">GeneratorType</span><span class="s2">):</span>
+                <span class="s0">try</span><span class="s2">:  </span><span class="s4"># pragma: no cover</span>
+                    <span class="s1">chunk </span><span class="s2">= </span><span class="s1">body</span><span class="s2">.</span><span class="s1">send</span><span class="s2">(</span><span class="s0">None</span><span class="s2">)</span>
+                    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">chunk</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+                        <span class="s1">chunk </span><span class="s2">= </span><span class="s1">chunk</span><span class="s2">.</span><span class="s1">encode</span><span class="s2">(</span><span class="s5">&quot;utf-8&quot;</span><span class="s2">)</span>
+                    <span class="s0">return </span><span class="s2">{</span><span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;http.request&quot;</span><span class="s2">, </span><span class="s5">&quot;body&quot;</span><span class="s2">: </span><span class="s1">chunk</span><span class="s2">, </span><span class="s5">&quot;more_body&quot;</span><span class="s2">: </span><span class="s0">True</span><span class="s2">}</span>
+                <span class="s0">except </span><span class="s1">StopIteration</span><span class="s2">:  </span><span class="s4"># pragma: no cover</span>
+                    <span class="s1">request_complete </span><span class="s2">= </span><span class="s0">True</span>
+                    <span class="s0">return </span><span class="s2">{</span><span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;http.request&quot;</span><span class="s2">, </span><span class="s5">&quot;body&quot;</span><span class="s2">: </span><span class="s7">b&quot;&quot;</span><span class="s2">}</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">body_bytes </span><span class="s2">= </span><span class="s1">body</span>
+
+            <span class="s1">request_complete </span><span class="s2">= </span><span class="s0">True</span>
+            <span class="s0">return </span><span class="s2">{</span><span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;http.request&quot;</span><span class="s2">, </span><span class="s5">&quot;body&quot;</span><span class="s2">: </span><span class="s1">body_bytes</span><span class="s2">}</span>
+
+        <span class="s0">async def </span><span class="s1">send</span><span class="s2">(</span><span class="s1">message</span><span class="s2">: </span><span class="s1">Message</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s0">nonlocal </span><span class="s1">raw_kwargs</span><span class="s2">, </span><span class="s1">response_started</span><span class="s2">, </span><span class="s1">template</span><span class="s2">, </span><span class="s1">context</span>
+
+            <span class="s0">if </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;type&quot;</span><span class="s2">] == </span><span class="s5">&quot;http.response.start&quot;</span><span class="s2">:</span>
+                <span class="s0">assert not </span><span class="s1">response_started</span><span class="s2">, </span><span class="s5">'Received multiple &quot;http.response.start&quot; messages.'</span>
+                <span class="s1">raw_kwargs</span><span class="s2">[</span><span class="s5">&quot;status_code&quot;</span><span class="s2">] = </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;status&quot;</span><span class="s2">]</span>
+                <span class="s1">raw_kwargs</span><span class="s2">[</span><span class="s5">&quot;headers&quot;</span><span class="s2">] = [(</span><span class="s1">key</span><span class="s2">.</span><span class="s1">decode</span><span class="s2">(), </span><span class="s1">value</span><span class="s2">.</span><span class="s1">decode</span><span class="s2">()) </span><span class="s0">for </span><span class="s1">key</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;headers&quot;</span><span class="s2">, [])]</span>
+                <span class="s1">response_started </span><span class="s2">= </span><span class="s0">True</span>
+            <span class="s0">elif </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;type&quot;</span><span class="s2">] == </span><span class="s5">&quot;http.response.body&quot;</span><span class="s2">:</span>
+                <span class="s0">assert </span><span class="s1">response_started</span><span class="s2">, </span><span class="s5">'Received &quot;http.response.body&quot; without &quot;http.response.start&quot;.'</span>
+                <span class="s0">assert not </span><span class="s1">response_complete</span><span class="s2">.</span><span class="s1">is_set</span><span class="s2">(), </span><span class="s5">'Received &quot;http.response.body&quot; after response completed.'</span>
+                <span class="s1">body </span><span class="s2">= </span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;body&quot;</span><span class="s2">, </span><span class="s7">b&quot;&quot;</span><span class="s2">)</span>
+                <span class="s1">more_body </span><span class="s2">= </span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;more_body&quot;</span><span class="s2">, </span><span class="s0">False</span><span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">request</span><span class="s2">.</span><span class="s1">method </span><span class="s2">!= </span><span class="s5">&quot;HEAD&quot;</span><span class="s2">:</span>
+                    <span class="s1">raw_kwargs</span><span class="s2">[</span><span class="s5">&quot;stream&quot;</span><span class="s2">].</span><span class="s1">write</span><span class="s2">(</span><span class="s1">body</span><span class="s2">)</span>
+                <span class="s0">if not </span><span class="s1">more_body</span><span class="s2">:</span>
+                    <span class="s1">raw_kwargs</span><span class="s2">[</span><span class="s5">&quot;stream&quot;</span><span class="s2">].</span><span class="s1">seek</span><span class="s2">(</span><span class="s3">0</span><span class="s2">)</span>
+                    <span class="s1">response_complete</span><span class="s2">.</span><span class="s1">set</span><span class="s2">()</span>
+            <span class="s0">elif </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;type&quot;</span><span class="s2">] == </span><span class="s5">&quot;http.response.debug&quot;</span><span class="s2">:</span>
+                <span class="s1">template </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;info&quot;</span><span class="s2">][</span><span class="s5">&quot;template&quot;</span><span class="s2">]</span>
+                <span class="s1">context </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;info&quot;</span><span class="s2">][</span><span class="s5">&quot;context&quot;</span><span class="s2">]</span>
+
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">with </span><span class="s1">self</span><span class="s2">.</span><span class="s1">portal_factory</span><span class="s2">() </span><span class="s0">as </span><span class="s1">portal</span><span class="s2">:</span>
+                <span class="s1">response_complete </span><span class="s2">= </span><span class="s1">portal</span><span class="s2">.</span><span class="s1">call</span><span class="s2">(</span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">Event</span><span class="s2">)</span>
+                <span class="s1">portal</span><span class="s2">.</span><span class="s1">call</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">BaseException </span><span class="s0">as </span><span class="s1">exc</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">raise_server_exceptions</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">exc</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">raise_server_exceptions</span><span class="s2">:</span>
+            <span class="s0">assert </span><span class="s1">response_started</span><span class="s2">, </span><span class="s5">&quot;TestClient did not receive any response.&quot;</span>
+        <span class="s0">elif not </span><span class="s1">response_started</span><span class="s2">:</span>
+            <span class="s1">raw_kwargs </span><span class="s2">= {</span>
+                <span class="s5">&quot;status_code&quot;</span><span class="s2">: </span><span class="s3">500</span><span class="s2">,</span>
+                <span class="s5">&quot;headers&quot;</span><span class="s2">: [],</span>
+                <span class="s5">&quot;stream&quot;</span><span class="s2">: </span><span class="s1">io</span><span class="s2">.</span><span class="s1">BytesIO</span><span class="s2">(),</span>
+            <span class="s2">}</span>
+
+        <span class="s1">raw_kwargs</span><span class="s2">[</span><span class="s5">&quot;stream&quot;</span><span class="s2">] = </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">ByteStream</span><span class="s2">(</span><span class="s1">raw_kwargs</span><span class="s2">[</span><span class="s5">&quot;stream&quot;</span><span class="s2">].</span><span class="s1">read</span><span class="s2">())</span>
+
+        <span class="s1">response </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">Response</span><span class="s2">(**</span><span class="s1">raw_kwargs</span><span class="s2">, </span><span class="s1">request</span><span class="s2">=</span><span class="s1">request</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">template </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">response</span><span class="s2">.</span><span class="s1">template </span><span class="s2">= </span><span class="s1">template  </span><span class="s4"># type: ignore[attr-defined]</span>
+            <span class="s1">response</span><span class="s2">.</span><span class="s1">context </span><span class="s2">= </span><span class="s1">context  </span><span class="s4"># type: ignore[attr-defined]</span>
+        <span class="s0">return </span><span class="s1">response</span>
+
+
+<span class="s0">class </span><span class="s1">TestClient</span><span class="s2">(</span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">Client</span><span class="s2">):</span>
+    <span class="s1">__test__ </span><span class="s2">= </span><span class="s0">False</span>
+    <span class="s1">task</span><span class="s2">: </span><span class="s1">Future</span><span class="s2">[</span><span class="s0">None</span><span class="s2">]</span>
+    <span class="s1">portal</span><span class="s2">: </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">abc</span><span class="s2">.</span><span class="s1">BlockingPortal </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">app</span><span class="s2">: </span><span class="s1">ASGIApp</span><span class="s2">,</span>
+        <span class="s1">base_url</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s5">&quot;http://testserver&quot;</span><span class="s2">,</span>
+        <span class="s1">raise_server_exceptions</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">,</span>
+        <span class="s1">root_path</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s5">&quot;&quot;</span><span class="s2">,</span>
+        <span class="s1">backend</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Literal</span><span class="s2">[</span><span class="s5">&quot;asyncio&quot;</span><span class="s2">, </span><span class="s5">&quot;trio&quot;</span><span class="s2">] = </span><span class="s5">&quot;asyncio&quot;</span><span class="s2">,</span>
+        <span class="s1">backend_options</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">cookies</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">CookieTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">headers</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">follow_redirects</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">True</span><span class="s2">,</span>
+        <span class="s1">client</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">int</span><span class="s2">] = (</span><span class="s5">&quot;testclient&quot;</span><span class="s2">, </span><span class="s3">50000</span><span class="s2">),</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">async_backend </span><span class="s2">= </span><span class="s1">_AsyncBackend</span><span class="s2">(</span><span class="s1">backend</span><span class="s2">=</span><span class="s1">backend</span><span class="s2">, </span><span class="s1">backend_options</span><span class="s2">=</span><span class="s1">backend_options </span><span class="s0">or </span><span class="s2">{})</span>
+        <span class="s0">if </span><span class="s1">_is_asgi3</span><span class="s2">(</span><span class="s1">app</span><span class="s2">):</span>
+            <span class="s1">asgi_app </span><span class="s2">= </span><span class="s1">app</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">app </span><span class="s2">= </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">cast</span><span class="s2">(</span><span class="s1">ASGI2App</span><span class="s2">, </span><span class="s1">app</span><span class="s2">)  </span><span class="s4"># type: ignore[assignment]</span>
+            <span class="s1">asgi_app </span><span class="s2">= </span><span class="s1">_WrapASGI2</span><span class="s2">(</span><span class="s1">app</span><span class="s2">)  </span><span class="s4"># type: ignore[arg-type]</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app </span><span class="s2">= </span><span class="s1">asgi_app</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app_state</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] = {}</span>
+        <span class="s1">transport </span><span class="s2">= </span><span class="s1">_TestClientTransport</span><span class="s2">(</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">,</span>
+            <span class="s1">portal_factory</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_portal_factory</span><span class="s2">,</span>
+            <span class="s1">raise_server_exceptions</span><span class="s2">=</span><span class="s1">raise_server_exceptions</span><span class="s2">,</span>
+            <span class="s1">root_path</span><span class="s2">=</span><span class="s1">root_path</span><span class="s2">,</span>
+            <span class="s1">app_state</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">app_state</span><span class="s2">,</span>
+            <span class="s1">client</span><span class="s2">=</span><span class="s1">client</span><span class="s2">,</span>
+        <span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">headers </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">headers </span><span class="s2">= {}</span>
+        <span class="s1">headers</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s5">&quot;user-agent&quot;</span><span class="s2">, </span><span class="s5">&quot;testclient&quot;</span><span class="s2">)</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(</span>
+            <span class="s1">base_url</span><span class="s2">=</span><span class="s1">base_url</span><span class="s2">,</span>
+            <span class="s1">headers</span><span class="s2">=</span><span class="s1">headers</span><span class="s2">,</span>
+            <span class="s1">transport</span><span class="s2">=</span><span class="s1">transport</span><span class="s2">,</span>
+            <span class="s1">follow_redirects</span><span class="s2">=</span><span class="s1">follow_redirects</span><span class="s2">,</span>
+            <span class="s1">cookies</span><span class="s2">=</span><span class="s1">cookies</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">contextlib</span><span class="s2">.</span><span class="s1">contextmanager</span>
+    <span class="s0">def </span><span class="s1">_portal_factory</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Generator</span><span class="s2">[</span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">abc</span><span class="s2">.</span><span class="s1">BlockingPortal</span><span class="s2">, </span><span class="s0">None</span><span class="s2">, </span><span class="s0">None</span><span class="s2">]:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">portal </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">yield </span><span class="s1">self</span><span class="s2">.</span><span class="s1">portal</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">with </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">from_thread</span><span class="s2">.</span><span class="s1">start_blocking_portal</span><span class="s2">(**</span><span class="s1">self</span><span class="s2">.</span><span class="s1">async_backend</span><span class="s2">) </span><span class="s0">as </span><span class="s1">portal</span><span class="s2">:</span>
+                <span class="s0">yield </span><span class="s1">portal</span>
+
+    <span class="s0">def </span><span class="s1">request</span><span class="s2">(  </span><span class="s4"># type: ignore[override]</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">method</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">url</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">URLTypes</span><span class="s2">,</span>
+        <span class="s2">*,</span>
+        <span class="s1">content</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">RequestContent </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">data</span><span class="s2">: </span><span class="s1">_RequestData </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">files</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">RequestFiles </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">json</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">params</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">QueryParamTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">headers</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">HeaderTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">cookies</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">CookieTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">auth</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">AuthTypes </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">follow_redirects</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">timeout</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">TimeoutTypes </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">extensions</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; httpx</span><span class="s2">.</span><span class="s1">Response</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">timeout </span><span class="s0">is not </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">:</span>
+            <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+                <span class="s5">&quot;You should not use the 'timeout' argument with the TestClient. &quot;</span>
+                <span class="s5">&quot;See https://github.com/encode/starlette/issues/1108 for more information.&quot;</span><span class="s2">,</span>
+                <span class="s1">DeprecationWarning</span><span class="s2">,</span>
+            <span class="s2">)</span>
+        <span class="s1">url </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_merge_url</span><span class="s2">(</span><span class="s1">url</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">request</span><span class="s2">(</span>
+            <span class="s1">method</span><span class="s2">,</span>
+            <span class="s1">url</span><span class="s2">,</span>
+            <span class="s1">content</span><span class="s2">=</span><span class="s1">content</span><span class="s2">,</span>
+            <span class="s1">data</span><span class="s2">=</span><span class="s1">data</span><span class="s2">,</span>
+            <span class="s1">files</span><span class="s2">=</span><span class="s1">files</span><span class="s2">,</span>
+            <span class="s1">json</span><span class="s2">=</span><span class="s1">json</span><span class="s2">,</span>
+            <span class="s1">params</span><span class="s2">=</span><span class="s1">params</span><span class="s2">,</span>
+            <span class="s1">headers</span><span class="s2">=</span><span class="s1">headers</span><span class="s2">,</span>
+            <span class="s1">cookies</span><span class="s2">=</span><span class="s1">cookies</span><span class="s2">,</span>
+            <span class="s1">auth</span><span class="s2">=</span><span class="s1">auth</span><span class="s2">,</span>
+            <span class="s1">follow_redirects</span><span class="s2">=</span><span class="s1">follow_redirects</span><span class="s2">,</span>
+            <span class="s1">timeout</span><span class="s2">=</span><span class="s1">timeout</span><span class="s2">,</span>
+            <span class="s1">extensions</span><span class="s2">=</span><span class="s1">extensions</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">get</span><span class="s2">(  </span><span class="s4"># type: ignore[override]</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">url</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">URLTypes</span><span class="s2">,</span>
+        <span class="s2">*,</span>
+        <span class="s1">params</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">QueryParamTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">headers</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">HeaderTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">cookies</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">CookieTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">auth</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">AuthTypes </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">follow_redirects</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">timeout</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">TimeoutTypes </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">extensions</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; httpx</span><span class="s2">.</span><span class="s1">Response</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">get</span><span class="s2">(</span>
+            <span class="s1">url</span><span class="s2">,</span>
+            <span class="s1">params</span><span class="s2">=</span><span class="s1">params</span><span class="s2">,</span>
+            <span class="s1">headers</span><span class="s2">=</span><span class="s1">headers</span><span class="s2">,</span>
+            <span class="s1">cookies</span><span class="s2">=</span><span class="s1">cookies</span><span class="s2">,</span>
+            <span class="s1">auth</span><span class="s2">=</span><span class="s1">auth</span><span class="s2">,</span>
+            <span class="s1">follow_redirects</span><span class="s2">=</span><span class="s1">follow_redirects</span><span class="s2">,</span>
+            <span class="s1">timeout</span><span class="s2">=</span><span class="s1">timeout</span><span class="s2">,</span>
+            <span class="s1">extensions</span><span class="s2">=</span><span class="s1">extensions</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">options</span><span class="s2">(  </span><span class="s4"># type: ignore[override]</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">url</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">URLTypes</span><span class="s2">,</span>
+        <span class="s2">*,</span>
+        <span class="s1">params</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">QueryParamTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">headers</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">HeaderTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">cookies</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">CookieTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">auth</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">AuthTypes </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">follow_redirects</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">timeout</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">TimeoutTypes </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">extensions</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; httpx</span><span class="s2">.</span><span class="s1">Response</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">options</span><span class="s2">(</span>
+            <span class="s1">url</span><span class="s2">,</span>
+            <span class="s1">params</span><span class="s2">=</span><span class="s1">params</span><span class="s2">,</span>
+            <span class="s1">headers</span><span class="s2">=</span><span class="s1">headers</span><span class="s2">,</span>
+            <span class="s1">cookies</span><span class="s2">=</span><span class="s1">cookies</span><span class="s2">,</span>
+            <span class="s1">auth</span><span class="s2">=</span><span class="s1">auth</span><span class="s2">,</span>
+            <span class="s1">follow_redirects</span><span class="s2">=</span><span class="s1">follow_redirects</span><span class="s2">,</span>
+            <span class="s1">timeout</span><span class="s2">=</span><span class="s1">timeout</span><span class="s2">,</span>
+            <span class="s1">extensions</span><span class="s2">=</span><span class="s1">extensions</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">head</span><span class="s2">(  </span><span class="s4"># type: ignore[override]</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">url</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">URLTypes</span><span class="s2">,</span>
+        <span class="s2">*,</span>
+        <span class="s1">params</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">QueryParamTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">headers</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">HeaderTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">cookies</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">CookieTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">auth</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">AuthTypes </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">follow_redirects</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">timeout</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">TimeoutTypes </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">extensions</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; httpx</span><span class="s2">.</span><span class="s1">Response</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">head</span><span class="s2">(</span>
+            <span class="s1">url</span><span class="s2">,</span>
+            <span class="s1">params</span><span class="s2">=</span><span class="s1">params</span><span class="s2">,</span>
+            <span class="s1">headers</span><span class="s2">=</span><span class="s1">headers</span><span class="s2">,</span>
+            <span class="s1">cookies</span><span class="s2">=</span><span class="s1">cookies</span><span class="s2">,</span>
+            <span class="s1">auth</span><span class="s2">=</span><span class="s1">auth</span><span class="s2">,</span>
+            <span class="s1">follow_redirects</span><span class="s2">=</span><span class="s1">follow_redirects</span><span class="s2">,</span>
+            <span class="s1">timeout</span><span class="s2">=</span><span class="s1">timeout</span><span class="s2">,</span>
+            <span class="s1">extensions</span><span class="s2">=</span><span class="s1">extensions</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">post</span><span class="s2">(  </span><span class="s4"># type: ignore[override]</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">url</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">URLTypes</span><span class="s2">,</span>
+        <span class="s2">*,</span>
+        <span class="s1">content</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">RequestContent </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">data</span><span class="s2">: </span><span class="s1">_RequestData </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">files</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">RequestFiles </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">json</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">params</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">QueryParamTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">headers</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">HeaderTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">cookies</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">CookieTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">auth</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">AuthTypes </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">follow_redirects</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">timeout</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">TimeoutTypes </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">extensions</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; httpx</span><span class="s2">.</span><span class="s1">Response</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">post</span><span class="s2">(</span>
+            <span class="s1">url</span><span class="s2">,</span>
+            <span class="s1">content</span><span class="s2">=</span><span class="s1">content</span><span class="s2">,</span>
+            <span class="s1">data</span><span class="s2">=</span><span class="s1">data</span><span class="s2">,</span>
+            <span class="s1">files</span><span class="s2">=</span><span class="s1">files</span><span class="s2">,</span>
+            <span class="s1">json</span><span class="s2">=</span><span class="s1">json</span><span class="s2">,</span>
+            <span class="s1">params</span><span class="s2">=</span><span class="s1">params</span><span class="s2">,</span>
+            <span class="s1">headers</span><span class="s2">=</span><span class="s1">headers</span><span class="s2">,</span>
+            <span class="s1">cookies</span><span class="s2">=</span><span class="s1">cookies</span><span class="s2">,</span>
+            <span class="s1">auth</span><span class="s2">=</span><span class="s1">auth</span><span class="s2">,</span>
+            <span class="s1">follow_redirects</span><span class="s2">=</span><span class="s1">follow_redirects</span><span class="s2">,</span>
+            <span class="s1">timeout</span><span class="s2">=</span><span class="s1">timeout</span><span class="s2">,</span>
+            <span class="s1">extensions</span><span class="s2">=</span><span class="s1">extensions</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">put</span><span class="s2">(  </span><span class="s4"># type: ignore[override]</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">url</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">URLTypes</span><span class="s2">,</span>
+        <span class="s2">*,</span>
+        <span class="s1">content</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">RequestContent </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">data</span><span class="s2">: </span><span class="s1">_RequestData </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">files</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">RequestFiles </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">json</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">params</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">QueryParamTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">headers</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">HeaderTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">cookies</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">CookieTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">auth</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">AuthTypes </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">follow_redirects</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">timeout</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">TimeoutTypes </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">extensions</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; httpx</span><span class="s2">.</span><span class="s1">Response</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">put</span><span class="s2">(</span>
+            <span class="s1">url</span><span class="s2">,</span>
+            <span class="s1">content</span><span class="s2">=</span><span class="s1">content</span><span class="s2">,</span>
+            <span class="s1">data</span><span class="s2">=</span><span class="s1">data</span><span class="s2">,</span>
+            <span class="s1">files</span><span class="s2">=</span><span class="s1">files</span><span class="s2">,</span>
+            <span class="s1">json</span><span class="s2">=</span><span class="s1">json</span><span class="s2">,</span>
+            <span class="s1">params</span><span class="s2">=</span><span class="s1">params</span><span class="s2">,</span>
+            <span class="s1">headers</span><span class="s2">=</span><span class="s1">headers</span><span class="s2">,</span>
+            <span class="s1">cookies</span><span class="s2">=</span><span class="s1">cookies</span><span class="s2">,</span>
+            <span class="s1">auth</span><span class="s2">=</span><span class="s1">auth</span><span class="s2">,</span>
+            <span class="s1">follow_redirects</span><span class="s2">=</span><span class="s1">follow_redirects</span><span class="s2">,</span>
+            <span class="s1">timeout</span><span class="s2">=</span><span class="s1">timeout</span><span class="s2">,</span>
+            <span class="s1">extensions</span><span class="s2">=</span><span class="s1">extensions</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">patch</span><span class="s2">(  </span><span class="s4"># type: ignore[override]</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">url</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">URLTypes</span><span class="s2">,</span>
+        <span class="s2">*,</span>
+        <span class="s1">content</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">RequestContent </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">data</span><span class="s2">: </span><span class="s1">_RequestData </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">files</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">RequestFiles </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">json</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">params</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">QueryParamTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">headers</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">HeaderTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">cookies</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">CookieTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">auth</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">AuthTypes </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">follow_redirects</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">timeout</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">TimeoutTypes </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">extensions</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; httpx</span><span class="s2">.</span><span class="s1">Response</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">patch</span><span class="s2">(</span>
+            <span class="s1">url</span><span class="s2">,</span>
+            <span class="s1">content</span><span class="s2">=</span><span class="s1">content</span><span class="s2">,</span>
+            <span class="s1">data</span><span class="s2">=</span><span class="s1">data</span><span class="s2">,</span>
+            <span class="s1">files</span><span class="s2">=</span><span class="s1">files</span><span class="s2">,</span>
+            <span class="s1">json</span><span class="s2">=</span><span class="s1">json</span><span class="s2">,</span>
+            <span class="s1">params</span><span class="s2">=</span><span class="s1">params</span><span class="s2">,</span>
+            <span class="s1">headers</span><span class="s2">=</span><span class="s1">headers</span><span class="s2">,</span>
+            <span class="s1">cookies</span><span class="s2">=</span><span class="s1">cookies</span><span class="s2">,</span>
+            <span class="s1">auth</span><span class="s2">=</span><span class="s1">auth</span><span class="s2">,</span>
+            <span class="s1">follow_redirects</span><span class="s2">=</span><span class="s1">follow_redirects</span><span class="s2">,</span>
+            <span class="s1">timeout</span><span class="s2">=</span><span class="s1">timeout</span><span class="s2">,</span>
+            <span class="s1">extensions</span><span class="s2">=</span><span class="s1">extensions</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">delete</span><span class="s2">(  </span><span class="s4"># type: ignore[override]</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">url</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">URLTypes</span><span class="s2">,</span>
+        <span class="s2">*,</span>
+        <span class="s1">params</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">QueryParamTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">headers</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">HeaderTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">cookies</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">CookieTypes </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">auth</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">AuthTypes </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">follow_redirects</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">timeout</span><span class="s2">: </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_types</span><span class="s2">.</span><span class="s1">TimeoutTypes </span><span class="s2">| </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">UseClientDefault </span><span class="s2">= </span><span class="s1">httpx</span><span class="s2">.</span><span class="s1">_client</span><span class="s2">.</span><span class="s1">USE_CLIENT_DEFAULT</span><span class="s2">,</span>
+        <span class="s1">extensions</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; httpx</span><span class="s2">.</span><span class="s1">Response</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">delete</span><span class="s2">(</span>
+            <span class="s1">url</span><span class="s2">,</span>
+            <span class="s1">params</span><span class="s2">=</span><span class="s1">params</span><span class="s2">,</span>
+            <span class="s1">headers</span><span class="s2">=</span><span class="s1">headers</span><span class="s2">,</span>
+            <span class="s1">cookies</span><span class="s2">=</span><span class="s1">cookies</span><span class="s2">,</span>
+            <span class="s1">auth</span><span class="s2">=</span><span class="s1">auth</span><span class="s2">,</span>
+            <span class="s1">follow_redirects</span><span class="s2">=</span><span class="s1">follow_redirects</span><span class="s2">,</span>
+            <span class="s1">timeout</span><span class="s2">=</span><span class="s1">timeout</span><span class="s2">,</span>
+            <span class="s1">extensions</span><span class="s2">=</span><span class="s1">extensions</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">websocket_connect</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">url</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s1">subprotocols</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Sequence</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s2">**</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; WebSocketTestSession</span><span class="s2">:</span>
+        <span class="s1">url </span><span class="s2">= </span><span class="s1">urljoin</span><span class="s2">(</span><span class="s5">&quot;ws://testserver&quot;</span><span class="s2">, </span><span class="s1">url</span><span class="s2">)</span>
+        <span class="s1">headers </span><span class="s2">= </span><span class="s1">kwargs</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s5">&quot;headers&quot;</span><span class="s2">, {})</span>
+        <span class="s1">headers</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s5">&quot;connection&quot;</span><span class="s2">, </span><span class="s5">&quot;upgrade&quot;</span><span class="s2">)</span>
+        <span class="s1">headers</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s5">&quot;sec-websocket-key&quot;</span><span class="s2">, </span><span class="s5">&quot;testserver==&quot;</span><span class="s2">)</span>
+        <span class="s1">headers</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s5">&quot;sec-websocket-version&quot;</span><span class="s2">, </span><span class="s5">&quot;13&quot;</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">subprotocols </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">headers</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s5">&quot;sec-websocket-protocol&quot;</span><span class="s2">, </span><span class="s5">&quot;, &quot;</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">subprotocols</span><span class="s2">))</span>
+        <span class="s1">kwargs</span><span class="s2">[</span><span class="s5">&quot;headers&quot;</span><span class="s2">] = </span><span class="s1">headers</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s1">super</span><span class="s2">().</span><span class="s1">request</span><span class="s2">(</span><span class="s5">&quot;GET&quot;</span><span class="s2">, </span><span class="s1">url</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">_Upgrade </span><span class="s0">as </span><span class="s1">exc</span><span class="s2">:</span>
+            <span class="s1">session </span><span class="s2">= </span><span class="s1">exc</span><span class="s2">.</span><span class="s1">session</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s5">&quot;Expected WebSocket upgrade&quot;</span><span class="s2">)  </span><span class="s4"># pragma: no cover</span>
+
+        <span class="s0">return </span><span class="s1">session</span>
+
+    <span class="s0">def </span><span class="s1">__enter__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; TestClient</span><span class="s2">:</span>
+        <span class="s0">with </span><span class="s1">contextlib</span><span class="s2">.</span><span class="s1">ExitStack</span><span class="s2">() </span><span class="s0">as </span><span class="s1">stack</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">portal </span><span class="s2">= </span><span class="s1">portal </span><span class="s2">= </span><span class="s1">stack</span><span class="s2">.</span><span class="s1">enter_context</span><span class="s2">(</span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">from_thread</span><span class="s2">.</span><span class="s1">start_blocking_portal</span><span class="s2">(**</span><span class="s1">self</span><span class="s2">.</span><span class="s1">async_backend</span><span class="s2">))</span>
+
+            <span class="s2">@</span><span class="s1">stack</span><span class="s2">.</span><span class="s1">callback</span>
+            <span class="s0">def </span><span class="s1">reset_portal</span><span class="s2">() </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">portal </span><span class="s2">= </span><span class="s0">None</span>
+
+            <span class="s1">send</span><span class="s2">: </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">create_memory_object_stream</span><span class="s2">[</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">MutableMapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None</span><span class="s2">] = (</span>
+                <span class="s1">anyio</span><span class="s2">.</span><span class="s1">create_memory_object_stream</span><span class="s2">(</span><span class="s1">math</span><span class="s2">.</span><span class="s1">inf</span><span class="s2">)</span>
+            <span class="s2">)</span>
+            <span class="s1">receive</span><span class="s2">: </span><span class="s1">anyio</span><span class="s2">.</span><span class="s1">create_memory_object_stream</span><span class="s2">[</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">MutableMapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]] = (</span>
+                <span class="s1">anyio</span><span class="s2">.</span><span class="s1">create_memory_object_stream</span><span class="s2">(</span><span class="s1">math</span><span class="s2">.</span><span class="s1">inf</span><span class="s2">)</span>
+            <span class="s2">)</span>
+            <span class="s0">for </span><span class="s1">channel </span><span class="s0">in </span><span class="s2">(*</span><span class="s1">send</span><span class="s2">, *</span><span class="s1">receive</span><span class="s2">):</span>
+                <span class="s1">stack</span><span class="s2">.</span><span class="s1">callback</span><span class="s2">(</span><span class="s1">channel</span><span class="s2">.</span><span class="s1">close</span><span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">stream_send </span><span class="s2">= </span><span class="s1">StapledObjectStream</span><span class="s2">(*</span><span class="s1">send</span><span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">stream_receive </span><span class="s2">= </span><span class="s1">StapledObjectStream</span><span class="s2">(*</span><span class="s1">receive</span><span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">task </span><span class="s2">= </span><span class="s1">portal</span><span class="s2">.</span><span class="s1">start_task_soon</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">lifespan</span><span class="s2">)</span>
+            <span class="s1">portal</span><span class="s2">.</span><span class="s1">call</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">wait_startup</span><span class="s2">)</span>
+
+            <span class="s2">@</span><span class="s1">stack</span><span class="s2">.</span><span class="s1">callback</span>
+            <span class="s0">def </span><span class="s1">wait_shutdown</span><span class="s2">() </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+                <span class="s1">portal</span><span class="s2">.</span><span class="s1">call</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">wait_shutdown</span><span class="s2">)</span>
+
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">exit_stack </span><span class="s2">= </span><span class="s1">stack</span><span class="s2">.</span><span class="s1">pop_all</span><span class="s2">()</span>
+
+        <span class="s0">return </span><span class="s1">self</span>
+
+    <span class="s0">def </span><span class="s1">__exit__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">exit_stack</span><span class="s2">.</span><span class="s1">close</span><span class="s2">()</span>
+
+    <span class="s0">async def </span><span class="s1">lifespan</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">scope </span><span class="s2">= {</span><span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;lifespan&quot;</span><span class="s2">, </span><span class="s5">&quot;state&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app_state</span><span class="s2">}</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">stream_receive</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">stream_send</span><span class="s2">.</span><span class="s1">send</span><span class="s2">)</span>
+        <span class="s0">finally</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">stream_send</span><span class="s2">.</span><span class="s1">send</span><span class="s2">(</span><span class="s0">None</span><span class="s2">)</span>
+
+    <span class="s0">async def </span><span class="s1">wait_startup</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">stream_receive</span><span class="s2">.</span><span class="s1">send</span><span class="s2">({</span><span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;lifespan.startup&quot;</span><span class="s2">})</span>
+
+        <span class="s0">async def </span><span class="s1">receive</span><span class="s2">() </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">:</span>
+            <span class="s1">message </span><span class="s2">= </span><span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">stream_send</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">()</span>
+            <span class="s0">if </span><span class="s1">message </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">task</span><span class="s2">.</span><span class="s1">result</span><span class="s2">()</span>
+            <span class="s0">return </span><span class="s1">message</span>
+
+        <span class="s1">message </span><span class="s2">= </span><span class="s0">await </span><span class="s1">receive</span><span class="s2">()</span>
+        <span class="s0">assert </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;type&quot;</span><span class="s2">] </span><span class="s0">in </span><span class="s2">(</span>
+            <span class="s5">&quot;lifespan.startup.complete&quot;</span><span class="s2">,</span>
+            <span class="s5">&quot;lifespan.startup.failed&quot;</span><span class="s2">,</span>
+        <span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;type&quot;</span><span class="s2">] == </span><span class="s5">&quot;lifespan.startup.failed&quot;</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">receive</span><span class="s2">()</span>
+
+    <span class="s0">async def </span><span class="s1">wait_shutdown</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">async def </span><span class="s1">receive</span><span class="s2">() </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">:</span>
+            <span class="s1">message </span><span class="s2">= </span><span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">stream_send</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">()</span>
+            <span class="s0">if </span><span class="s1">message </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">task</span><span class="s2">.</span><span class="s1">result</span><span class="s2">()</span>
+            <span class="s0">return </span><span class="s1">message</span>
+
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">stream_receive</span><span class="s2">.</span><span class="s1">send</span><span class="s2">({</span><span class="s5">&quot;type&quot;</span><span class="s2">: </span><span class="s5">&quot;lifespan.shutdown&quot;</span><span class="s2">})</span>
+        <span class="s1">message </span><span class="s2">= </span><span class="s0">await </span><span class="s1">receive</span><span class="s2">()</span>
+        <span class="s0">assert </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;type&quot;</span><span class="s2">] </span><span class="s0">in </span><span class="s2">(</span>
+            <span class="s5">&quot;lifespan.shutdown.complete&quot;</span><span class="s2">,</span>
+            <span class="s5">&quot;lifespan.shutdown.failed&quot;</span><span class="s2">,</span>
+        <span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">message</span><span class="s2">[</span><span class="s5">&quot;type&quot;</span><span class="s2">] == </span><span class="s5">&quot;lifespan.shutdown.failed&quot;</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">receive</span><span class="s2">()</span>
+</pre>
+</body>
+</html>

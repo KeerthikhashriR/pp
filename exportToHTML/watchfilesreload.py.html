@@ -1,0 +1,110 @@
+<html>
+<head>
+<title>watchfilesreload.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+watchfilesreload.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">from </span><span class="s1">pathlib </span><span class="s0">import </span><span class="s1">Path</span>
+<span class="s0">from </span><span class="s1">socket </span><span class="s0">import </span><span class="s1">socket</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Callable</span>
+
+<span class="s0">from </span><span class="s1">watchfiles </span><span class="s0">import </span><span class="s1">watch</span>
+
+<span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">config </span><span class="s0">import </span><span class="s1">Config</span>
+<span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">supervisors</span><span class="s2">.</span><span class="s1">basereload </span><span class="s0">import </span><span class="s1">BaseReload</span>
+
+
+<span class="s0">class </span><span class="s1">FileFilter</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">config</span><span class="s2">: </span><span class="s1">Config</span><span class="s2">):</span>
+        <span class="s1">default_includes </span><span class="s2">= [</span><span class="s3">&quot;*.py&quot;</span><span class="s2">]</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">includes </span><span class="s2">= [</span><span class="s1">default </span><span class="s0">for </span><span class="s1">default </span><span class="s0">in </span><span class="s1">default_includes </span><span class="s0">if </span><span class="s1">default </span><span class="s0">not in </span><span class="s1">config</span><span class="s2">.</span><span class="s1">reload_excludes</span><span class="s2">]</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">includes</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">(</span><span class="s1">config</span><span class="s2">.</span><span class="s1">reload_includes</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">includes </span><span class="s2">= </span><span class="s1">list</span><span class="s2">(</span><span class="s1">set</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">includes</span><span class="s2">))</span>
+
+        <span class="s1">default_excludes </span><span class="s2">= [</span><span class="s3">&quot;.*&quot;</span><span class="s2">, </span><span class="s3">&quot;.py[cod]&quot;</span><span class="s2">, </span><span class="s3">&quot;.sw.*&quot;</span><span class="s2">, </span><span class="s3">&quot;~*&quot;</span><span class="s2">]</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">excludes </span><span class="s2">= [</span><span class="s1">default </span><span class="s0">for </span><span class="s1">default </span><span class="s0">in </span><span class="s1">default_excludes </span><span class="s0">if </span><span class="s1">default </span><span class="s0">not in </span><span class="s1">config</span><span class="s2">.</span><span class="s1">reload_includes</span><span class="s2">]</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">exclude_dirs </span><span class="s2">= []</span>
+        <span class="s0">for </span><span class="s1">e </span><span class="s0">in </span><span class="s1">config</span><span class="s2">.</span><span class="s1">reload_excludes</span><span class="s2">:</span>
+            <span class="s1">p </span><span class="s2">= </span><span class="s1">Path</span><span class="s2">(</span><span class="s1">e</span><span class="s2">)</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">is_dir </span><span class="s2">= </span><span class="s1">p</span><span class="s2">.</span><span class="s1">is_dir</span><span class="s2">()</span>
+            <span class="s0">except </span><span class="s1">OSError</span><span class="s2">:  </span><span class="s4"># pragma: no cover</span>
+                <span class="s4"># gets raised on Windows for values like &quot;*.py&quot;</span>
+                <span class="s1">is_dir </span><span class="s2">= </span><span class="s0">False</span>
+
+            <span class="s0">if </span><span class="s1">is_dir</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">exclude_dirs</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">p</span><span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">excludes</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">e</span><span class="s2">)  </span><span class="s4"># pragma: full coverage</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">excludes </span><span class="s2">= </span><span class="s1">list</span><span class="s2">(</span><span class="s1">set</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">excludes</span><span class="s2">))</span>
+
+    <span class="s0">def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">path</span><span class="s2">: </span><span class="s1">Path</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s0">for </span><span class="s1">include_pattern </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">includes</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">path</span><span class="s2">.</span><span class="s1">match</span><span class="s2">(</span><span class="s1">include_pattern</span><span class="s2">):</span>
+                <span class="s0">if </span><span class="s1">str</span><span class="s2">(</span><span class="s1">path</span><span class="s2">).</span><span class="s1">endswith</span><span class="s2">(</span><span class="s1">include_pattern</span><span class="s2">):</span>
+                    <span class="s0">return True  </span><span class="s4"># pragma: full coverage</span>
+
+                <span class="s0">for </span><span class="s1">exclude_dir </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">exclude_dirs</span><span class="s2">:</span>
+                    <span class="s0">if </span><span class="s1">exclude_dir </span><span class="s0">in </span><span class="s1">path</span><span class="s2">.</span><span class="s1">parents</span><span class="s2">:</span>
+                        <span class="s0">return False</span>
+
+                <span class="s0">for </span><span class="s1">exclude_pattern </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">excludes</span><span class="s2">:</span>
+                    <span class="s0">if </span><span class="s1">path</span><span class="s2">.</span><span class="s1">match</span><span class="s2">(</span><span class="s1">exclude_pattern</span><span class="s2">):</span>
+                        <span class="s0">return False  </span><span class="s4"># pragma: full coverage</span>
+
+                <span class="s0">return True</span>
+        <span class="s0">return False</span>
+
+
+<span class="s0">class </span><span class="s1">WatchFilesReload</span><span class="s2">(</span><span class="s1">BaseReload</span><span class="s2">):</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">config</span><span class="s2">: </span><span class="s1">Config</span><span class="s2">,</span>
+        <span class="s1">target</span><span class="s2">: </span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">list</span><span class="s2">[</span><span class="s1">socket</span><span class="s2">] | </span><span class="s0">None</span><span class="s2">], </span><span class="s0">None</span><span class="s2">],</span>
+        <span class="s1">sockets</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">socket</span><span class="s2">],</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">config</span><span class="s2">, </span><span class="s1">target</span><span class="s2">, </span><span class="s1">sockets</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">reloader_name </span><span class="s2">= </span><span class="s3">&quot;WatchFiles&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">reload_dirs </span><span class="s2">= []</span>
+        <span class="s0">for </span><span class="s1">directory </span><span class="s0">in </span><span class="s1">config</span><span class="s2">.</span><span class="s1">reload_dirs</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">Path</span><span class="s2">.</span><span class="s1">cwd</span><span class="s2">() </span><span class="s0">not in </span><span class="s1">directory</span><span class="s2">.</span><span class="s1">parents</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">reload_dirs</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">directory</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">Path</span><span class="s2">.</span><span class="s1">cwd</span><span class="s2">() </span><span class="s0">not in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">reload_dirs</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">reload_dirs</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">Path</span><span class="s2">.</span><span class="s1">cwd</span><span class="s2">())</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">watch_filter </span><span class="s2">= </span><span class="s1">FileFilter</span><span class="s2">(</span><span class="s1">config</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">watcher </span><span class="s2">= </span><span class="s1">watch</span><span class="s2">(</span>
+            <span class="s2">*</span><span class="s1">self</span><span class="s2">.</span><span class="s1">reload_dirs</span><span class="s2">,</span>
+            <span class="s1">watch_filter</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+            <span class="s1">stop_event</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">should_exit</span><span class="s2">,</span>
+            <span class="s4"># using yield_on_timeout here mostly to make sure tests don't</span>
+            <span class="s4"># hang forever, won't affect the class's behavior</span>
+            <span class="s1">yield_on_timeout</span><span class="s2">=</span><span class="s0">True</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">should_restart</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">Path</span><span class="s2">] | </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">pause</span><span class="s2">()</span>
+
+        <span class="s1">changes </span><span class="s2">= </span><span class="s1">next</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">watcher</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">changes</span><span class="s2">:</span>
+            <span class="s1">unique_paths </span><span class="s2">= {</span><span class="s1">Path</span><span class="s2">(</span><span class="s1">c</span><span class="s2">[</span><span class="s5">1</span><span class="s2">]) </span><span class="s0">for </span><span class="s1">c </span><span class="s0">in </span><span class="s1">changes</span><span class="s2">}</span>
+            <span class="s0">return </span><span class="s2">[</span><span class="s1">p </span><span class="s0">for </span><span class="s1">p </span><span class="s0">in </span><span class="s1">unique_paths </span><span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">watch_filter</span><span class="s2">(</span><span class="s1">p</span><span class="s2">)]</span>
+        <span class="s0">return None</span>
+</pre>
+</body>
+</html>

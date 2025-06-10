@@ -1,0 +1,498 @@
+<html>
+<head>
+<title>EpsImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #2aacb8;}
+.s6 { color: #5f826b; font-style: italic;}
+.s7 { color: #a5c261;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+EpsImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># EPS file handling</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1995-09-01 fl   Created (0.1)</span>
+<span class="s0"># 1996-05-18 fl   Don't choke on &quot;atend&quot; fields, Ghostscript interface (0.2)</span>
+<span class="s0"># 1996-08-22 fl   Don't choke on floating point BoundingBox values</span>
+<span class="s0"># 1996-08-23 fl   Handle files from Macintosh (0.3)</span>
+<span class="s0"># 2001-02-17 fl   Use 're' instead of 'regex' (Python 2.1) (0.4)</span>
+<span class="s0"># 2003-09-07 fl   Check gs.close status (from Federico Di Gregorio) (0.5)</span>
+<span class="s0"># 2014-05-07 e    Handling of EPS with binary preview and fixed resolution</span>
+<span class="s0">#                 resizing</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) 1997-2003 by Secret Labs AB.</span>
+<span class="s0"># Copyright (c) 1995-2003 by Fredrik Lundh</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">io</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">import </span><span class="s1">subprocess</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">import </span><span class="s1">tempfile</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">IO</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">ImageFile</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">i32le </span><span class="s2">as </span><span class="s1">i32</span>
+
+<span class="s0"># --------------------------------------------------------------------</span>
+
+
+<span class="s1">split </span><span class="s3">= </span><span class="s1">re</span><span class="s3">.</span><span class="s1">compile</span><span class="s3">(</span><span class="s4">r&quot;^%%([^:]*):[ \t]*(.*)[ \t]*$&quot;</span><span class="s3">)</span>
+<span class="s1">field </span><span class="s3">= </span><span class="s1">re</span><span class="s3">.</span><span class="s1">compile</span><span class="s3">(</span><span class="s4">r&quot;^%[%!\w]([^:]*)[ \t]*$&quot;</span><span class="s3">)</span>
+
+<span class="s1">gs_binary</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bool </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+<span class="s1">gs_windows_binary </span><span class="s3">= </span><span class="s2">None</span>
+
+
+<span class="s2">def </span><span class="s1">has_ghostscript</span><span class="s3">() </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s2">global </span><span class="s1">gs_binary</span><span class="s3">, </span><span class="s1">gs_windows_binary</span>
+    <span class="s2">if </span><span class="s1">gs_binary </span><span class="s2">is None</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">platform</span><span class="s3">.</span><span class="s1">startswith</span><span class="s3">(</span><span class="s4">&quot;win&quot;</span><span class="s3">):</span>
+            <span class="s2">if </span><span class="s1">gs_windows_binary </span><span class="s2">is None</span><span class="s3">:</span>
+                <span class="s2">import </span><span class="s1">shutil</span>
+
+                <span class="s2">for </span><span class="s1">binary </span><span class="s2">in </span><span class="s3">(</span><span class="s4">&quot;gswin32c&quot;</span><span class="s3">, </span><span class="s4">&quot;gswin64c&quot;</span><span class="s3">, </span><span class="s4">&quot;gs&quot;</span><span class="s3">):</span>
+                    <span class="s2">if </span><span class="s1">shutil</span><span class="s3">.</span><span class="s1">which</span><span class="s3">(</span><span class="s1">binary</span><span class="s3">) </span><span class="s2">is not None</span><span class="s3">:</span>
+                        <span class="s1">gs_windows_binary </span><span class="s3">= </span><span class="s1">binary</span>
+                        <span class="s2">break</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">gs_windows_binary </span><span class="s3">= </span><span class="s2">False</span>
+            <span class="s1">gs_binary </span><span class="s3">= </span><span class="s1">gs_windows_binary</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">subprocess</span><span class="s3">.</span><span class="s1">check_call</span><span class="s3">([</span><span class="s4">&quot;gs&quot;</span><span class="s3">, </span><span class="s4">&quot;--version&quot;</span><span class="s3">], </span><span class="s1">stdout</span><span class="s3">=</span><span class="s1">subprocess</span><span class="s3">.</span><span class="s1">DEVNULL</span><span class="s3">)</span>
+                <span class="s1">gs_binary </span><span class="s3">= </span><span class="s4">&quot;gs&quot;</span>
+            <span class="s2">except </span><span class="s1">OSError</span><span class="s3">:</span>
+                <span class="s1">gs_binary </span><span class="s3">= </span><span class="s2">False</span>
+    <span class="s2">return </span><span class="s1">gs_binary </span><span class="s2">is not False</span>
+
+
+<span class="s2">def </span><span class="s1">Ghostscript</span><span class="s3">(</span>
+    <span class="s1">tile</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">],</span>
+    <span class="s1">size</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">],</span>
+    <span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">],</span>
+    <span class="s1">scale</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s5">1</span><span class="s3">,</span>
+    <span class="s1">transparency</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">.</span><span class="s1">ImagingCore</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot;Render an image using Ghostscript&quot;&quot;&quot;</span>
+    <span class="s2">global </span><span class="s1">gs_binary</span>
+    <span class="s2">if not </span><span class="s1">has_ghostscript</span><span class="s3">():</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;Unable to locate Ghostscript on paths&quot;</span>
+        <span class="s2">raise </span><span class="s1">OSError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+    <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">gs_binary</span><span class="s3">, </span><span class="s1">str</span><span class="s3">)</span>
+
+    <span class="s0"># Unpack decoder tile</span>
+    <span class="s1">args </span><span class="s3">= </span><span class="s1">tile</span><span class="s3">[</span><span class="s5">0</span><span class="s3">].</span><span class="s1">args</span>
+    <span class="s2">assert </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">args</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">)</span>
+    <span class="s1">length</span><span class="s3">, </span><span class="s1">bbox </span><span class="s3">= </span><span class="s1">args</span>
+
+    <span class="s0"># Hack to support hi-res rendering</span>
+    <span class="s1">scale </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">scale</span><span class="s3">) </span><span class="s2">or </span><span class="s5">1</span>
+    <span class="s1">width </span><span class="s3">= </span><span class="s1">size</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] * </span><span class="s1">scale</span>
+    <span class="s1">height </span><span class="s3">= </span><span class="s1">size</span><span class="s3">[</span><span class="s5">1</span><span class="s3">] * </span><span class="s1">scale</span>
+    <span class="s0"># resolution is dependent on bbox and size</span>
+    <span class="s1">res_x </span><span class="s3">= </span><span class="s5">72.0 </span><span class="s3">* </span><span class="s1">width </span><span class="s3">/ (</span><span class="s1">bbox</span><span class="s3">[</span><span class="s5">2</span><span class="s3">] - </span><span class="s1">bbox</span><span class="s3">[</span><span class="s5">0</span><span class="s3">])</span>
+    <span class="s1">res_y </span><span class="s3">= </span><span class="s5">72.0 </span><span class="s3">* </span><span class="s1">height </span><span class="s3">/ (</span><span class="s1">bbox</span><span class="s3">[</span><span class="s5">3</span><span class="s3">] - </span><span class="s1">bbox</span><span class="s3">[</span><span class="s5">1</span><span class="s3">])</span>
+
+    <span class="s1">out_fd</span><span class="s3">, </span><span class="s1">outfile </span><span class="s3">= </span><span class="s1">tempfile</span><span class="s3">.</span><span class="s1">mkstemp</span><span class="s3">()</span>
+    <span class="s1">os</span><span class="s3">.</span><span class="s1">close</span><span class="s3">(</span><span class="s1">out_fd</span><span class="s3">)</span>
+
+    <span class="s1">infile_temp </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">fp</span><span class="s3">, </span><span class="s4">&quot;name&quot;</span><span class="s3">) </span><span class="s2">and </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">exists</span><span class="s3">(</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">name</span><span class="s3">):</span>
+        <span class="s1">infile </span><span class="s3">= </span><span class="s1">fp</span><span class="s3">.</span><span class="s1">name</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">in_fd</span><span class="s3">, </span><span class="s1">infile_temp </span><span class="s3">= </span><span class="s1">tempfile</span><span class="s3">.</span><span class="s1">mkstemp</span><span class="s3">()</span>
+        <span class="s1">os</span><span class="s3">.</span><span class="s1">close</span><span class="s3">(</span><span class="s1">in_fd</span><span class="s3">)</span>
+        <span class="s1">infile </span><span class="s3">= </span><span class="s1">infile_temp</span>
+
+        <span class="s0"># Ignore length and offset!</span>
+        <span class="s0"># Ghostscript can read it</span>
+        <span class="s0"># Copy whole file to read in Ghostscript</span>
+        <span class="s2">with </span><span class="s1">open</span><span class="s3">(</span><span class="s1">infile_temp</span><span class="s3">, </span><span class="s4">&quot;wb&quot;</span><span class="s3">) </span><span class="s2">as </span><span class="s1">f</span><span class="s3">:</span>
+            <span class="s0"># fetch length of fp</span>
+            <span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s5">0</span><span class="s3">, </span><span class="s1">io</span><span class="s3">.</span><span class="s1">SEEK_END</span><span class="s3">)</span>
+            <span class="s1">fsize </span><span class="s3">= </span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">()</span>
+            <span class="s0"># ensure start position</span>
+            <span class="s0"># go back</span>
+            <span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s5">0</span><span class="s3">)</span>
+            <span class="s1">lengthfile </span><span class="s3">= </span><span class="s1">fsize</span>
+            <span class="s2">while </span><span class="s1">lengthfile </span><span class="s3">&gt; </span><span class="s5">0</span><span class="s3">:</span>
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s1">min</span><span class="s3">(</span><span class="s1">lengthfile</span><span class="s3">, </span><span class="s5">100 </span><span class="s3">* </span><span class="s5">1024</span><span class="s3">))</span>
+                <span class="s2">if not </span><span class="s1">s</span><span class="s3">:</span>
+                    <span class="s2">break</span>
+                <span class="s1">lengthfile </span><span class="s3">-= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+                <span class="s1">f</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">transparency</span><span class="s3">:</span>
+        <span class="s0"># &quot;RGBA&quot;</span>
+        <span class="s1">device </span><span class="s3">= </span><span class="s4">&quot;pngalpha&quot;</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s0"># &quot;pnmraw&quot; automatically chooses between</span>
+        <span class="s0"># PBM (&quot;1&quot;), PGM (&quot;L&quot;), and PPM (&quot;RGB&quot;).</span>
+        <span class="s1">device </span><span class="s3">= </span><span class="s4">&quot;pnmraw&quot;</span>
+
+    <span class="s0"># Build Ghostscript command</span>
+    <span class="s1">command </span><span class="s3">= [</span>
+        <span class="s1">gs_binary</span><span class="s3">,</span>
+        <span class="s4">&quot;-q&quot;</span><span class="s3">,  </span><span class="s0"># quiet mode</span>
+        <span class="s4">f&quot;-g</span><span class="s2">{</span><span class="s1">width</span><span class="s2">:</span><span class="s4">d</span><span class="s2">}</span><span class="s4">x</span><span class="s2">{</span><span class="s1">height</span><span class="s2">:</span><span class="s4">d</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s3">,  </span><span class="s0"># set output geometry (pixels)</span>
+        <span class="s4">f&quot;-r</span><span class="s2">{</span><span class="s1">res_x</span><span class="s2">:</span><span class="s4">f</span><span class="s2">}</span><span class="s4">x</span><span class="s2">{</span><span class="s1">res_y</span><span class="s2">:</span><span class="s4">f</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s3">,  </span><span class="s0"># set input DPI (dots per inch)</span>
+        <span class="s4">&quot;-dBATCH&quot;</span><span class="s3">,  </span><span class="s0"># exit after processing</span>
+        <span class="s4">&quot;-dNOPAUSE&quot;</span><span class="s3">,  </span><span class="s0"># don't pause between pages</span>
+        <span class="s4">&quot;-dSAFER&quot;</span><span class="s3">,  </span><span class="s0"># safe mode</span>
+        <span class="s4">f&quot;-sDEVICE=</span><span class="s2">{</span><span class="s1">device</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s3">,</span>
+        <span class="s4">f&quot;-sOutputFile=</span><span class="s2">{</span><span class="s1">outfile</span><span class="s2">}</span><span class="s4">&quot;</span><span class="s3">,  </span><span class="s0"># output file</span>
+        <span class="s0"># adjust for image origin</span>
+        <span class="s4">&quot;-c&quot;</span><span class="s3">,</span>
+        <span class="s4">f&quot;</span><span class="s2">{</span><span class="s3">-</span><span class="s1">bbox</span><span class="s3">[</span><span class="s5">0</span><span class="s3">]</span><span class="s2">} {</span><span class="s3">-</span><span class="s1">bbox</span><span class="s3">[</span><span class="s5">1</span><span class="s3">]</span><span class="s2">} </span><span class="s4">translate&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;-f&quot;</span><span class="s3">,</span>
+        <span class="s1">infile</span><span class="s3">,  </span><span class="s0"># input file</span>
+        <span class="s0"># showpage (see https://bugs.ghostscript.com/show_bug.cgi?id=698272)</span>
+        <span class="s4">&quot;-c&quot;</span><span class="s3">,</span>
+        <span class="s4">&quot;showpage&quot;</span><span class="s3">,</span>
+    <span class="s3">]</span>
+
+    <span class="s0"># push data through Ghostscript</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">startupinfo </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s2">if </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">platform</span><span class="s3">.</span><span class="s1">startswith</span><span class="s3">(</span><span class="s4">&quot;win&quot;</span><span class="s3">):</span>
+            <span class="s1">startupinfo </span><span class="s3">= </span><span class="s1">subprocess</span><span class="s3">.</span><span class="s1">STARTUPINFO</span><span class="s3">()</span>
+            <span class="s1">startupinfo</span><span class="s3">.</span><span class="s1">dwFlags </span><span class="s3">|= </span><span class="s1">subprocess</span><span class="s3">.</span><span class="s1">STARTF_USESHOWWINDOW</span>
+        <span class="s1">subprocess</span><span class="s3">.</span><span class="s1">check_call</span><span class="s3">(</span><span class="s1">command</span><span class="s3">, </span><span class="s1">startupinfo</span><span class="s3">=</span><span class="s1">startupinfo</span><span class="s3">)</span>
+        <span class="s2">with </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">open</span><span class="s3">(</span><span class="s1">outfile</span><span class="s3">) </span><span class="s2">as </span><span class="s1">out_im</span><span class="s3">:</span>
+            <span class="s1">out_im</span><span class="s3">.</span><span class="s1">load</span><span class="s3">()</span>
+            <span class="s2">return </span><span class="s1">out_im</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">copy</span><span class="s3">()</span>
+    <span class="s2">finally</span><span class="s3">:</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">os</span><span class="s3">.</span><span class="s1">unlink</span><span class="s3">(</span><span class="s1">outfile</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">infile_temp</span><span class="s3">:</span>
+                <span class="s1">os</span><span class="s3">.</span><span class="s1">unlink</span><span class="s3">(</span><span class="s1">infile_temp</span><span class="s3">)</span>
+        <span class="s2">except </span><span class="s1">OSError</span><span class="s3">:</span>
+            <span class="s2">pass</span>
+
+
+<span class="s2">def </span><span class="s1">_accept</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">: </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s2">return </span><span class="s1">prefix</span><span class="s3">[:</span><span class="s5">4</span><span class="s3">] == </span><span class="s7">b&quot;%!PS&quot; </span><span class="s2">or </span><span class="s3">(</span><span class="s1">len</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">) &gt;= </span><span class="s5">4 </span><span class="s2">and </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">) == </span><span class="s5">0xC6D3D0C5</span><span class="s3">)</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for Encapsulated PostScript. This plugin supports only</span>
+<span class="s0"># a few variants of this format.</span>
+
+
+<span class="s2">class </span><span class="s1">EpsImageFile</span><span class="s3">(</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">ImageFile</span><span class="s3">):</span>
+    <span class="s6">&quot;&quot;&quot;EPS File Parser for the Python Imaging Library&quot;&quot;&quot;</span>
+
+    <span class="s1">format </span><span class="s3">= </span><span class="s4">&quot;EPS&quot;</span>
+    <span class="s1">format_description </span><span class="s3">= </span><span class="s4">&quot;Encapsulated Postscript&quot;</span>
+
+    <span class="s1">mode_map </span><span class="s3">= {</span><span class="s5">1</span><span class="s3">: </span><span class="s4">&quot;L&quot;</span><span class="s3">, </span><span class="s5">2</span><span class="s3">: </span><span class="s4">&quot;LAB&quot;</span><span class="s3">, </span><span class="s5">3</span><span class="s3">: </span><span class="s4">&quot;RGB&quot;</span><span class="s3">, </span><span class="s5">4</span><span class="s3">: </span><span class="s4">&quot;CMYK&quot;</span><span class="s3">}</span>
+
+    <span class="s2">def </span><span class="s1">_open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s3">(</span><span class="s1">length</span><span class="s3">, </span><span class="s1">offset</span><span class="s3">) = </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_find_offset</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">)</span>
+
+        <span class="s0"># go to offset - start of &quot;%!PS&quot;</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s1">offset</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s4">&quot;RGB&quot;</span>
+
+        <span class="s0"># When reading header comments, the first comment is used.</span>
+        <span class="s0"># When reading trailer comments, the last comment is used.</span>
+        <span class="s1">bounding_box</span><span class="s3">: </span><span class="s1">list</span><span class="s3">[</span><span class="s1">int</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+        <span class="s1">imagedata_size</span><span class="s3">: </span><span class="s1">tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">] | </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+
+        <span class="s1">byte_arr </span><span class="s3">= </span><span class="s1">bytearray</span><span class="s3">(</span><span class="s5">255</span><span class="s3">)</span>
+        <span class="s1">bytes_mv </span><span class="s3">= </span><span class="s1">memoryview</span><span class="s3">(</span><span class="s1">byte_arr</span><span class="s3">)</span>
+        <span class="s1">bytes_read </span><span class="s3">= </span><span class="s5">0</span>
+        <span class="s1">reading_header_comments </span><span class="s3">= </span><span class="s2">True</span>
+        <span class="s1">reading_trailer_comments </span><span class="s3">= </span><span class="s2">False</span>
+        <span class="s1">trailer_reached </span><span class="s3">= </span><span class="s2">False</span>
+
+        <span class="s2">def </span><span class="s1">check_required_header_comments</span><span class="s3">() </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+            <span class="s6">&quot;&quot;&quot; 
+            The EPS specification requires that some headers exist. 
+            This should be checked when the header comments formally end, 
+            when image data starts, or when the file ends, whichever comes first. 
+            &quot;&quot;&quot;</span>
+            <span class="s2">if </span><span class="s4">&quot;PS-Adobe&quot; </span><span class="s2">not in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s4">'EPS header missing &quot;%!PS-Adobe&quot; comment'</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s4">&quot;BoundingBox&quot; </span><span class="s2">not in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s4">'EPS header missing &quot;%%BoundingBox&quot; comment'</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s2">def </span><span class="s1">read_comment</span><span class="s3">(</span><span class="s1">s</span><span class="s3">: </span><span class="s1">str</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+            <span class="s2">nonlocal </span><span class="s1">bounding_box</span><span class="s3">, </span><span class="s1">reading_trailer_comments</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">m </span><span class="s3">= </span><span class="s1">split</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">re</span><span class="s3">.</span><span class="s1">error </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;not an EPS file&quot;</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">) </span><span class="s2">from </span><span class="s1">e</span>
+
+            <span class="s2">if not </span><span class="s1">m</span><span class="s3">:</span>
+                <span class="s2">return False</span>
+
+            <span class="s1">k</span><span class="s3">, </span><span class="s1">v </span><span class="s3">= </span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">1</span><span class="s3">, </span><span class="s5">2</span><span class="s3">)</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s1">k</span><span class="s3">] = </span><span class="s1">v</span>
+            <span class="s2">if </span><span class="s1">k </span><span class="s3">== </span><span class="s4">&quot;BoundingBox&quot;</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s1">v </span><span class="s3">== </span><span class="s4">&quot;(atend)&quot;</span><span class="s3">:</span>
+                    <span class="s1">reading_trailer_comments </span><span class="s3">= </span><span class="s2">True</span>
+                <span class="s2">elif not </span><span class="s1">bounding_box </span><span class="s2">or </span><span class="s3">(</span><span class="s1">trailer_reached </span><span class="s2">and </span><span class="s1">reading_trailer_comments</span><span class="s3">):</span>
+                    <span class="s2">try</span><span class="s3">:</span>
+                        <span class="s0"># Note: The DSC spec says that BoundingBox</span>
+                        <span class="s0"># fields should be integers, but some drivers</span>
+                        <span class="s0"># put floating point values there anyway.</span>
+                        <span class="s1">bounding_box </span><span class="s3">= [</span><span class="s1">int</span><span class="s3">(</span><span class="s1">float</span><span class="s3">(</span><span class="s1">i</span><span class="s3">)) </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">v</span><span class="s3">.</span><span class="s1">split</span><span class="s3">()]</span>
+                    <span class="s2">except </span><span class="s1">Exception</span><span class="s3">:</span>
+                        <span class="s2">pass</span>
+            <span class="s2">return True</span>
+
+        <span class="s2">while True</span><span class="s3">:</span>
+            <span class="s1">byte </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">1</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">byte </span><span class="s3">== </span><span class="s7">b&quot;&quot;</span><span class="s3">:</span>
+                <span class="s0"># if we didn't read a byte we must be at the end of the file</span>
+                <span class="s2">if </span><span class="s1">bytes_read </span><span class="s3">== </span><span class="s5">0</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s1">reading_header_comments</span><span class="s3">:</span>
+                        <span class="s1">check_required_header_comments</span><span class="s3">()</span>
+                    <span class="s2">break</span>
+            <span class="s2">elif </span><span class="s1">byte </span><span class="s2">in </span><span class="s7">b&quot;</span><span class="s2">\r\n</span><span class="s7">&quot;</span><span class="s3">:</span>
+                <span class="s0"># if we read a line ending character, ignore it and parse what</span>
+                <span class="s0"># we have already read. if we haven't read any other characters,</span>
+                <span class="s0"># continue reading</span>
+                <span class="s2">if </span><span class="s1">bytes_read </span><span class="s3">== </span><span class="s5">0</span><span class="s3">:</span>
+                    <span class="s2">continue</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s0"># ASCII/hexadecimal lines in an EPS file must not exceed</span>
+                <span class="s0"># 255 characters, not including line ending characters</span>
+                <span class="s2">if </span><span class="s1">bytes_read </span><span class="s3">&gt;= </span><span class="s5">255</span><span class="s3">:</span>
+                    <span class="s0"># only enforce this for lines starting with a &quot;%&quot;,</span>
+                    <span class="s0"># otherwise assume it's binary data</span>
+                    <span class="s2">if </span><span class="s1">byte_arr</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] == </span><span class="s1">ord</span><span class="s3">(</span><span class="s4">&quot;%&quot;</span><span class="s3">):</span>
+                        <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;not an EPS file&quot;</span>
+                        <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+                    <span class="s2">else</span><span class="s3">:</span>
+                        <span class="s2">if </span><span class="s1">reading_header_comments</span><span class="s3">:</span>
+                            <span class="s1">check_required_header_comments</span><span class="s3">()</span>
+                            <span class="s1">reading_header_comments </span><span class="s3">= </span><span class="s2">False</span>
+                        <span class="s0"># reset bytes_read so we can keep reading</span>
+                        <span class="s0"># data until the end of the line</span>
+                        <span class="s1">bytes_read </span><span class="s3">= </span><span class="s5">0</span>
+                <span class="s1">byte_arr</span><span class="s3">[</span><span class="s1">bytes_read</span><span class="s3">] = </span><span class="s1">byte</span><span class="s3">[</span><span class="s5">0</span><span class="s3">]</span>
+                <span class="s1">bytes_read </span><span class="s3">+= </span><span class="s5">1</span>
+                <span class="s2">continue</span>
+
+            <span class="s2">if </span><span class="s1">reading_header_comments</span><span class="s3">:</span>
+                <span class="s0"># Load EPS header</span>
+
+                <span class="s0"># if this line doesn't start with a &quot;%&quot;,</span>
+                <span class="s0"># or does start with &quot;%%EndComments&quot;,</span>
+                <span class="s0"># then we've reached the end of the header/comments</span>
+                <span class="s2">if </span><span class="s1">byte_arr</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] != </span><span class="s1">ord</span><span class="s3">(</span><span class="s4">&quot;%&quot;</span><span class="s3">) </span><span class="s2">or </span><span class="s1">bytes_mv</span><span class="s3">[:</span><span class="s5">13</span><span class="s3">] == </span><span class="s7">b&quot;%%EndComments&quot;</span><span class="s3">:</span>
+                    <span class="s1">check_required_header_comments</span><span class="s3">()</span>
+                    <span class="s1">reading_header_comments </span><span class="s3">= </span><span class="s2">False</span>
+                    <span class="s2">continue</span>
+
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">str</span><span class="s3">(</span><span class="s1">bytes_mv</span><span class="s3">[:</span><span class="s1">bytes_read</span><span class="s3">], </span><span class="s4">&quot;latin-1&quot;</span><span class="s3">)</span>
+                <span class="s2">if not </span><span class="s1">read_comment</span><span class="s3">(</span><span class="s1">s</span><span class="s3">):</span>
+                    <span class="s1">m </span><span class="s3">= </span><span class="s1">field</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+                    <span class="s2">if </span><span class="s1">m</span><span class="s3">:</span>
+                        <span class="s1">k </span><span class="s3">= </span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">1</span><span class="s3">)</span>
+                        <span class="s2">if </span><span class="s1">k</span><span class="s3">[:</span><span class="s5">8</span><span class="s3">] == </span><span class="s4">&quot;PS-Adobe&quot;</span><span class="s3">:</span>
+                            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s4">&quot;PS-Adobe&quot;</span><span class="s3">] = </span><span class="s1">k</span><span class="s3">[</span><span class="s5">9</span><span class="s3">:]</span>
+                        <span class="s2">else</span><span class="s3">:</span>
+                            <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s1">k</span><span class="s3">] = </span><span class="s4">&quot;&quot;</span>
+                    <span class="s2">elif </span><span class="s1">s</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] == </span><span class="s4">&quot;%&quot;</span><span class="s3">:</span>
+                        <span class="s0"># handle non-DSC PostScript comments that some</span>
+                        <span class="s0"># tools mistakenly put in the Comments section</span>
+                        <span class="s2">pass</span>
+                    <span class="s2">else</span><span class="s3">:</span>
+                        <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;bad EPS header&quot;</span>
+                        <span class="s2">raise </span><span class="s1">OSError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+            <span class="s2">elif </span><span class="s1">bytes_mv</span><span class="s3">[:</span><span class="s5">11</span><span class="s3">] == </span><span class="s7">b&quot;%ImageData:&quot;</span><span class="s3">:</span>
+                <span class="s0"># Check for an &quot;ImageData&quot; descriptor</span>
+                <span class="s0"># https://www.adobe.com/devnet-apps/photoshop/fileformatashtml/#50577413_pgfId-1035096</span>
+
+                <span class="s0"># If we've already read an &quot;ImageData&quot; descriptor,</span>
+                <span class="s0"># don't read another one.</span>
+                <span class="s2">if </span><span class="s1">imagedata_size</span><span class="s3">:</span>
+                    <span class="s1">bytes_read </span><span class="s3">= </span><span class="s5">0</span>
+                    <span class="s2">continue</span>
+
+                <span class="s0"># Values:</span>
+                <span class="s0"># columns</span>
+                <span class="s0"># rows</span>
+                <span class="s0"># bit depth (1 or 8)</span>
+                <span class="s0"># mode (1: L, 2: LAB, 3: RGB, 4: CMYK)</span>
+                <span class="s0"># number of padding channels</span>
+                <span class="s0"># block size (number of bytes per row per channel)</span>
+                <span class="s0"># binary/ascii (1: binary, 2: ascii)</span>
+                <span class="s0"># data start identifier (the image data follows after a single line</span>
+                <span class="s0">#   consisting only of this quoted value)</span>
+                <span class="s1">image_data_values </span><span class="s3">= </span><span class="s1">byte_arr</span><span class="s3">[</span><span class="s5">11</span><span class="s3">:</span><span class="s1">bytes_read</span><span class="s3">].</span><span class="s1">split</span><span class="s3">(</span><span class="s2">None</span><span class="s3">, </span><span class="s5">7</span><span class="s3">)</span>
+                <span class="s1">columns</span><span class="s3">, </span><span class="s1">rows</span><span class="s3">, </span><span class="s1">bit_depth</span><span class="s3">, </span><span class="s1">mode_id </span><span class="s3">= (</span>
+                    <span class="s1">int</span><span class="s3">(</span><span class="s1">value</span><span class="s3">) </span><span class="s2">for </span><span class="s1">value </span><span class="s2">in </span><span class="s1">image_data_values</span><span class="s3">[:</span><span class="s5">4</span><span class="s3">]</span>
+                <span class="s3">)</span>
+
+                <span class="s2">if </span><span class="s1">bit_depth </span><span class="s3">== </span><span class="s5">1</span><span class="s3">:</span>
+                    <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s4">&quot;1&quot;</span>
+                <span class="s2">elif </span><span class="s1">bit_depth </span><span class="s3">== </span><span class="s5">8</span><span class="s3">:</span>
+                    <span class="s2">try</span><span class="s3">:</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">mode_map</span><span class="s3">[</span><span class="s1">mode_id</span><span class="s3">]</span>
+                    <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+                        <span class="s2">break</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s2">break</span>
+
+                <span class="s0"># Parse the columns and rows after checking the bit depth and mode</span>
+                <span class="s0"># in case the bit depth and/or mode are invalid.</span>
+                <span class="s1">imagedata_size </span><span class="s3">= </span><span class="s1">columns</span><span class="s3">, </span><span class="s1">rows</span>
+            <span class="s2">elif </span><span class="s1">bytes_mv</span><span class="s3">[:</span><span class="s5">5</span><span class="s3">] == </span><span class="s7">b&quot;%%EOF&quot;</span><span class="s3">:</span>
+                <span class="s2">break</span>
+            <span class="s2">elif </span><span class="s1">trailer_reached </span><span class="s2">and </span><span class="s1">reading_trailer_comments</span><span class="s3">:</span>
+                <span class="s0"># Load EPS trailer</span>
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">str</span><span class="s3">(</span><span class="s1">bytes_mv</span><span class="s3">[:</span><span class="s1">bytes_read</span><span class="s3">], </span><span class="s4">&quot;latin-1&quot;</span><span class="s3">)</span>
+                <span class="s1">read_comment</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+            <span class="s2">elif </span><span class="s1">bytes_mv</span><span class="s3">[:</span><span class="s5">9</span><span class="s3">] == </span><span class="s7">b&quot;%%Trailer&quot;</span><span class="s3">:</span>
+                <span class="s1">trailer_reached </span><span class="s3">= </span><span class="s2">True</span>
+            <span class="s1">bytes_read </span><span class="s3">= </span><span class="s5">0</span>
+
+        <span class="s0"># A &quot;BoundingBox&quot; is always required,</span>
+        <span class="s0"># even if an &quot;ImageData&quot; descriptor size exists.</span>
+        <span class="s2">if not </span><span class="s1">bounding_box</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;cannot determine EPS bounding box&quot;</span>
+            <span class="s2">raise </span><span class="s1">OSError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s0"># An &quot;ImageData&quot; size takes precedence over the &quot;BoundingBox&quot;.</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= </span><span class="s1">imagedata_size </span><span class="s2">or </span><span class="s3">(</span>
+            <span class="s1">bounding_box</span><span class="s3">[</span><span class="s5">2</span><span class="s3">] - </span><span class="s1">bounding_box</span><span class="s3">[</span><span class="s5">0</span><span class="s3">],</span>
+            <span class="s1">bounding_box</span><span class="s3">[</span><span class="s5">3</span><span class="s3">] - </span><span class="s1">bounding_box</span><span class="s3">[</span><span class="s5">1</span><span class="s3">],</span>
+        <span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= [</span>
+            <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s4">&quot;eps&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">offset</span><span class="s3">, (</span><span class="s1">length</span><span class="s3">, </span><span class="s1">bounding_box</span><span class="s3">))</span>
+        <span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">_find_offset</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">]) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">int</span><span class="s3">, </span><span class="s1">int</span><span class="s3">]:</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">4</span><span class="s3">)</span>
+
+        <span class="s2">if </span><span class="s1">s </span><span class="s3">== </span><span class="s7">b&quot;%!PS&quot;</span><span class="s3">:</span>
+            <span class="s0"># for HEAD without binary preview</span>
+            <span class="s1">fp</span><span class="s3">.</span><span class="s1">seek</span><span class="s3">(</span><span class="s5">0</span><span class="s3">, </span><span class="s1">io</span><span class="s3">.</span><span class="s1">SEEK_END</span><span class="s3">)</span>
+            <span class="s1">length </span><span class="s3">= </span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">()</span>
+            <span class="s1">offset </span><span class="s3">= </span><span class="s5">0</span>
+        <span class="s2">elif </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">) == </span><span class="s5">0xC6D3D0C5</span><span class="s3">:</span>
+            <span class="s0"># FIX for: Some EPS file not handled correctly / issue #302</span>
+            <span class="s0"># EPS can contain binary data</span>
+            <span class="s0"># or start directly with latin coding</span>
+            <span class="s0"># more info see:</span>
+            <span class="s0"># https://web.archive.org/web/20160528181353/http://partners.adobe.com/public/developer/en/ps/5002.EPSF_Spec.pdf</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">8</span><span class="s3">)</span>
+            <span class="s1">offset </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+            <span class="s1">length </span><span class="s3">= </span><span class="s1">i32</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, </span><span class="s5">4</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;not an EPS file&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s2">return </span><span class="s1">length</span><span class="s3">, </span><span class="s1">offset</span>
+
+    <span class="s2">def </span><span class="s1">load</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">, </span><span class="s1">scale</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s5">1</span><span class="s3">, </span><span class="s1">transparency</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span>
+    <span class="s3">) </span><span class="s1">-&gt; Image</span><span class="s3">.</span><span class="s1">core</span><span class="s3">.</span><span class="s1">PixelAccess </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s0"># Load EPS via Ghostscript</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">tile</span><span class="s3">:</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">im </span><span class="s3">= </span><span class="s1">Ghostscript</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">tile</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">, </span><span class="s1">scale</span><span class="s3">, </span><span class="s1">transparency</span><span class="s3">)</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= []</span>
+        <span class="s2">return </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">.</span><span class="s1">load</span><span class="s3">(</span><span class="s1">self</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">load_seek</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">pos</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s0"># we can't incrementally load, so force ImageFile.parser to</span>
+        <span class="s0"># use our custom load method by defining this method.</span>
+        <span class="s2">pass</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+
+
+<span class="s2">def </span><span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">: </span><span class="s1">IO</span><span class="s3">[</span><span class="s1">bytes</span><span class="s3">], </span><span class="s1">filename</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s1">bytes</span><span class="s3">, </span><span class="s1">eps</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s5">1</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s6">&quot;&quot;&quot;EPS Writer for the Python Imaging Library.&quot;&quot;&quot;</span>
+
+    <span class="s0"># make sure image data is available</span>
+    <span class="s1">im</span><span class="s3">.</span><span class="s1">load</span><span class="s3">()</span>
+
+    <span class="s0"># determine PostScript image mode</span>
+    <span class="s2">if </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s4">&quot;L&quot;</span><span class="s3">:</span>
+        <span class="s1">operator </span><span class="s3">= (</span><span class="s5">8</span><span class="s3">, </span><span class="s5">1</span><span class="s3">, </span><span class="s7">b&quot;image&quot;</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s4">&quot;RGB&quot;</span><span class="s3">:</span>
+        <span class="s1">operator </span><span class="s3">= (</span><span class="s5">8</span><span class="s3">, </span><span class="s5">3</span><span class="s3">, </span><span class="s7">b&quot;false 3 colorimage&quot;</span><span class="s3">)</span>
+    <span class="s2">elif </span><span class="s1">im</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">== </span><span class="s4">&quot;CMYK&quot;</span><span class="s3">:</span>
+        <span class="s1">operator </span><span class="s3">= (</span><span class="s5">8</span><span class="s3">, </span><span class="s5">4</span><span class="s3">, </span><span class="s7">b&quot;false 4 colorimage&quot;</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s4">&quot;image mode is not supported&quot;</span>
+        <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">eps</span><span class="s3">:</span>
+        <span class="s0"># write EPS header</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s7">b&quot;%!PS-Adobe-3.0 EPSF-3.0</span><span class="s2">\n</span><span class="s7">&quot;</span><span class="s3">)</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s7">b&quot;%%Creator: PIL 0.1 EpsEncode</span><span class="s2">\n</span><span class="s7">&quot;</span><span class="s3">)</span>
+        <span class="s0"># fp.write(&quot;%%CreationDate: %s&quot;...)</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s7">b&quot;%%%%BoundingBox: 0 0 %d %d</span><span class="s2">\n</span><span class="s7">&quot; </span><span class="s3">% </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s7">b&quot;%%Pages: 1</span><span class="s2">\n</span><span class="s7">&quot;</span><span class="s3">)</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s7">b&quot;%%EndComments</span><span class="s2">\n</span><span class="s7">&quot;</span><span class="s3">)</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s7">b&quot;%%Page: 1 1</span><span class="s2">\n</span><span class="s7">&quot;</span><span class="s3">)</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s7">b&quot;%%ImageData: %d %d &quot; </span><span class="s3">% </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s7">b'%d %d 0 1 1 &quot;%s&quot;</span><span class="s2">\n</span><span class="s7">' </span><span class="s3">% </span><span class="s1">operator</span><span class="s3">)</span>
+
+    <span class="s0"># image header</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s7">b&quot;gsave</span><span class="s2">\n</span><span class="s7">&quot;</span><span class="s3">)</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s7">b&quot;10 dict begin</span><span class="s2">\n</span><span class="s7">&quot;</span><span class="s3">)</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s7">b&quot;/buf %d string def</span><span class="s2">\n</span><span class="s7">&quot; </span><span class="s3">% (</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">0</span><span class="s3">] * </span><span class="s1">operator</span><span class="s3">[</span><span class="s5">1</span><span class="s3">]))</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s7">b&quot;%d %d scale</span><span class="s2">\n</span><span class="s7">&quot; </span><span class="s3">% </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s7">b&quot;%d %d 8</span><span class="s2">\n</span><span class="s7">&quot; </span><span class="s3">% </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)  </span><span class="s0"># &lt;= bits</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s7">b&quot;[%d 0 0 -%d 0 %d]</span><span class="s2">\n</span><span class="s7">&quot; </span><span class="s3">% (</span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">0</span><span class="s3">], </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">1</span><span class="s3">], </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">[</span><span class="s5">1</span><span class="s3">]))</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s7">b&quot;{ currentfile buf readhexstring pop } bind</span><span class="s2">\n</span><span class="s7">&quot;</span><span class="s3">)</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s1">operator</span><span class="s3">[</span><span class="s5">2</span><span class="s3">] + </span><span class="s7">b&quot;</span><span class="s2">\n</span><span class="s7">&quot;</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">fp</span><span class="s3">, </span><span class="s4">&quot;flush&quot;</span><span class="s3">):</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">flush</span><span class="s3">()</span>
+
+    <span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_save</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, </span><span class="s1">fp</span><span class="s3">, [</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s4">&quot;eps&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">im</span><span class="s3">.</span><span class="s1">size</span><span class="s3">)])</span>
+
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s7">b&quot;</span><span class="s2">\n</span><span class="s7">%%%%EndBinary</span><span class="s2">\n</span><span class="s7">&quot;</span><span class="s3">)</span>
+    <span class="s1">fp</span><span class="s3">.</span><span class="s1">write</span><span class="s3">(</span><span class="s7">b&quot;grestore end</span><span class="s2">\n</span><span class="s7">&quot;</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">fp</span><span class="s3">, </span><span class="s4">&quot;flush&quot;</span><span class="s3">):</span>
+        <span class="s1">fp</span><span class="s3">.</span><span class="s1">flush</span><span class="s3">()</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_open</span><span class="s3">(</span><span class="s1">EpsImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">EpsImageFile</span><span class="s3">, </span><span class="s1">_accept</span><span class="s3">)</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_save</span><span class="s3">(</span><span class="s1">EpsImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">_save</span><span class="s3">)</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_extensions</span><span class="s3">(</span><span class="s1">EpsImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, [</span><span class="s4">&quot;.ps&quot;</span><span class="s3">, </span><span class="s4">&quot;.eps&quot;</span><span class="s3">])</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_mime</span><span class="s3">(</span><span class="s1">EpsImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s4">&quot;application/postscript&quot;</span><span class="s3">)</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,383 @@
+<html>
+<head>
+<title>ImageShow.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #2aacb8;}
+.s5 { color: #5f826b; font-style: italic;}
+.s6 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ImageShow.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># im.show() drivers</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 2008-04-06 fl   Created</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) Secret Labs AB 2008.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">abc</span>
+<span class="s2">import </span><span class="s1">os</span>
+<span class="s2">import </span><span class="s1">shutil</span>
+<span class="s2">import </span><span class="s1">subprocess</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">from </span><span class="s1">shlex </span><span class="s2">import </span><span class="s1">quote</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">Image</span>
+
+<span class="s1">_viewers </span><span class="s3">= []</span>
+
+
+<span class="s2">def </span><span class="s1">register</span><span class="s3">(</span><span class="s1">viewer</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">Viewer</span><span class="s3">] | </span><span class="s1">Viewer</span><span class="s3">, </span><span class="s1">order</span><span class="s3">: </span><span class="s1">int </span><span class="s3">= </span><span class="s4">1</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s5">&quot;&quot;&quot; 
+    The :py:func:`register` function is used to register additional viewers:: 
+ 
+        from PIL import ImageShow 
+        ImageShow.register(MyViewer())  # MyViewer will be used as a last resort 
+        ImageShow.register(MySecondViewer(), 0)  # MySecondViewer will be prioritised 
+        ImageShow.register(ImageShow.XVViewer(), 0)  # XVViewer will be prioritised 
+ 
+    :param viewer: The viewer to be registered. 
+    :param order: 
+        Zero or a negative integer to prepend this viewer to the list, 
+        a positive integer to append it. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">viewer</span><span class="s3">, </span><span class="s1">type</span><span class="s3">) </span><span class="s2">and </span><span class="s1">issubclass</span><span class="s3">(</span><span class="s1">viewer</span><span class="s3">, </span><span class="s1">Viewer</span><span class="s3">):</span>
+        <span class="s1">viewer </span><span class="s3">= </span><span class="s1">viewer</span><span class="s3">()</span>
+    <span class="s2">if </span><span class="s1">order </span><span class="s3">&gt; </span><span class="s4">0</span><span class="s3">:</span>
+        <span class="s1">_viewers</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">viewer</span><span class="s3">)</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s1">_viewers</span><span class="s3">.</span><span class="s1">insert</span><span class="s3">(</span><span class="s4">0</span><span class="s3">, </span><span class="s1">viewer</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">show</span><span class="s3">(</span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, </span><span class="s1">title</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s5">r&quot;&quot;&quot; 
+    Display a given image. 
+ 
+    :param image: An image object. 
+    :param title: Optional title. Not all viewers can display the title. 
+    :param \**options: Additional viewer options. 
+    :returns: ``True`` if a suitable viewer was found, ``False`` otherwise. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">for </span><span class="s1">viewer </span><span class="s2">in </span><span class="s1">_viewers</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">viewer</span><span class="s3">.</span><span class="s1">show</span><span class="s3">(</span><span class="s1">image</span><span class="s3">, </span><span class="s1">title</span><span class="s3">=</span><span class="s1">title</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">):</span>
+            <span class="s2">return True</span>
+    <span class="s2">return False</span>
+
+
+<span class="s2">class </span><span class="s1">Viewer</span><span class="s3">:</span>
+    <span class="s5">&quot;&quot;&quot;Base class for viewers.&quot;&quot;&quot;</span>
+
+    <span class="s0"># main api</span>
+
+    <span class="s2">def </span><span class="s1">show</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        The main function for displaying an image. 
+        Converts the given image to the target format and displays it. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s2">if not </span><span class="s3">(</span>
+            <span class="s1">image</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">in </span><span class="s3">(</span><span class="s6">&quot;1&quot;</span><span class="s3">, </span><span class="s6">&quot;RGBA&quot;</span><span class="s3">)</span>
+            <span class="s2">or </span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">format </span><span class="s3">== </span><span class="s6">&quot;PNG&quot; </span><span class="s2">and </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode </span><span class="s2">in </span><span class="s3">(</span><span class="s6">&quot;I;16&quot;</span><span class="s3">, </span><span class="s6">&quot;LA&quot;</span><span class="s3">))</span>
+        <span class="s3">):</span>
+            <span class="s1">base </span><span class="s3">= </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">getmodebase</span><span class="s3">(</span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">image</span><span class="s3">.</span><span class="s1">mode </span><span class="s3">!= </span><span class="s1">base</span><span class="s3">:</span>
+                <span class="s1">image </span><span class="s3">= </span><span class="s1">image</span><span class="s3">.</span><span class="s1">convert</span><span class="s3">(</span><span class="s1">base</span><span class="s3">)</span>
+
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">show_image</span><span class="s3">(</span><span class="s1">image</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">)</span>
+
+    <span class="s0"># hook methods</span>
+
+    <span class="s1">format</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s6">&quot;&quot;&quot;The format to convert the image into.&quot;&quot;&quot;</span>
+    <span class="s1">options</span><span class="s3">: </span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">Any</span><span class="s3">] = {}</span>
+    <span class="s6">&quot;&quot;&quot;Additional options used to convert the image.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">get_format</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; str </span><span class="s3">| </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot;Return format name, or ``None`` to save as PGM/PPM.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">format</span>
+
+    <span class="s2">def </span><span class="s1">get_command</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">file</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; str</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Returns the command used to display the file. 
+        Not implemented in the base class. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;unavailable in base viewer&quot;</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">save_image</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">) </span><span class="s1">-&gt; str</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot;Save to temporary file and return filename.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">image</span><span class="s3">.</span><span class="s1">_dump</span><span class="s3">(</span><span class="s1">format</span><span class="s3">=</span><span class="s1">self</span><span class="s3">.</span><span class="s1">get_format</span><span class="s3">(</span><span class="s1">image</span><span class="s3">), **</span><span class="s1">self</span><span class="s3">.</span><span class="s1">options</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">show_image</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot;Display the given image.&quot;&quot;&quot;</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">show_file</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">save_image</span><span class="s3">(</span><span class="s1">image</span><span class="s3">), **</span><span class="s1">options</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">show_file</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">path</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Display given file. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">exists</span><span class="s3">(</span><span class="s1">path</span><span class="s3">):</span>
+            <span class="s2">raise </span><span class="s1">FileNotFoundError</span>
+        <span class="s1">os</span><span class="s3">.</span><span class="s1">system</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">get_command</span><span class="s3">(</span><span class="s1">path</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">))  </span><span class="s0"># nosec</span>
+        <span class="s2">return </span><span class="s4">1</span>
+
+
+<span class="s0"># --------------------------------------------------------------------</span>
+
+
+<span class="s2">class </span><span class="s1">WindowsViewer</span><span class="s3">(</span><span class="s1">Viewer</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot;The default viewer on Windows is the default system application for PNG files.&quot;&quot;&quot;</span>
+
+    <span class="s1">format </span><span class="s3">= </span><span class="s6">&quot;PNG&quot;</span>
+    <span class="s1">options </span><span class="s3">= {</span><span class="s6">&quot;compress_level&quot;</span><span class="s3">: </span><span class="s4">1</span><span class="s3">, </span><span class="s6">&quot;save_all&quot;</span><span class="s3">: </span><span class="s2">True</span><span class="s3">}</span>
+
+    <span class="s2">def </span><span class="s1">get_command</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">file</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; str</span><span class="s3">:</span>
+        <span class="s2">return </span><span class="s3">(</span>
+            <span class="s6">f'start &quot;Pillow&quot; /WAIT &quot;</span><span class="s2">{</span><span class="s1">file</span><span class="s2">}</span><span class="s6">&quot; '</span>
+            <span class="s6">&quot;&amp;&amp; ping -n 4 127.0.0.1 &gt;NUL &quot;</span>
+            <span class="s6">f'&amp;&amp; del /f &quot;</span><span class="s2">{</span><span class="s1">file</span><span class="s2">}</span><span class="s6">&quot;'</span>
+        <span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">show_file</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">path</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Display given file. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">exists</span><span class="s3">(</span><span class="s1">path</span><span class="s3">):</span>
+            <span class="s2">raise </span><span class="s1">FileNotFoundError</span>
+        <span class="s1">subprocess</span><span class="s3">.</span><span class="s1">Popen</span><span class="s3">(</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">get_command</span><span class="s3">(</span><span class="s1">path</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">),</span>
+            <span class="s1">shell</span><span class="s3">=</span><span class="s2">True</span><span class="s3">,</span>
+            <span class="s1">creationflags</span><span class="s3">=</span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">subprocess</span><span class="s3">, </span><span class="s6">&quot;CREATE_NO_WINDOW&quot;</span><span class="s3">),</span>
+        <span class="s3">)  </span><span class="s0"># nosec</span>
+        <span class="s2">return </span><span class="s4">1</span>
+
+
+<span class="s2">if </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">platform </span><span class="s3">== </span><span class="s6">&quot;win32&quot;</span><span class="s3">:</span>
+    <span class="s1">register</span><span class="s3">(</span><span class="s1">WindowsViewer</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">MacViewer</span><span class="s3">(</span><span class="s1">Viewer</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot;The default viewer on macOS using ``Preview.app``.&quot;&quot;&quot;</span>
+
+    <span class="s1">format </span><span class="s3">= </span><span class="s6">&quot;PNG&quot;</span>
+    <span class="s1">options </span><span class="s3">= {</span><span class="s6">&quot;compress_level&quot;</span><span class="s3">: </span><span class="s4">1</span><span class="s3">, </span><span class="s6">&quot;save_all&quot;</span><span class="s3">: </span><span class="s2">True</span><span class="s3">}</span>
+
+    <span class="s2">def </span><span class="s1">get_command</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">file</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; str</span><span class="s3">:</span>
+        <span class="s0"># on darwin open returns immediately resulting in the temp</span>
+        <span class="s0"># file removal while app is opening</span>
+        <span class="s1">command </span><span class="s3">= </span><span class="s6">&quot;open -a Preview.app&quot;</span>
+        <span class="s1">command </span><span class="s3">= </span><span class="s6">f&quot;(</span><span class="s2">{</span><span class="s1">command</span><span class="s2">} {</span><span class="s1">quote</span><span class="s3">(</span><span class="s1">file</span><span class="s3">)</span><span class="s2">}</span><span class="s6">; sleep 20; rm -f </span><span class="s2">{</span><span class="s1">quote</span><span class="s3">(</span><span class="s1">file</span><span class="s3">)</span><span class="s2">}</span><span class="s6">)&amp;&quot;</span>
+        <span class="s2">return </span><span class="s1">command</span>
+
+    <span class="s2">def </span><span class="s1">show_file</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">path</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Display given file. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">exists</span><span class="s3">(</span><span class="s1">path</span><span class="s3">):</span>
+            <span class="s2">raise </span><span class="s1">FileNotFoundError</span>
+        <span class="s1">subprocess</span><span class="s3">.</span><span class="s1">call</span><span class="s3">([</span><span class="s6">&quot;open&quot;</span><span class="s3">, </span><span class="s6">&quot;-a&quot;</span><span class="s3">, </span><span class="s6">&quot;Preview.app&quot;</span><span class="s3">, </span><span class="s1">path</span><span class="s3">])</span>
+        <span class="s1">executable </span><span class="s3">= </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">executable </span><span class="s2">or </span><span class="s1">shutil</span><span class="s3">.</span><span class="s1">which</span><span class="s3">(</span><span class="s6">&quot;python3&quot;</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">executable</span><span class="s3">:</span>
+            <span class="s1">subprocess</span><span class="s3">.</span><span class="s1">Popen</span><span class="s3">(</span>
+                <span class="s3">[</span>
+                    <span class="s1">executable</span><span class="s3">,</span>
+                    <span class="s6">&quot;-c&quot;</span><span class="s3">,</span>
+                    <span class="s6">&quot;import os, sys, time; time.sleep(20); os.remove(sys.argv[1])&quot;</span><span class="s3">,</span>
+                    <span class="s1">path</span><span class="s3">,</span>
+                <span class="s3">]</span>
+            <span class="s3">)</span>
+        <span class="s2">return </span><span class="s4">1</span>
+
+
+<span class="s2">if </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">platform </span><span class="s3">== </span><span class="s6">&quot;darwin&quot;</span><span class="s3">:</span>
+    <span class="s1">register</span><span class="s3">(</span><span class="s1">MacViewer</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">UnixViewer</span><span class="s3">(</span><span class="s1">Viewer</span><span class="s3">):</span>
+    <span class="s1">format </span><span class="s3">= </span><span class="s6">&quot;PNG&quot;</span>
+    <span class="s1">options </span><span class="s3">= {</span><span class="s6">&quot;compress_level&quot;</span><span class="s3">: </span><span class="s4">1</span><span class="s3">, </span><span class="s6">&quot;save_all&quot;</span><span class="s3">: </span><span class="s2">True</span><span class="s3">}</span>
+
+    <span class="s3">@</span><span class="s1">abc</span><span class="s3">.</span><span class="s1">abstractmethod</span>
+    <span class="s2">def </span><span class="s1">get_command_ex</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">file</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]:</span>
+        <span class="s2">pass</span>
+
+    <span class="s2">def </span><span class="s1">get_command</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">file</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; str</span><span class="s3">:</span>
+        <span class="s1">command </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">get_command_ex</span><span class="s3">(</span><span class="s1">file</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">)[</span><span class="s4">0</span><span class="s3">]</span>
+        <span class="s2">return </span><span class="s6">f&quot;</span><span class="s2">{</span><span class="s1">command</span><span class="s2">} {</span><span class="s1">quote</span><span class="s3">(</span><span class="s1">file</span><span class="s3">)</span><span class="s2">}</span><span class="s6">&quot;</span>
+
+
+<span class="s2">class </span><span class="s1">XDGViewer</span><span class="s3">(</span><span class="s1">UnixViewer</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    The freedesktop.org ``xdg-open`` command. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">get_command_ex</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">file</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]:</span>
+        <span class="s1">command </span><span class="s3">= </span><span class="s1">executable </span><span class="s3">= </span><span class="s6">&quot;xdg-open&quot;</span>
+        <span class="s2">return </span><span class="s1">command</span><span class="s3">, </span><span class="s1">executable</span>
+
+    <span class="s2">def </span><span class="s1">show_file</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">path</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Display given file. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">exists</span><span class="s3">(</span><span class="s1">path</span><span class="s3">):</span>
+            <span class="s2">raise </span><span class="s1">FileNotFoundError</span>
+        <span class="s1">subprocess</span><span class="s3">.</span><span class="s1">Popen</span><span class="s3">([</span><span class="s6">&quot;xdg-open&quot;</span><span class="s3">, </span><span class="s1">path</span><span class="s3">])</span>
+        <span class="s2">return </span><span class="s4">1</span>
+
+
+<span class="s2">class </span><span class="s1">DisplayViewer</span><span class="s3">(</span><span class="s1">UnixViewer</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    The ImageMagick ``display`` command. 
+    This viewer supports the ``title`` parameter. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">get_command_ex</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">, </span><span class="s1">file</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, </span><span class="s1">title</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span>
+    <span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]:</span>
+        <span class="s1">command </span><span class="s3">= </span><span class="s1">executable </span><span class="s3">= </span><span class="s6">&quot;display&quot;</span>
+        <span class="s2">if </span><span class="s1">title</span><span class="s3">:</span>
+            <span class="s1">command </span><span class="s3">+= </span><span class="s6">f&quot; -title </span><span class="s2">{</span><span class="s1">quote</span><span class="s3">(</span><span class="s1">title</span><span class="s3">)</span><span class="s2">}</span><span class="s6">&quot;</span>
+        <span class="s2">return </span><span class="s1">command</span><span class="s3">, </span><span class="s1">executable</span>
+
+    <span class="s2">def </span><span class="s1">show_file</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">path</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Display given file. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">exists</span><span class="s3">(</span><span class="s1">path</span><span class="s3">):</span>
+            <span class="s2">raise </span><span class="s1">FileNotFoundError</span>
+        <span class="s1">args </span><span class="s3">= [</span><span class="s6">&quot;display&quot;</span><span class="s3">]</span>
+        <span class="s1">title </span><span class="s3">= </span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;title&quot;</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">title</span><span class="s3">:</span>
+            <span class="s1">args </span><span class="s3">+= [</span><span class="s6">&quot;-title&quot;</span><span class="s3">, </span><span class="s1">title</span><span class="s3">]</span>
+        <span class="s1">args</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">path</span><span class="s3">)</span>
+
+        <span class="s1">subprocess</span><span class="s3">.</span><span class="s1">Popen</span><span class="s3">(</span><span class="s1">args</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s4">1</span>
+
+
+<span class="s2">class </span><span class="s1">GmDisplayViewer</span><span class="s3">(</span><span class="s1">UnixViewer</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot;The GraphicsMagick ``gm display`` command.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">get_command_ex</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">file</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]:</span>
+        <span class="s1">executable </span><span class="s3">= </span><span class="s6">&quot;gm&quot;</span>
+        <span class="s1">command </span><span class="s3">= </span><span class="s6">&quot;gm display&quot;</span>
+        <span class="s2">return </span><span class="s1">command</span><span class="s3">, </span><span class="s1">executable</span>
+
+    <span class="s2">def </span><span class="s1">show_file</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">path</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Display given file. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">exists</span><span class="s3">(</span><span class="s1">path</span><span class="s3">):</span>
+            <span class="s2">raise </span><span class="s1">FileNotFoundError</span>
+        <span class="s1">subprocess</span><span class="s3">.</span><span class="s1">Popen</span><span class="s3">([</span><span class="s6">&quot;gm&quot;</span><span class="s3">, </span><span class="s6">&quot;display&quot;</span><span class="s3">, </span><span class="s1">path</span><span class="s3">])</span>
+        <span class="s2">return </span><span class="s4">1</span>
+
+
+<span class="s2">class </span><span class="s1">EogViewer</span><span class="s3">(</span><span class="s1">UnixViewer</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot;The GNOME Image Viewer ``eog`` command.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">get_command_ex</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">file</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]:</span>
+        <span class="s1">executable </span><span class="s3">= </span><span class="s6">&quot;eog&quot;</span>
+        <span class="s1">command </span><span class="s3">= </span><span class="s6">&quot;eog -n&quot;</span>
+        <span class="s2">return </span><span class="s1">command</span><span class="s3">, </span><span class="s1">executable</span>
+
+    <span class="s2">def </span><span class="s1">show_file</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">path</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Display given file. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">exists</span><span class="s3">(</span><span class="s1">path</span><span class="s3">):</span>
+            <span class="s2">raise </span><span class="s1">FileNotFoundError</span>
+        <span class="s1">subprocess</span><span class="s3">.</span><span class="s1">Popen</span><span class="s3">([</span><span class="s6">&quot;eog&quot;</span><span class="s3">, </span><span class="s6">&quot;-n&quot;</span><span class="s3">, </span><span class="s1">path</span><span class="s3">])</span>
+        <span class="s2">return </span><span class="s4">1</span>
+
+
+<span class="s2">class </span><span class="s1">XVViewer</span><span class="s3">(</span><span class="s1">UnixViewer</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    The X Viewer ``xv`` command. 
+    This viewer supports the ``title`` parameter. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">get_command_ex</span><span class="s3">(</span>
+        <span class="s1">self</span><span class="s3">, </span><span class="s1">file</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, </span><span class="s1">title</span><span class="s3">: </span><span class="s1">str </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span>
+    <span class="s3">) </span><span class="s1">-&gt; tuple</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">str</span><span class="s3">]:</span>
+        <span class="s0"># note: xv is pretty outdated.  most modern systems have</span>
+        <span class="s0"># imagemagick's display command instead.</span>
+        <span class="s1">command </span><span class="s3">= </span><span class="s1">executable </span><span class="s3">= </span><span class="s6">&quot;xv&quot;</span>
+        <span class="s2">if </span><span class="s1">title</span><span class="s3">:</span>
+            <span class="s1">command </span><span class="s3">+= </span><span class="s6">f&quot; -name </span><span class="s2">{</span><span class="s1">quote</span><span class="s3">(</span><span class="s1">title</span><span class="s3">)</span><span class="s2">}</span><span class="s6">&quot;</span>
+        <span class="s2">return </span><span class="s1">command</span><span class="s3">, </span><span class="s1">executable</span>
+
+    <span class="s2">def </span><span class="s1">show_file</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">path</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Display given file. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">os</span><span class="s3">.</span><span class="s1">path</span><span class="s3">.</span><span class="s1">exists</span><span class="s3">(</span><span class="s1">path</span><span class="s3">):</span>
+            <span class="s2">raise </span><span class="s1">FileNotFoundError</span>
+        <span class="s1">args </span><span class="s3">= [</span><span class="s6">&quot;xv&quot;</span><span class="s3">]</span>
+        <span class="s1">title </span><span class="s3">= </span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s6">&quot;title&quot;</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">title</span><span class="s3">:</span>
+            <span class="s1">args </span><span class="s3">+= [</span><span class="s6">&quot;-name&quot;</span><span class="s3">, </span><span class="s1">title</span><span class="s3">]</span>
+        <span class="s1">args</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">path</span><span class="s3">)</span>
+
+        <span class="s1">subprocess</span><span class="s3">.</span><span class="s1">Popen</span><span class="s3">(</span><span class="s1">args</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s4">1</span>
+
+
+<span class="s2">if </span><span class="s1">sys</span><span class="s3">.</span><span class="s1">platform </span><span class="s2">not in </span><span class="s3">(</span><span class="s6">&quot;win32&quot;</span><span class="s3">, </span><span class="s6">&quot;darwin&quot;</span><span class="s3">):  </span><span class="s0"># unixoids</span>
+    <span class="s2">if </span><span class="s1">shutil</span><span class="s3">.</span><span class="s1">which</span><span class="s3">(</span><span class="s6">&quot;xdg-open&quot;</span><span class="s3">):</span>
+        <span class="s1">register</span><span class="s3">(</span><span class="s1">XDGViewer</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">shutil</span><span class="s3">.</span><span class="s1">which</span><span class="s3">(</span><span class="s6">&quot;display&quot;</span><span class="s3">):</span>
+        <span class="s1">register</span><span class="s3">(</span><span class="s1">DisplayViewer</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">shutil</span><span class="s3">.</span><span class="s1">which</span><span class="s3">(</span><span class="s6">&quot;gm&quot;</span><span class="s3">):</span>
+        <span class="s1">register</span><span class="s3">(</span><span class="s1">GmDisplayViewer</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">shutil</span><span class="s3">.</span><span class="s1">which</span><span class="s3">(</span><span class="s6">&quot;eog&quot;</span><span class="s3">):</span>
+        <span class="s1">register</span><span class="s3">(</span><span class="s1">EogViewer</span><span class="s3">)</span>
+    <span class="s2">if </span><span class="s1">shutil</span><span class="s3">.</span><span class="s1">which</span><span class="s3">(</span><span class="s6">&quot;xv&quot;</span><span class="s3">):</span>
+        <span class="s1">register</span><span class="s3">(</span><span class="s1">XVViewer</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">IPythonViewer</span><span class="s3">(</span><span class="s1">Viewer</span><span class="s3">):</span>
+    <span class="s5">&quot;&quot;&quot;The viewer for IPython frontends.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">show_image</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">image</span><span class="s3">: </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">Image</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; int</span><span class="s3">:</span>
+        <span class="s1">ipython_display</span><span class="s3">(</span><span class="s1">image</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s4">1</span>
+
+
+<span class="s2">try</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s1">IPython</span><span class="s3">.</span><span class="s1">display </span><span class="s2">import </span><span class="s1">display </span><span class="s2">as </span><span class="s1">ipython_display</span>
+<span class="s2">except </span><span class="s1">ImportError</span><span class="s3">:</span>
+    <span class="s2">pass</span>
+<span class="s2">else</span><span class="s3">:</span>
+    <span class="s1">register</span><span class="s3">(</span><span class="s1">IPythonViewer</span><span class="s3">)</span>
+
+
+<span class="s2">if </span><span class="s1">__name__ </span><span class="s3">== </span><span class="s6">&quot;__main__&quot;</span><span class="s3">:</span>
+    <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">sys</span><span class="s3">.</span><span class="s1">argv</span><span class="s3">) &lt; </span><span class="s4">2</span><span class="s3">:</span>
+        <span class="s1">print</span><span class="s3">(</span><span class="s6">&quot;Syntax: python3 ImageShow.py imagefile [title]&quot;</span><span class="s3">)</span>
+        <span class="s1">sys</span><span class="s3">.</span><span class="s1">exit</span><span class="s3">()</span>
+
+    <span class="s2">with </span><span class="s1">Image</span><span class="s3">.</span><span class="s1">open</span><span class="s3">(</span><span class="s1">sys</span><span class="s3">.</span><span class="s1">argv</span><span class="s3">[</span><span class="s4">1</span><span class="s3">]) </span><span class="s2">as </span><span class="s1">im</span><span class="s3">:</span>
+        <span class="s1">print</span><span class="s3">(</span><span class="s1">show</span><span class="s3">(</span><span class="s1">im</span><span class="s3">, *</span><span class="s1">sys</span><span class="s3">.</span><span class="s1">argv</span><span class="s3">[</span><span class="s4">2</span><span class="s3">:]))</span>
+</pre>
+</body>
+</html>

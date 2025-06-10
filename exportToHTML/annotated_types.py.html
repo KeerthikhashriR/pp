@@ -1,0 +1,95 @@
+<html>
+<head>
+<title>annotated_types.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #2aacb8;}
+.s4 { color: #6aab73;}
+.s5 { color: #7a7e85;}
+.s6 { color: #5f826b; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+annotated_types.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">TYPE_CHECKING</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Dict</span><span class="s2">, </span><span class="s1">FrozenSet</span><span class="s2">, </span><span class="s1">NamedTuple</span><span class="s2">, </span><span class="s1">Type</span>
+
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">fields </span><span class="s0">import </span><span class="s1">Required</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">main </span><span class="s0">import </span><span class="s1">BaseModel</span><span class="s2">, </span><span class="s1">create_model</span>
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">typing </span><span class="s0">import </span><span class="s1">is_typeddict</span><span class="s2">, </span><span class="s1">is_typeddict_special</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+    <span class="s0">from </span><span class="s1">typing_extensions </span><span class="s0">import </span><span class="s1">TypedDict</span>
+
+<span class="s0">if </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">version_info </span><span class="s2">&lt; (</span><span class="s3">3</span><span class="s2">, </span><span class="s3">11</span><span class="s2">):</span>
+
+    <span class="s0">def </span><span class="s1">is_legacy_typeddict</span><span class="s2">(</span><span class="s1">typeddict_cls</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s4">'TypedDict'</span><span class="s2">]) </span><span class="s1">-&gt; bool</span><span class="s2">:  </span><span class="s5"># type: ignore[valid-type]</span>
+        <span class="s0">return </span><span class="s1">is_typeddict</span><span class="s2">(</span><span class="s1">typeddict_cls</span><span class="s2">) </span><span class="s0">and </span><span class="s1">type</span><span class="s2">(</span><span class="s1">typeddict_cls</span><span class="s2">).</span><span class="s1">__module__ </span><span class="s2">== </span><span class="s4">'typing'</span>
+
+<span class="s0">else</span><span class="s2">:</span>
+
+    <span class="s0">def </span><span class="s1">is_legacy_typeddict</span><span class="s2">(</span><span class="s1">_</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+        <span class="s0">return False</span>
+
+
+<span class="s0">def </span><span class="s1">create_model_from_typeddict</span><span class="s2">(</span>
+    <span class="s5"># Mypy bug: `Type[TypedDict]` is resolved as `Any` https://github.com/python/mypy/issues/11030</span>
+    <span class="s1">typeddict_cls</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s4">'TypedDict'</span><span class="s2">],  </span><span class="s5"># type: ignore[valid-type]</span>
+    <span class="s2">**</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">,</span>
+<span class="s2">) </span><span class="s1">-&gt; Type</span><span class="s2">[</span><span class="s4">'BaseModel'</span><span class="s2">]:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Create a `BaseModel` based on the fields of a `TypedDict`. 
+    Since `typing.TypedDict` in Python 3.8 does not store runtime information about optional keys, 
+    we raise an error if this happens (see https://bugs.python.org/issue38834). 
+    &quot;&quot;&quot;</span>
+    <span class="s1">field_definitions</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]</span>
+
+    <span class="s5"># Best case scenario: with python 3.9+ or when `TypedDict` is imported from `typing_extensions`</span>
+    <span class="s0">if not </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">typeddict_cls</span><span class="s2">, </span><span class="s4">'__required_keys__'</span><span class="s2">):</span>
+        <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span>
+            <span class="s4">'You should use `typing_extensions.TypedDict` instead of `typing.TypedDict` with Python &lt; 3.9.2. '</span>
+            <span class="s4">'Without it, there is no way to differentiate required and optional fields when subclassed.'</span>
+        <span class="s2">)</span>
+
+    <span class="s0">if </span><span class="s1">is_legacy_typeddict</span><span class="s2">(</span><span class="s1">typeddict_cls</span><span class="s2">) </span><span class="s0">and </span><span class="s1">any</span><span class="s2">(</span>
+        <span class="s1">is_typeddict_special</span><span class="s2">(</span><span class="s1">t</span><span class="s2">) </span><span class="s0">for </span><span class="s1">t </span><span class="s0">in </span><span class="s1">typeddict_cls</span><span class="s2">.</span><span class="s1">__annotations__</span><span class="s2">.</span><span class="s1">values</span><span class="s2">()</span>
+    <span class="s2">):</span>
+        <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span>
+            <span class="s4">'You should use `typing_extensions.TypedDict` instead of `typing.TypedDict` with Python &lt; 3.11. '</span>
+            <span class="s4">'Without it, there is no way to reflect Required/NotRequired keys.'</span>
+        <span class="s2">)</span>
+
+    <span class="s1">required_keys</span><span class="s2">: </span><span class="s1">FrozenSet</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = </span><span class="s1">typeddict_cls</span><span class="s2">.</span><span class="s1">__required_keys__  </span><span class="s5"># type: ignore[attr-defined]</span>
+    <span class="s1">field_definitions </span><span class="s2">= {</span>
+        <span class="s1">field_name</span><span class="s2">: (</span><span class="s1">field_type</span><span class="s2">, </span><span class="s1">Required </span><span class="s0">if </span><span class="s1">field_name </span><span class="s0">in </span><span class="s1">required_keys </span><span class="s0">else None</span><span class="s2">)</span>
+        <span class="s0">for </span><span class="s1">field_name</span><span class="s2">, </span><span class="s1">field_type </span><span class="s0">in </span><span class="s1">typeddict_cls</span><span class="s2">.</span><span class="s1">__annotations__</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()</span>
+    <span class="s2">}</span>
+
+    <span class="s0">return </span><span class="s1">create_model</span><span class="s2">(</span><span class="s1">typeddict_cls</span><span class="s2">.</span><span class="s1">__name__</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">, **</span><span class="s1">field_definitions</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">create_model_from_namedtuple</span><span class="s2">(</span><span class="s1">namedtuple_cls</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">[</span><span class="s4">'NamedTuple'</span><span class="s2">], **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; Type</span><span class="s2">[</span><span class="s4">'BaseModel'</span><span class="s2">]:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Create a `BaseModel` based on the fields of a named tuple. 
+    A named tuple can be created with `typing.NamedTuple` and declared annotations 
+    but also with `collections.namedtuple`, in this case we consider all fields 
+    to have type `Any`. 
+    &quot;&quot;&quot;</span>
+    <span class="s5"># With python 3.10+, `__annotations__` always exists but can be empty hence the `getattr... or...` logic</span>
+    <span class="s1">namedtuple_annotations</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Type</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">]] = </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">namedtuple_cls</span><span class="s2">, </span><span class="s4">'__annotations__'</span><span class="s2">, </span><span class="s0">None</span><span class="s2">) </span><span class="s0">or </span><span class="s2">{</span>
+        <span class="s1">k</span><span class="s2">: </span><span class="s1">Any </span><span class="s0">for </span><span class="s1">k </span><span class="s0">in </span><span class="s1">namedtuple_cls</span><span class="s2">.</span><span class="s1">_fields</span>
+    <span class="s2">}</span>
+    <span class="s1">field_definitions</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">] = {</span>
+        <span class="s1">field_name</span><span class="s2">: (</span><span class="s1">field_type</span><span class="s2">, </span><span class="s1">Required</span><span class="s2">) </span><span class="s0">for </span><span class="s1">field_name</span><span class="s2">, </span><span class="s1">field_type </span><span class="s0">in </span><span class="s1">namedtuple_annotations</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s1">create_model</span><span class="s2">(</span><span class="s1">namedtuple_cls</span><span class="s2">.</span><span class="s1">__name__</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">, **</span><span class="s1">field_definitions</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

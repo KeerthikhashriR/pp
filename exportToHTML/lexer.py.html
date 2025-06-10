@@ -1,0 +1,967 @@
+<html>
+<head>
+<title>lexer.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #a5c261;}
+.s6 { color: #2aacb8;}
+.s7 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+lexer.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot; 
+    pygments.lexer 
+    ~~~~~~~~~~~~~~ 
+ 
+    Base lexer classes. 
+ 
+    :copyright: Copyright 2006-2023 by the Pygments team, see AUTHORS. 
+    :license: BSD, see LICENSE for details. 
+&quot;&quot;&quot;</span>
+
+<span class="s2">import </span><span class="s1">re</span>
+<span class="s2">import </span><span class="s1">sys</span>
+<span class="s2">import </span><span class="s1">time</span>
+
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">filter </span><span class="s2">import </span><span class="s1">apply_filters</span><span class="s3">, </span><span class="s1">Filter</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">filters </span><span class="s2">import </span><span class="s1">get_filter_by_name</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">token </span><span class="s2">import </span><span class="s1">Error</span><span class="s3">, </span><span class="s1">Text</span><span class="s3">, </span><span class="s1">Other</span><span class="s3">, </span><span class="s1">Whitespace</span><span class="s3">, </span><span class="s1">_TokenType</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">util </span><span class="s2">import </span><span class="s1">get_bool_opt</span><span class="s3">, </span><span class="s1">get_int_opt</span><span class="s3">, </span><span class="s1">get_list_opt</span><span class="s3">, </span><span class="s1">\</span>
+    <span class="s1">make_analysator</span><span class="s3">, </span><span class="s1">Future</span><span class="s3">, </span><span class="s1">guess_decode</span>
+<span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor</span><span class="s3">.</span><span class="s1">pygments</span><span class="s3">.</span><span class="s1">regexopt </span><span class="s2">import </span><span class="s1">regex_opt</span>
+
+<span class="s1">__all__ </span><span class="s3">= [</span><span class="s4">'Lexer'</span><span class="s3">, </span><span class="s4">'RegexLexer'</span><span class="s3">, </span><span class="s4">'ExtendedRegexLexer'</span><span class="s3">, </span><span class="s4">'DelegatingLexer'</span><span class="s3">,</span>
+           <span class="s4">'LexerContext'</span><span class="s3">, </span><span class="s4">'include'</span><span class="s3">, </span><span class="s4">'inherit'</span><span class="s3">, </span><span class="s4">'bygroups'</span><span class="s3">, </span><span class="s4">'using'</span><span class="s3">, </span><span class="s4">'this'</span><span class="s3">,</span>
+           <span class="s4">'default'</span><span class="s3">, </span><span class="s4">'words'</span><span class="s3">, </span><span class="s4">'line_re'</span><span class="s3">]</span>
+
+<span class="s1">line_re </span><span class="s3">= </span><span class="s1">re</span><span class="s3">.</span><span class="s1">compile</span><span class="s3">(</span><span class="s4">'.*?</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">)</span>
+
+<span class="s1">_encoding_map </span><span class="s3">= [(</span><span class="s5">b'</span><span class="s2">\xef\xbb\xbf</span><span class="s5">'</span><span class="s3">, </span><span class="s4">'utf-8'</span><span class="s3">),</span>
+                 <span class="s3">(</span><span class="s5">b'</span><span class="s2">\xff\xfe\0\0</span><span class="s5">'</span><span class="s3">, </span><span class="s4">'utf-32'</span><span class="s3">),</span>
+                 <span class="s3">(</span><span class="s5">b'</span><span class="s2">\0\0\xfe\xff</span><span class="s5">'</span><span class="s3">, </span><span class="s4">'utf-32be'</span><span class="s3">),</span>
+                 <span class="s3">(</span><span class="s5">b'</span><span class="s2">\xff\xfe</span><span class="s5">'</span><span class="s3">, </span><span class="s4">'utf-16'</span><span class="s3">),</span>
+                 <span class="s3">(</span><span class="s5">b'</span><span class="s2">\xfe\xff</span><span class="s5">'</span><span class="s3">, </span><span class="s4">'utf-16be'</span><span class="s3">)]</span>
+
+<span class="s1">_default_analyse </span><span class="s3">= </span><span class="s1">staticmethod</span><span class="s3">(</span><span class="s2">lambda </span><span class="s1">x</span><span class="s3">: </span><span class="s6">0.0</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">LexerMeta</span><span class="s3">(</span><span class="s1">type</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    This metaclass automagically converts ``analyse_text`` methods into 
+    static methods which always return float values. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__new__</span><span class="s3">(</span><span class="s1">mcs</span><span class="s3">, </span><span class="s1">name</span><span class="s3">, </span><span class="s1">bases</span><span class="s3">, </span><span class="s1">d</span><span class="s3">):</span>
+        <span class="s2">if </span><span class="s4">'analyse_text' </span><span class="s2">in </span><span class="s1">d</span><span class="s3">:</span>
+            <span class="s1">d</span><span class="s3">[</span><span class="s4">'analyse_text'</span><span class="s3">] = </span><span class="s1">make_analysator</span><span class="s3">(</span><span class="s1">d</span><span class="s3">[</span><span class="s4">'analyse_text'</span><span class="s3">])</span>
+        <span class="s2">return </span><span class="s1">type</span><span class="s3">.</span><span class="s1">__new__</span><span class="s3">(</span><span class="s1">mcs</span><span class="s3">, </span><span class="s1">name</span><span class="s3">, </span><span class="s1">bases</span><span class="s3">, </span><span class="s1">d</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">Lexer</span><span class="s3">(</span><span class="s1">metaclass</span><span class="s3">=</span><span class="s1">LexerMeta</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Lexer for a specific language. 
+ 
+    See also :doc:`lexerdevelopment`, a high-level guide to writing 
+    lexers. 
+ 
+    Lexer classes have attributes used for choosing the most appropriate 
+    lexer based on various criteria. 
+ 
+    .. autoattribute:: name 
+       :no-value: 
+    .. autoattribute:: aliases 
+       :no-value: 
+    .. autoattribute:: filenames 
+       :no-value: 
+    .. autoattribute:: alias_filenames 
+    .. autoattribute:: mimetypes 
+       :no-value: 
+    .. autoattribute:: priority 
+ 
+    Lexers included in Pygments should have an additional attribute: 
+ 
+    .. autoattribute:: url 
+       :no-value: 
+ 
+    You can pass options to the constructor. The basic options recognized 
+    by all lexers and processed by the base `Lexer` class are: 
+ 
+    ``stripnl`` 
+        Strip leading and trailing newlines from the input (default: True). 
+    ``stripall`` 
+        Strip all leading and trailing whitespace from the input 
+        (default: False). 
+    ``ensurenl`` 
+        Make sure that the input ends with a newline (default: True).  This 
+        is required for some lexers that consume input linewise. 
+ 
+        .. versionadded:: 1.3 
+ 
+    ``tabsize`` 
+        If given and greater than 0, expand tabs in the input (default: 0). 
+    ``encoding`` 
+        If given, must be an encoding name. This encoding will be used to 
+        convert the input string to Unicode, if it is not already a Unicode 
+        string (default: ``'guess'``, which uses a simple UTF-8 / Locale / 
+        Latin1 detection.  Can also be ``'chardet'`` to use the chardet 
+        library, if it is installed. 
+    ``inencoding`` 
+        Overrides the ``encoding`` if given. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s7">#: Full name of the lexer, in human-readable form</span>
+    <span class="s1">name </span><span class="s3">= </span><span class="s2">None</span>
+
+    <span class="s7">#: A list of short, unique identifiers that can be used to look</span>
+    <span class="s7">#: up the lexer from a list, e.g., using `get_lexer_by_name()`.</span>
+    <span class="s1">aliases </span><span class="s3">= []</span>
+
+    <span class="s7">#: A list of `fnmatch` patterns that match filenames which contain</span>
+    <span class="s7">#: content for this lexer. The patterns in this list should be unique among</span>
+    <span class="s7">#: all lexers.</span>
+    <span class="s1">filenames </span><span class="s3">= []</span>
+
+    <span class="s7">#: A list of `fnmatch` patterns that match filenames which may or may not</span>
+    <span class="s7">#: contain content for this lexer. This list is used by the</span>
+    <span class="s7">#: :func:`.guess_lexer_for_filename()` function, to determine which lexers</span>
+    <span class="s7">#: are then included in guessing the correct one. That means that</span>
+    <span class="s7">#: e.g. every lexer for HTML and a template language should include</span>
+    <span class="s7">#: ``\*.html`` in this list.</span>
+    <span class="s1">alias_filenames </span><span class="s3">= []</span>
+
+    <span class="s7">#: A list of MIME types for content that can be lexed with this lexer.</span>
+    <span class="s1">mimetypes </span><span class="s3">= []</span>
+
+    <span class="s7">#: Priority, should multiple lexers match and no content is provided</span>
+    <span class="s1">priority </span><span class="s3">= </span><span class="s6">0</span>
+
+    <span class="s7">#: URL of the language specification/definition. Used in the Pygments</span>
+    <span class="s7">#: documentation.</span>
+    <span class="s1">url </span><span class="s3">= </span><span class="s2">None</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        This constructor takes arbitrary options as keyword arguments. 
+        Every subclass must first process its own options and then call 
+        the `Lexer` constructor, since it processes the basic 
+        options like `stripnl`. 
+ 
+        An example looks like this: 
+ 
+        .. sourcecode:: python 
+ 
+           def __init__(self, **options): 
+               self.compress = options.get('compress', '') 
+               Lexer.__init__(self, **options) 
+ 
+        As these options must all be specifiable as strings (due to the 
+        command line usage), there are various utility functions 
+        available to help with that, see `Utilities`_. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">options </span><span class="s3">= </span><span class="s1">options</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">stripnl </span><span class="s3">= </span><span class="s1">get_bool_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'stripnl'</span><span class="s3">, </span><span class="s2">True</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">stripall </span><span class="s3">= </span><span class="s1">get_bool_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'stripall'</span><span class="s3">, </span><span class="s2">False</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">ensurenl </span><span class="s3">= </span><span class="s1">get_bool_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'ensurenl'</span><span class="s3">, </span><span class="s2">True</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">tabsize </span><span class="s3">= </span><span class="s1">get_int_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'tabsize'</span><span class="s3">, </span><span class="s6">0</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">encoding </span><span class="s3">= </span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'encoding'</span><span class="s3">, </span><span class="s4">'guess'</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">encoding </span><span class="s3">= </span><span class="s1">options</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'inencoding'</span><span class="s3">) </span><span class="s2">or </span><span class="s1">self</span><span class="s3">.</span><span class="s1">encoding</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">filters </span><span class="s3">= []</span>
+        <span class="s2">for </span><span class="s1">filter_ </span><span class="s2">in </span><span class="s1">get_list_opt</span><span class="s3">(</span><span class="s1">options</span><span class="s3">, </span><span class="s4">'filters'</span><span class="s3">, ()):</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">add_filter</span><span class="s3">(</span><span class="s1">filter_</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">__repr__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">):</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">options</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s4">'&lt;pygments.lexers.%s with %r&gt;' </span><span class="s3">% (</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__class__</span><span class="s3">.</span><span class="s1">__name__</span><span class="s3">,</span>
+                                                     <span class="s1">self</span><span class="s3">.</span><span class="s1">options</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s4">'&lt;pygments.lexers.%s&gt;' </span><span class="s3">% </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__class__</span><span class="s3">.</span><span class="s1">__name__</span>
+
+    <span class="s2">def </span><span class="s1">add_filter</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">filter_</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Add a new stream filter to this lexer. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">filter_</span><span class="s3">, </span><span class="s1">Filter</span><span class="s3">):</span>
+            <span class="s1">filter_ </span><span class="s3">= </span><span class="s1">get_filter_by_name</span><span class="s3">(</span><span class="s1">filter_</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">filters</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">filter_</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">analyse_text</span><span class="s3">(</span><span class="s1">text</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        A static method which is called for lexer guessing. 
+ 
+        It should analyse the text and return a float in the range 
+        from ``0.0`` to ``1.0``.  If it returns ``0.0``, the lexer 
+        will not be selected as the most probable one, if it returns 
+        ``1.0``, it will be selected immediately.  This is used by 
+        `guess_lexer`. 
+ 
+        The `LexerMeta` metaclass automatically wraps this function so 
+        that it works like a static method (no ``self`` or ``cls`` 
+        parameter) and the return value is automatically converted to 
+        `float`. If the return value is an object that is boolean `False` 
+        it's the same as if the return values was ``0.0``. 
+        &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">get_tokens</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">text</span><span class="s3">, </span><span class="s1">unfiltered</span><span class="s3">=</span><span class="s2">False</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        This method is the basic interface of a lexer. It is called by 
+        the `highlight()` function. It must process the text and return an 
+        iterable of ``(tokentype, value)`` pairs from `text`. 
+ 
+        Normally, you don't need to override this method. The default 
+        implementation processes the options recognized by all lexers 
+        (`stripnl`, `stripall` and so on), and then yields all tokens 
+        from `get_tokens_unprocessed()`, with the ``index`` dropped. 
+ 
+        If `unfiltered` is set to `True`, the filtering mechanism is 
+        bypassed even if filters are defined. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">if not </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">text</span><span class="s3">, </span><span class="s1">str</span><span class="s3">):</span>
+            <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">encoding </span><span class="s3">== </span><span class="s4">'guess'</span><span class="s3">:</span>
+                <span class="s1">text</span><span class="s3">, </span><span class="s1">_ </span><span class="s3">= </span><span class="s1">guess_decode</span><span class="s3">(</span><span class="s1">text</span><span class="s3">)</span>
+            <span class="s2">elif </span><span class="s1">self</span><span class="s3">.</span><span class="s1">encoding </span><span class="s3">== </span><span class="s4">'chardet'</span><span class="s3">:</span>
+                <span class="s2">try</span><span class="s3">:</span>
+                    <span class="s2">from </span><span class="s1">pip</span><span class="s3">.</span><span class="s1">_vendor </span><span class="s2">import </span><span class="s1">chardet</span>
+                <span class="s2">except </span><span class="s1">ImportError </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+                    <span class="s2">raise </span><span class="s1">ImportError</span><span class="s3">(</span><span class="s4">'To enable chardet encoding guessing, '</span>
+                                      <span class="s4">'please install the chardet library '</span>
+                                      <span class="s4">'from http://chardet.feedparser.org/'</span><span class="s3">) </span><span class="s2">from </span><span class="s1">e</span>
+                <span class="s7"># check for BOM first</span>
+                <span class="s1">decoded </span><span class="s3">= </span><span class="s2">None</span>
+                <span class="s2">for </span><span class="s1">bom</span><span class="s3">, </span><span class="s1">encoding </span><span class="s2">in </span><span class="s1">_encoding_map</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s1">text</span><span class="s3">.</span><span class="s1">startswith</span><span class="s3">(</span><span class="s1">bom</span><span class="s3">):</span>
+                        <span class="s1">decoded </span><span class="s3">= </span><span class="s1">text</span><span class="s3">[</span><span class="s1">len</span><span class="s3">(</span><span class="s1">bom</span><span class="s3">):].</span><span class="s1">decode</span><span class="s3">(</span><span class="s1">encoding</span><span class="s3">, </span><span class="s4">'replace'</span><span class="s3">)</span>
+                        <span class="s2">break</span>
+                <span class="s7"># no BOM found, so use chardet</span>
+                <span class="s2">if </span><span class="s1">decoded </span><span class="s2">is None</span><span class="s3">:</span>
+                    <span class="s1">enc </span><span class="s3">= </span><span class="s1">chardet</span><span class="s3">.</span><span class="s1">detect</span><span class="s3">(</span><span class="s1">text</span><span class="s3">[:</span><span class="s6">1024</span><span class="s3">])  </span><span class="s7"># Guess using first 1KB</span>
+                    <span class="s1">decoded </span><span class="s3">= </span><span class="s1">text</span><span class="s3">.</span><span class="s1">decode</span><span class="s3">(</span><span class="s1">enc</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'encoding'</span><span class="s3">) </span><span class="s2">or </span><span class="s4">'utf-8'</span><span class="s3">,</span>
+                                          <span class="s4">'replace'</span><span class="s3">)</span>
+                <span class="s1">text </span><span class="s3">= </span><span class="s1">decoded</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">text </span><span class="s3">= </span><span class="s1">text</span><span class="s3">.</span><span class="s1">decode</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">encoding</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">text</span><span class="s3">.</span><span class="s1">startswith</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\ufeff</span><span class="s4">'</span><span class="s3">):</span>
+                    <span class="s1">text </span><span class="s3">= </span><span class="s1">text</span><span class="s3">[</span><span class="s1">len</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\ufeff</span><span class="s4">'</span><span class="s3">):]</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">if </span><span class="s1">text</span><span class="s3">.</span><span class="s1">startswith</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\ufeff</span><span class="s4">'</span><span class="s3">):</span>
+                <span class="s1">text </span><span class="s3">= </span><span class="s1">text</span><span class="s3">[</span><span class="s1">len</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\ufeff</span><span class="s4">'</span><span class="s3">):]</span>
+
+        <span class="s7"># text now *is* a unicode string</span>
+        <span class="s1">text </span><span class="s3">= </span><span class="s1">text</span><span class="s3">.</span><span class="s1">replace</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\r\n</span><span class="s4">'</span><span class="s3">, </span><span class="s4">'</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">)</span>
+        <span class="s1">text </span><span class="s3">= </span><span class="s1">text</span><span class="s3">.</span><span class="s1">replace</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\r</span><span class="s4">'</span><span class="s3">, </span><span class="s4">'</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">stripall</span><span class="s3">:</span>
+            <span class="s1">text </span><span class="s3">= </span><span class="s1">text</span><span class="s3">.</span><span class="s1">strip</span><span class="s3">()</span>
+        <span class="s2">elif </span><span class="s1">self</span><span class="s3">.</span><span class="s1">stripnl</span><span class="s3">:</span>
+            <span class="s1">text </span><span class="s3">= </span><span class="s1">text</span><span class="s3">.</span><span class="s1">strip</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">tabsize </span><span class="s3">&gt; </span><span class="s6">0</span><span class="s3">:</span>
+            <span class="s1">text </span><span class="s3">= </span><span class="s1">text</span><span class="s3">.</span><span class="s1">expandtabs</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">tabsize</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">self</span><span class="s3">.</span><span class="s1">ensurenl </span><span class="s2">and not </span><span class="s1">text</span><span class="s3">.</span><span class="s1">endswith</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">):</span>
+            <span class="s1">text </span><span class="s3">+= </span><span class="s4">'</span><span class="s2">\n</span><span class="s4">'</span>
+
+        <span class="s2">def </span><span class="s1">streamer</span><span class="s3">():</span>
+            <span class="s2">for </span><span class="s1">_</span><span class="s3">, </span><span class="s1">t</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">get_tokens_unprocessed</span><span class="s3">(</span><span class="s1">text</span><span class="s3">):</span>
+                <span class="s2">yield </span><span class="s1">t</span><span class="s3">, </span><span class="s1">v</span>
+        <span class="s1">stream </span><span class="s3">= </span><span class="s1">streamer</span><span class="s3">()</span>
+        <span class="s2">if not </span><span class="s1">unfiltered</span><span class="s3">:</span>
+            <span class="s1">stream </span><span class="s3">= </span><span class="s1">apply_filters</span><span class="s3">(</span><span class="s1">stream</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">filters</span><span class="s3">, </span><span class="s1">self</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">stream</span>
+
+    <span class="s2">def </span><span class="s1">get_tokens_unprocessed</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">text</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        This method should process the text and return an iterable of 
+        ``(index, tokentype, value)`` tuples where ``index`` is the starting 
+        position of the token within the input text. 
+ 
+        It must be overridden by subclasses. It is recommended to 
+        implement it as a generator to maximize effectiveness. 
+        &quot;&quot;&quot;</span>
+        <span class="s2">raise </span><span class="s1">NotImplementedError</span>
+
+
+<span class="s2">class </span><span class="s1">DelegatingLexer</span><span class="s3">(</span><span class="s1">Lexer</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    This lexer takes two lexer as arguments. A root lexer and 
+    a language lexer. First everything is scanned using the language 
+    lexer, afterwards all ``Other`` tokens are lexed using the root 
+    lexer. 
+ 
+    The lexers from the ``template`` lexer package use this base lexer. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">_root_lexer</span><span class="s3">, </span><span class="s1">_language_lexer</span><span class="s3">, </span><span class="s1">_needle</span><span class="s3">=</span><span class="s1">Other</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">):</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">root_lexer </span><span class="s3">= </span><span class="s1">_root_lexer</span><span class="s3">(**</span><span class="s1">options</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">language_lexer </span><span class="s3">= </span><span class="s1">_language_lexer</span><span class="s3">(**</span><span class="s1">options</span><span class="s3">)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">needle </span><span class="s3">= </span><span class="s1">_needle</span>
+        <span class="s1">Lexer</span><span class="s3">.</span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, **</span><span class="s1">options</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">get_tokens_unprocessed</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">text</span><span class="s3">):</span>
+        <span class="s1">buffered </span><span class="s3">= </span><span class="s4">''</span>
+        <span class="s1">insertions </span><span class="s3">= []</span>
+        <span class="s1">lng_buffer </span><span class="s3">= []</span>
+        <span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">t</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">self</span><span class="s3">.</span><span class="s1">language_lexer</span><span class="s3">.</span><span class="s1">get_tokens_unprocessed</span><span class="s3">(</span><span class="s1">text</span><span class="s3">):</span>
+            <span class="s2">if </span><span class="s1">t </span><span class="s2">is </span><span class="s1">self</span><span class="s3">.</span><span class="s1">needle</span><span class="s3">:</span>
+                <span class="s2">if </span><span class="s1">lng_buffer</span><span class="s3">:</span>
+                    <span class="s1">insertions</span><span class="s3">.</span><span class="s1">append</span><span class="s3">((</span><span class="s1">len</span><span class="s3">(</span><span class="s1">buffered</span><span class="s3">), </span><span class="s1">lng_buffer</span><span class="s3">))</span>
+                    <span class="s1">lng_buffer </span><span class="s3">= []</span>
+                <span class="s1">buffered </span><span class="s3">+= </span><span class="s1">v</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">lng_buffer</span><span class="s3">.</span><span class="s1">append</span><span class="s3">((</span><span class="s1">i</span><span class="s3">, </span><span class="s1">t</span><span class="s3">, </span><span class="s1">v</span><span class="s3">))</span>
+        <span class="s2">if </span><span class="s1">lng_buffer</span><span class="s3">:</span>
+            <span class="s1">insertions</span><span class="s3">.</span><span class="s1">append</span><span class="s3">((</span><span class="s1">len</span><span class="s3">(</span><span class="s1">buffered</span><span class="s3">), </span><span class="s1">lng_buffer</span><span class="s3">))</span>
+        <span class="s2">return </span><span class="s1">do_insertions</span><span class="s3">(</span><span class="s1">insertions</span><span class="s3">,</span>
+                             <span class="s1">self</span><span class="s3">.</span><span class="s1">root_lexer</span><span class="s3">.</span><span class="s1">get_tokens_unprocessed</span><span class="s3">(</span><span class="s1">buffered</span><span class="s3">))</span>
+
+
+<span class="s7"># ------------------------------------------------------------------------------</span>
+<span class="s7"># RegexLexer and ExtendedRegexLexer</span>
+<span class="s7">#</span>
+
+
+<span class="s2">class </span><span class="s1">include</span><span class="s3">(</span><span class="s1">str</span><span class="s3">):  </span><span class="s7"># pylint: disable=invalid-name</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Indicates that a state should include rules from another state. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">pass</span>
+
+
+<span class="s2">class </span><span class="s1">_inherit</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Indicates the a state should inherit from its superclass. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">def </span><span class="s1">__repr__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s4">'inherit'</span>
+
+<span class="s1">inherit </span><span class="s3">= </span><span class="s1">_inherit</span><span class="s3">()  </span><span class="s7"># pylint: disable=invalid-name</span>
+
+
+<span class="s2">class </span><span class="s1">combined</span><span class="s3">(</span><span class="s1">tuple</span><span class="s3">):  </span><span class="s7"># pylint: disable=invalid-name</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Indicates a state combined from multiple states. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__new__</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">tuple</span><span class="s3">.</span><span class="s1">__new__</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">args</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">):</span>
+        <span class="s7"># tuple.__init__ doesn't do anything</span>
+        <span class="s2">pass</span>
+
+
+<span class="s2">class </span><span class="s1">_PseudoMatch</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot; 
+    A pseudo match object constructed from a string. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">start</span><span class="s3">, </span><span class="s1">text</span><span class="s3">):</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_text </span><span class="s3">= </span><span class="s1">text</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_start </span><span class="s3">= </span><span class="s1">start</span>
+
+    <span class="s2">def </span><span class="s1">start</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">arg</span><span class="s3">=</span><span class="s2">None</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_start</span>
+
+    <span class="s2">def </span><span class="s1">end</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">arg</span><span class="s3">=</span><span class="s2">None</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_start </span><span class="s3">+ </span><span class="s1">len</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_text</span><span class="s3">)</span>
+
+    <span class="s2">def </span><span class="s1">group</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">arg</span><span class="s3">=</span><span class="s2">None</span><span class="s3">):</span>
+        <span class="s2">if </span><span class="s1">arg</span><span class="s3">:</span>
+            <span class="s2">raise </span><span class="s1">IndexError</span><span class="s3">(</span><span class="s4">'No such group'</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_text</span>
+
+    <span class="s2">def </span><span class="s1">groups</span><span class="s3">(</span><span class="s1">self</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_text</span><span class="s3">,)</span>
+
+    <span class="s2">def </span><span class="s1">groupdict</span><span class="s3">(</span><span class="s1">self</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s3">{}</span>
+
+
+<span class="s2">def </span><span class="s1">bygroups</span><span class="s3">(*</span><span class="s1">args</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Callback that yields multiple actions for each group in the match. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">def </span><span class="s1">callback</span><span class="s3">(</span><span class="s1">lexer</span><span class="s3">, </span><span class="s1">match</span><span class="s3">, </span><span class="s1">ctx</span><span class="s3">=</span><span class="s2">None</span><span class="s3">):</span>
+        <span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">action </span><span class="s2">in </span><span class="s1">enumerate</span><span class="s3">(</span><span class="s1">args</span><span class="s3">):</span>
+            <span class="s2">if </span><span class="s1">action </span><span class="s2">is None</span><span class="s3">:</span>
+                <span class="s2">continue</span>
+            <span class="s2">elif </span><span class="s1">type</span><span class="s3">(</span><span class="s1">action</span><span class="s3">) </span><span class="s2">is </span><span class="s1">_TokenType</span><span class="s3">:</span>
+                <span class="s1">data </span><span class="s3">= </span><span class="s1">match</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s1">i </span><span class="s3">+ </span><span class="s6">1</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">data</span><span class="s3">:</span>
+                    <span class="s2">yield </span><span class="s1">match</span><span class="s3">.</span><span class="s1">start</span><span class="s3">(</span><span class="s1">i </span><span class="s3">+ </span><span class="s6">1</span><span class="s3">), </span><span class="s1">action</span><span class="s3">, </span><span class="s1">data</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">data </span><span class="s3">= </span><span class="s1">match</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s1">i </span><span class="s3">+ </span><span class="s6">1</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">data </span><span class="s2">is not None</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s1">ctx</span><span class="s3">:</span>
+                        <span class="s1">ctx</span><span class="s3">.</span><span class="s1">pos </span><span class="s3">= </span><span class="s1">match</span><span class="s3">.</span><span class="s1">start</span><span class="s3">(</span><span class="s1">i </span><span class="s3">+ </span><span class="s6">1</span><span class="s3">)</span>
+                    <span class="s2">for </span><span class="s1">item </span><span class="s2">in </span><span class="s1">action</span><span class="s3">(</span><span class="s1">lexer</span><span class="s3">,</span>
+                                       <span class="s1">_PseudoMatch</span><span class="s3">(</span><span class="s1">match</span><span class="s3">.</span><span class="s1">start</span><span class="s3">(</span><span class="s1">i </span><span class="s3">+ </span><span class="s6">1</span><span class="s3">), </span><span class="s1">data</span><span class="s3">), </span><span class="s1">ctx</span><span class="s3">):</span>
+                        <span class="s2">if </span><span class="s1">item</span><span class="s3">:</span>
+                            <span class="s2">yield </span><span class="s1">item</span>
+        <span class="s2">if </span><span class="s1">ctx</span><span class="s3">:</span>
+            <span class="s1">ctx</span><span class="s3">.</span><span class="s1">pos </span><span class="s3">= </span><span class="s1">match</span><span class="s3">.</span><span class="s1">end</span><span class="s3">()</span>
+    <span class="s2">return </span><span class="s1">callback</span>
+
+
+<span class="s2">class </span><span class="s1">_This</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Special singleton used for indicating the caller class. 
+    Used by ``using``. 
+    &quot;&quot;&quot;</span>
+
+<span class="s1">this </span><span class="s3">= </span><span class="s1">_This</span><span class="s3">()</span>
+
+
+<span class="s2">def </span><span class="s1">using</span><span class="s3">(</span><span class="s1">_other</span><span class="s3">, **</span><span class="s1">kwargs</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Callback that processes the match with a different lexer. 
+ 
+    The keyword arguments are forwarded to the lexer, except `state` which 
+    is handled separately. 
+ 
+    `state` specifies the state that the new lexer will start in, and can 
+    be an enumerable such as ('root', 'inline', 'string') or a simple 
+    string which is assumed to be on top of the root state. 
+ 
+    Note: For that to work, `_other` must not be an `ExtendedRegexLexer`. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">gt_kwargs </span><span class="s3">= {}</span>
+    <span class="s2">if </span><span class="s4">'state' </span><span class="s2">in </span><span class="s1">kwargs</span><span class="s3">:</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">kwargs</span><span class="s3">.</span><span class="s1">pop</span><span class="s3">(</span><span class="s4">'state'</span><span class="s3">)</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">s</span><span class="s3">, (</span><span class="s1">list</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">)):</span>
+            <span class="s1">gt_kwargs</span><span class="s3">[</span><span class="s4">'stack'</span><span class="s3">] = </span><span class="s1">s</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">gt_kwargs</span><span class="s3">[</span><span class="s4">'stack'</span><span class="s3">] = (</span><span class="s4">'root'</span><span class="s3">, </span><span class="s1">s</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">_other </span><span class="s2">is </span><span class="s1">this</span><span class="s3">:</span>
+        <span class="s2">def </span><span class="s1">callback</span><span class="s3">(</span><span class="s1">lexer</span><span class="s3">, </span><span class="s1">match</span><span class="s3">, </span><span class="s1">ctx</span><span class="s3">=</span><span class="s2">None</span><span class="s3">):</span>
+            <span class="s7"># if keyword arguments are given the callback</span>
+            <span class="s7"># function has to create a new lexer instance</span>
+            <span class="s2">if </span><span class="s1">kwargs</span><span class="s3">:</span>
+                <span class="s7"># XXX: cache that somehow</span>
+                <span class="s1">kwargs</span><span class="s3">.</span><span class="s1">update</span><span class="s3">(</span><span class="s1">lexer</span><span class="s3">.</span><span class="s1">options</span><span class="s3">)</span>
+                <span class="s1">lx </span><span class="s3">= </span><span class="s1">lexer</span><span class="s3">.</span><span class="s1">__class__</span><span class="s3">(**</span><span class="s1">kwargs</span><span class="s3">)</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">lx </span><span class="s3">= </span><span class="s1">lexer</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">match</span><span class="s3">.</span><span class="s1">start</span><span class="s3">()</span>
+            <span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">t</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">lx</span><span class="s3">.</span><span class="s1">get_tokens_unprocessed</span><span class="s3">(</span><span class="s1">match</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(), **</span><span class="s1">gt_kwargs</span><span class="s3">):</span>
+                <span class="s2">yield </span><span class="s1">i </span><span class="s3">+ </span><span class="s1">s</span><span class="s3">, </span><span class="s1">t</span><span class="s3">, </span><span class="s1">v</span>
+            <span class="s2">if </span><span class="s1">ctx</span><span class="s3">:</span>
+                <span class="s1">ctx</span><span class="s3">.</span><span class="s1">pos </span><span class="s3">= </span><span class="s1">match</span><span class="s3">.</span><span class="s1">end</span><span class="s3">()</span>
+    <span class="s2">else</span><span class="s3">:</span>
+        <span class="s2">def </span><span class="s1">callback</span><span class="s3">(</span><span class="s1">lexer</span><span class="s3">, </span><span class="s1">match</span><span class="s3">, </span><span class="s1">ctx</span><span class="s3">=</span><span class="s2">None</span><span class="s3">):</span>
+            <span class="s7"># XXX: cache that somehow</span>
+            <span class="s1">kwargs</span><span class="s3">.</span><span class="s1">update</span><span class="s3">(</span><span class="s1">lexer</span><span class="s3">.</span><span class="s1">options</span><span class="s3">)</span>
+            <span class="s1">lx </span><span class="s3">= </span><span class="s1">_other</span><span class="s3">(**</span><span class="s1">kwargs</span><span class="s3">)</span>
+
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">match</span><span class="s3">.</span><span class="s1">start</span><span class="s3">()</span>
+            <span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">t</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">lx</span><span class="s3">.</span><span class="s1">get_tokens_unprocessed</span><span class="s3">(</span><span class="s1">match</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(), **</span><span class="s1">gt_kwargs</span><span class="s3">):</span>
+                <span class="s2">yield </span><span class="s1">i </span><span class="s3">+ </span><span class="s1">s</span><span class="s3">, </span><span class="s1">t</span><span class="s3">, </span><span class="s1">v</span>
+            <span class="s2">if </span><span class="s1">ctx</span><span class="s3">:</span>
+                <span class="s1">ctx</span><span class="s3">.</span><span class="s1">pos </span><span class="s3">= </span><span class="s1">match</span><span class="s3">.</span><span class="s1">end</span><span class="s3">()</span>
+    <span class="s2">return </span><span class="s1">callback</span>
+
+
+<span class="s2">class </span><span class="s1">default</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Indicates a state or state action (e.g. #pop) to apply. 
+    For example default('#pop') is equivalent to ('', Token, '#pop') 
+    Note that state tuples may be used as well. 
+ 
+    .. versionadded:: 2.0 
+    &quot;&quot;&quot;</span>
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">state</span><span class="s3">):</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">state </span><span class="s3">= </span><span class="s1">state</span>
+
+
+<span class="s2">class </span><span class="s1">words</span><span class="s3">(</span><span class="s1">Future</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Indicates a list of literal words that is transformed into an optimized 
+    regex that matches any of the words. 
+ 
+    .. versionadded:: 2.0 
+    &quot;&quot;&quot;</span>
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">words</span><span class="s3">, </span><span class="s1">prefix</span><span class="s3">=</span><span class="s4">''</span><span class="s3">, </span><span class="s1">suffix</span><span class="s3">=</span><span class="s4">''</span><span class="s3">):</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">words </span><span class="s3">= </span><span class="s1">words</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">prefix </span><span class="s3">= </span><span class="s1">prefix</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">suffix </span><span class="s3">= </span><span class="s1">suffix</span>
+
+    <span class="s2">def </span><span class="s1">get</span><span class="s3">(</span><span class="s1">self</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s1">regex_opt</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">words</span><span class="s3">, </span><span class="s1">prefix</span><span class="s3">=</span><span class="s1">self</span><span class="s3">.</span><span class="s1">prefix</span><span class="s3">, </span><span class="s1">suffix</span><span class="s3">=</span><span class="s1">self</span><span class="s3">.</span><span class="s1">suffix</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">RegexLexerMeta</span><span class="s3">(</span><span class="s1">LexerMeta</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Metaclass for RegexLexer, creates the self._tokens attribute from 
+    self.tokens on the first instantiation. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_process_regex</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">regex</span><span class="s3">, </span><span class="s1">rflags</span><span class="s3">, </span><span class="s1">state</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot;Preprocess the regular expression component of a token definition.&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">regex</span><span class="s3">, </span><span class="s1">Future</span><span class="s3">):</span>
+            <span class="s1">regex </span><span class="s3">= </span><span class="s1">regex</span><span class="s3">.</span><span class="s1">get</span><span class="s3">()</span>
+        <span class="s2">return </span><span class="s1">re</span><span class="s3">.</span><span class="s1">compile</span><span class="s3">(</span><span class="s1">regex</span><span class="s3">, </span><span class="s1">rflags</span><span class="s3">).</span><span class="s1">match</span>
+
+    <span class="s2">def </span><span class="s1">_process_token</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">token</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot;Preprocess the token component of a token definition.&quot;&quot;&quot;</span>
+        <span class="s2">assert </span><span class="s1">type</span><span class="s3">(</span><span class="s1">token</span><span class="s3">) </span><span class="s2">is </span><span class="s1">_TokenType </span><span class="s2">or </span><span class="s1">callable</span><span class="s3">(</span><span class="s1">token</span><span class="s3">), </span><span class="s1">\</span>
+            <span class="s4">'token type must be simple type or callable, not %r' </span><span class="s3">% (</span><span class="s1">token</span><span class="s3">,)</span>
+        <span class="s2">return </span><span class="s1">token</span>
+
+    <span class="s2">def </span><span class="s1">_process_new_state</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">new_state</span><span class="s3">, </span><span class="s1">unprocessed</span><span class="s3">, </span><span class="s1">processed</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot;Preprocess the state transition action of a token definition.&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">new_state</span><span class="s3">, </span><span class="s1">str</span><span class="s3">):</span>
+            <span class="s7"># an existing state</span>
+            <span class="s2">if </span><span class="s1">new_state </span><span class="s3">== </span><span class="s4">'#pop'</span><span class="s3">:</span>
+                <span class="s2">return </span><span class="s3">-</span><span class="s6">1</span>
+            <span class="s2">elif </span><span class="s1">new_state </span><span class="s2">in </span><span class="s1">unprocessed</span><span class="s3">:</span>
+                <span class="s2">return </span><span class="s3">(</span><span class="s1">new_state</span><span class="s3">,)</span>
+            <span class="s2">elif </span><span class="s1">new_state </span><span class="s3">== </span><span class="s4">'#push'</span><span class="s3">:</span>
+                <span class="s2">return </span><span class="s1">new_state</span>
+            <span class="s2">elif </span><span class="s1">new_state</span><span class="s3">[:</span><span class="s6">5</span><span class="s3">] == </span><span class="s4">'#pop:'</span><span class="s3">:</span>
+                <span class="s2">return </span><span class="s3">-</span><span class="s1">int</span><span class="s3">(</span><span class="s1">new_state</span><span class="s3">[</span><span class="s6">5</span><span class="s3">:])</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s2">assert False</span><span class="s3">, </span><span class="s4">'unknown new state %r' </span><span class="s3">% </span><span class="s1">new_state</span>
+        <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">new_state</span><span class="s3">, </span><span class="s1">combined</span><span class="s3">):</span>
+            <span class="s7"># combine a new state from existing ones</span>
+            <span class="s1">tmp_state </span><span class="s3">= </span><span class="s4">'_tmp_%d' </span><span class="s3">% </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">_tmpname</span>
+            <span class="s1">cls</span><span class="s3">.</span><span class="s1">_tmpname </span><span class="s3">+= </span><span class="s6">1</span>
+            <span class="s1">itokens </span><span class="s3">= []</span>
+            <span class="s2">for </span><span class="s1">istate </span><span class="s2">in </span><span class="s1">new_state</span><span class="s3">:</span>
+                <span class="s2">assert </span><span class="s1">istate </span><span class="s3">!= </span><span class="s1">new_state</span><span class="s3">, </span><span class="s4">'circular state ref %r' </span><span class="s3">% </span><span class="s1">istate</span>
+                <span class="s1">itokens</span><span class="s3">.</span><span class="s1">extend</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">.</span><span class="s1">_process_state</span><span class="s3">(</span><span class="s1">unprocessed</span><span class="s3">,</span>
+                                                  <span class="s1">processed</span><span class="s3">, </span><span class="s1">istate</span><span class="s3">))</span>
+            <span class="s1">processed</span><span class="s3">[</span><span class="s1">tmp_state</span><span class="s3">] = </span><span class="s1">itokens</span>
+            <span class="s2">return </span><span class="s3">(</span><span class="s1">tmp_state</span><span class="s3">,)</span>
+        <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">new_state</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">):</span>
+            <span class="s7"># push more than one state</span>
+            <span class="s2">for </span><span class="s1">istate </span><span class="s2">in </span><span class="s1">new_state</span><span class="s3">:</span>
+                <span class="s2">assert </span><span class="s3">(</span><span class="s1">istate </span><span class="s2">in </span><span class="s1">unprocessed </span><span class="s2">or</span>
+                        <span class="s1">istate </span><span class="s2">in </span><span class="s3">(</span><span class="s4">'#pop'</span><span class="s3">, </span><span class="s4">'#push'</span><span class="s3">)), </span><span class="s1">\</span>
+                    <span class="s4">'unknown new state ' </span><span class="s3">+ </span><span class="s1">istate</span>
+            <span class="s2">return </span><span class="s1">new_state</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s2">assert False</span><span class="s3">, </span><span class="s4">'unknown new state def %r' </span><span class="s3">% </span><span class="s1">new_state</span>
+
+    <span class="s2">def </span><span class="s1">_process_state</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">unprocessed</span><span class="s3">, </span><span class="s1">processed</span><span class="s3">, </span><span class="s1">state</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot;Preprocess a single state definition.&quot;&quot;&quot;</span>
+        <span class="s2">assert </span><span class="s1">type</span><span class="s3">(</span><span class="s1">state</span><span class="s3">) </span><span class="s2">is </span><span class="s1">str</span><span class="s3">, </span><span class="s4">&quot;wrong state name %r&quot; </span><span class="s3">% </span><span class="s1">state</span>
+        <span class="s2">assert </span><span class="s1">state</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] != </span><span class="s4">'#'</span><span class="s3">, </span><span class="s4">&quot;invalid state name %r&quot; </span><span class="s3">% </span><span class="s1">state</span>
+        <span class="s2">if </span><span class="s1">state </span><span class="s2">in </span><span class="s1">processed</span><span class="s3">:</span>
+            <span class="s2">return </span><span class="s1">processed</span><span class="s3">[</span><span class="s1">state</span><span class="s3">]</span>
+        <span class="s1">tokens </span><span class="s3">= </span><span class="s1">processed</span><span class="s3">[</span><span class="s1">state</span><span class="s3">] = []</span>
+        <span class="s1">rflags </span><span class="s3">= </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">flags</span>
+        <span class="s2">for </span><span class="s1">tdef </span><span class="s2">in </span><span class="s1">unprocessed</span><span class="s3">[</span><span class="s1">state</span><span class="s3">]:</span>
+            <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">tdef</span><span class="s3">, </span><span class="s1">include</span><span class="s3">):</span>
+                <span class="s7"># it's a state reference</span>
+                <span class="s2">assert </span><span class="s1">tdef </span><span class="s3">!= </span><span class="s1">state</span><span class="s3">, </span><span class="s4">&quot;circular state reference %r&quot; </span><span class="s3">% </span><span class="s1">state</span>
+                <span class="s1">tokens</span><span class="s3">.</span><span class="s1">extend</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">.</span><span class="s1">_process_state</span><span class="s3">(</span><span class="s1">unprocessed</span><span class="s3">, </span><span class="s1">processed</span><span class="s3">,</span>
+                                                 <span class="s1">str</span><span class="s3">(</span><span class="s1">tdef</span><span class="s3">)))</span>
+                <span class="s2">continue</span>
+            <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">tdef</span><span class="s3">, </span><span class="s1">_inherit</span><span class="s3">):</span>
+                <span class="s7"># should be processed already, but may not in the case of:</span>
+                <span class="s7"># 1. the state has no counterpart in any parent</span>
+                <span class="s7"># 2. the state includes more than one 'inherit'</span>
+                <span class="s2">continue</span>
+            <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">tdef</span><span class="s3">, </span><span class="s1">default</span><span class="s3">):</span>
+                <span class="s1">new_state </span><span class="s3">= </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">_process_new_state</span><span class="s3">(</span><span class="s1">tdef</span><span class="s3">.</span><span class="s1">state</span><span class="s3">, </span><span class="s1">unprocessed</span><span class="s3">, </span><span class="s1">processed</span><span class="s3">)</span>
+                <span class="s1">tokens</span><span class="s3">.</span><span class="s1">append</span><span class="s3">((</span><span class="s1">re</span><span class="s3">.</span><span class="s1">compile</span><span class="s3">(</span><span class="s4">''</span><span class="s3">).</span><span class="s1">match</span><span class="s3">, </span><span class="s2">None</span><span class="s3">, </span><span class="s1">new_state</span><span class="s3">))</span>
+                <span class="s2">continue</span>
+
+            <span class="s2">assert </span><span class="s1">type</span><span class="s3">(</span><span class="s1">tdef</span><span class="s3">) </span><span class="s2">is </span><span class="s1">tuple</span><span class="s3">, </span><span class="s4">&quot;wrong rule def %r&quot; </span><span class="s3">% </span><span class="s1">tdef</span>
+
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">rex </span><span class="s3">= </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">_process_regex</span><span class="s3">(</span><span class="s1">tdef</span><span class="s3">[</span><span class="s6">0</span><span class="s3">], </span><span class="s1">rflags</span><span class="s3">, </span><span class="s1">state</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">Exception </span><span class="s2">as </span><span class="s1">err</span><span class="s3">:</span>
+                <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s4">&quot;uncompilable regex %r in state %r of %r: %s&quot; </span><span class="s3">%</span>
+                                 <span class="s3">(</span><span class="s1">tdef</span><span class="s3">[</span><span class="s6">0</span><span class="s3">], </span><span class="s1">state</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">, </span><span class="s1">err</span><span class="s3">)) </span><span class="s2">from </span><span class="s1">err</span>
+
+            <span class="s1">token </span><span class="s3">= </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">_process_token</span><span class="s3">(</span><span class="s1">tdef</span><span class="s3">[</span><span class="s6">1</span><span class="s3">])</span>
+
+            <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">tdef</span><span class="s3">) == </span><span class="s6">2</span><span class="s3">:</span>
+                <span class="s1">new_state </span><span class="s3">= </span><span class="s2">None</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">new_state </span><span class="s3">= </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">_process_new_state</span><span class="s3">(</span><span class="s1">tdef</span><span class="s3">[</span><span class="s6">2</span><span class="s3">],</span>
+                                                   <span class="s1">unprocessed</span><span class="s3">, </span><span class="s1">processed</span><span class="s3">)</span>
+
+            <span class="s1">tokens</span><span class="s3">.</span><span class="s1">append</span><span class="s3">((</span><span class="s1">rex</span><span class="s3">, </span><span class="s1">token</span><span class="s3">, </span><span class="s1">new_state</span><span class="s3">))</span>
+        <span class="s2">return </span><span class="s1">tokens</span>
+
+    <span class="s2">def </span><span class="s1">process_tokendef</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">name</span><span class="s3">, </span><span class="s1">tokendefs</span><span class="s3">=</span><span class="s2">None</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot;Preprocess a dictionary of token definitions.&quot;&quot;&quot;</span>
+        <span class="s1">processed </span><span class="s3">= </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">_all_tokens</span><span class="s3">[</span><span class="s1">name</span><span class="s3">] = {}</span>
+        <span class="s1">tokendefs </span><span class="s3">= </span><span class="s1">tokendefs </span><span class="s2">or </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">tokens</span><span class="s3">[</span><span class="s1">name</span><span class="s3">]</span>
+        <span class="s2">for </span><span class="s1">state </span><span class="s2">in </span><span class="s1">list</span><span class="s3">(</span><span class="s1">tokendefs</span><span class="s3">):</span>
+            <span class="s1">cls</span><span class="s3">.</span><span class="s1">_process_state</span><span class="s3">(</span><span class="s1">tokendefs</span><span class="s3">, </span><span class="s1">processed</span><span class="s3">, </span><span class="s1">state</span><span class="s3">)</span>
+        <span class="s2">return </span><span class="s1">processed</span>
+
+    <span class="s2">def </span><span class="s1">get_tokendefs</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Merge tokens from superclasses in MRO order, returning a single tokendef 
+        dictionary. 
+ 
+        Any state that is not defined by a subclass will be inherited 
+        automatically.  States that *are* defined by subclasses will, by 
+        default, override that state in the superclass.  If a subclass wishes to 
+        inherit definitions from a superclass, it can use the special value 
+        &quot;inherit&quot;, which will cause the superclass' state definition to be 
+        included at that point in the state. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">tokens </span><span class="s3">= {}</span>
+        <span class="s1">inheritable </span><span class="s3">= {}</span>
+        <span class="s2">for </span><span class="s1">c </span><span class="s2">in </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__mro__</span><span class="s3">:</span>
+            <span class="s1">toks </span><span class="s3">= </span><span class="s1">c</span><span class="s3">.</span><span class="s1">__dict__</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s4">'tokens'</span><span class="s3">, {})</span>
+
+            <span class="s2">for </span><span class="s1">state</span><span class="s3">, </span><span class="s1">items </span><span class="s2">in </span><span class="s1">toks</span><span class="s3">.</span><span class="s1">items</span><span class="s3">():</span>
+                <span class="s1">curitems </span><span class="s3">= </span><span class="s1">tokens</span><span class="s3">.</span><span class="s1">get</span><span class="s3">(</span><span class="s1">state</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">curitems </span><span class="s2">is None</span><span class="s3">:</span>
+                    <span class="s7"># N.b. because this is assigned by reference, sufficiently</span>
+                    <span class="s7"># deep hierarchies are processed incrementally (e.g. for</span>
+                    <span class="s7"># A(B), B(C), C(RegexLexer), B will be premodified so X(B)</span>
+                    <span class="s7"># will not see any inherits in B).</span>
+                    <span class="s1">tokens</span><span class="s3">[</span><span class="s1">state</span><span class="s3">] = </span><span class="s1">items</span>
+                    <span class="s2">try</span><span class="s3">:</span>
+                        <span class="s1">inherit_ndx </span><span class="s3">= </span><span class="s1">items</span><span class="s3">.</span><span class="s1">index</span><span class="s3">(</span><span class="s1">inherit</span><span class="s3">)</span>
+                    <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+                        <span class="s2">continue</span>
+                    <span class="s1">inheritable</span><span class="s3">[</span><span class="s1">state</span><span class="s3">] = </span><span class="s1">inherit_ndx</span>
+                    <span class="s2">continue</span>
+
+                <span class="s1">inherit_ndx </span><span class="s3">= </span><span class="s1">inheritable</span><span class="s3">.</span><span class="s1">pop</span><span class="s3">(</span><span class="s1">state</span><span class="s3">, </span><span class="s2">None</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">inherit_ndx </span><span class="s2">is None</span><span class="s3">:</span>
+                    <span class="s2">continue</span>
+
+                <span class="s7"># Replace the &quot;inherit&quot; value with the items</span>
+                <span class="s1">curitems</span><span class="s3">[</span><span class="s1">inherit_ndx</span><span class="s3">:</span><span class="s1">inherit_ndx</span><span class="s3">+</span><span class="s6">1</span><span class="s3">] = </span><span class="s1">items</span>
+                <span class="s2">try</span><span class="s3">:</span>
+                    <span class="s7"># N.b. this is the index in items (that is, the superclass</span>
+                    <span class="s7"># copy), so offset required when storing below.</span>
+                    <span class="s1">new_inh_ndx </span><span class="s3">= </span><span class="s1">items</span><span class="s3">.</span><span class="s1">index</span><span class="s3">(</span><span class="s1">inherit</span><span class="s3">)</span>
+                <span class="s2">except </span><span class="s1">ValueError</span><span class="s3">:</span>
+                    <span class="s2">pass</span>
+                <span class="s2">else</span><span class="s3">:</span>
+                    <span class="s1">inheritable</span><span class="s3">[</span><span class="s1">state</span><span class="s3">] = </span><span class="s1">inherit_ndx </span><span class="s3">+ </span><span class="s1">new_inh_ndx</span>
+
+        <span class="s2">return </span><span class="s1">tokens</span>
+
+    <span class="s2">def </span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">, **</span><span class="s1">kwds</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot;Instantiate cls after preprocessing its token definitions.&quot;&quot;&quot;</span>
+        <span class="s2">if </span><span class="s4">'_tokens' </span><span class="s2">not in </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__dict__</span><span class="s3">:</span>
+            <span class="s1">cls</span><span class="s3">.</span><span class="s1">_all_tokens </span><span class="s3">= {}</span>
+            <span class="s1">cls</span><span class="s3">.</span><span class="s1">_tmpname </span><span class="s3">= </span><span class="s6">0</span>
+            <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s4">'token_variants'</span><span class="s3">) </span><span class="s2">and </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">token_variants</span><span class="s3">:</span>
+                <span class="s7"># don't process yet</span>
+                <span class="s2">pass</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s1">cls</span><span class="s3">.</span><span class="s1">_tokens </span><span class="s3">= </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">process_tokendef</span><span class="s3">(</span><span class="s4">''</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">get_tokendefs</span><span class="s3">())</span>
+
+        <span class="s2">return </span><span class="s1">type</span><span class="s3">.</span><span class="s1">__call__</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">, **</span><span class="s1">kwds</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">RegexLexer</span><span class="s3">(</span><span class="s1">Lexer</span><span class="s3">, </span><span class="s1">metaclass</span><span class="s3">=</span><span class="s1">RegexLexerMeta</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Base for simple stateful regular expression-based lexers. 
+    Simplifies the lexing process so that you need only 
+    provide a list of states and regular expressions. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s7">#: Flags for compiling the regular expressions.</span>
+    <span class="s7">#: Defaults to MULTILINE.</span>
+    <span class="s1">flags </span><span class="s3">= </span><span class="s1">re</span><span class="s3">.</span><span class="s1">MULTILINE</span>
+
+    <span class="s7">#: At all time there is a stack of states. Initially, the stack contains</span>
+    <span class="s7">#: a single state 'root'. The top of the stack is called &quot;the current state&quot;.</span>
+    <span class="s7">#:</span>
+    <span class="s7">#: Dict of ``{'state': [(regex, tokentype, new_state), ...], ...}``</span>
+    <span class="s7">#:</span>
+    <span class="s7">#: ``new_state`` can be omitted to signify no state transition.</span>
+    <span class="s7">#: If ``new_state`` is a string, it is pushed on the stack. This ensure</span>
+    <span class="s7">#: the new current state is ``new_state``.</span>
+    <span class="s7">#: If ``new_state`` is a tuple of strings, all of those strings are pushed</span>
+    <span class="s7">#: on the stack and the current state will be the last element of the list.</span>
+    <span class="s7">#: ``new_state`` can also be ``combined('state1', 'state2', ...)``</span>
+    <span class="s7">#: to signify a new, anonymous state combined from the rules of two</span>
+    <span class="s7">#: or more existing ones.</span>
+    <span class="s7">#: Furthermore, it can be '#pop' to signify going back one step in</span>
+    <span class="s7">#: the state stack, or '#push' to push the current state on the stack</span>
+    <span class="s7">#: again. Note that if you push while in a combined state, the combined</span>
+    <span class="s7">#: state itself is pushed, and not only the state in which the rule is</span>
+    <span class="s7">#: defined.</span>
+    <span class="s7">#:</span>
+    <span class="s7">#: The tuple can also be replaced with ``include('state')``, in which</span>
+    <span class="s7">#: case the rules from the state named by the string are included in the</span>
+    <span class="s7">#: current one.</span>
+    <span class="s1">tokens </span><span class="s3">= {}</span>
+
+    <span class="s2">def </span><span class="s1">get_tokens_unprocessed</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">text</span><span class="s3">, </span><span class="s1">stack</span><span class="s3">=(</span><span class="s4">'root'</span><span class="s3">,)):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Split ``text`` into (tokentype, text) pairs. 
+ 
+        ``stack`` is the initial stack (default: ``['root']``) 
+        &quot;&quot;&quot;</span>
+        <span class="s1">pos </span><span class="s3">= </span><span class="s6">0</span>
+        <span class="s1">tokendefs </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_tokens</span>
+        <span class="s1">statestack </span><span class="s3">= </span><span class="s1">list</span><span class="s3">(</span><span class="s1">stack</span><span class="s3">)</span>
+        <span class="s1">statetokens </span><span class="s3">= </span><span class="s1">tokendefs</span><span class="s3">[</span><span class="s1">statestack</span><span class="s3">[-</span><span class="s6">1</span><span class="s3">]]</span>
+        <span class="s2">while </span><span class="s6">1</span><span class="s3">:</span>
+            <span class="s2">for </span><span class="s1">rexmatch</span><span class="s3">, </span><span class="s1">action</span><span class="s3">, </span><span class="s1">new_state </span><span class="s2">in </span><span class="s1">statetokens</span><span class="s3">:</span>
+                <span class="s1">m </span><span class="s3">= </span><span class="s1">rexmatch</span><span class="s3">(</span><span class="s1">text</span><span class="s3">, </span><span class="s1">pos</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">m</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s1">action </span><span class="s2">is not None</span><span class="s3">:</span>
+                        <span class="s2">if </span><span class="s1">type</span><span class="s3">(</span><span class="s1">action</span><span class="s3">) </span><span class="s2">is </span><span class="s1">_TokenType</span><span class="s3">:</span>
+                            <span class="s2">yield </span><span class="s1">pos</span><span class="s3">, </span><span class="s1">action</span><span class="s3">, </span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">()</span>
+                        <span class="s2">else</span><span class="s3">:</span>
+                            <span class="s2">yield from </span><span class="s1">action</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">m</span><span class="s3">)</span>
+                    <span class="s1">pos </span><span class="s3">= </span><span class="s1">m</span><span class="s3">.</span><span class="s1">end</span><span class="s3">()</span>
+                    <span class="s2">if </span><span class="s1">new_state </span><span class="s2">is not None</span><span class="s3">:</span>
+                        <span class="s7"># state transition</span>
+                        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">new_state</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">):</span>
+                            <span class="s2">for </span><span class="s1">state </span><span class="s2">in </span><span class="s1">new_state</span><span class="s3">:</span>
+                                <span class="s2">if </span><span class="s1">state </span><span class="s3">== </span><span class="s4">'#pop'</span><span class="s3">:</span>
+                                    <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">statestack</span><span class="s3">) &gt; </span><span class="s6">1</span><span class="s3">:</span>
+                                        <span class="s1">statestack</span><span class="s3">.</span><span class="s1">pop</span><span class="s3">()</span>
+                                <span class="s2">elif </span><span class="s1">state </span><span class="s3">== </span><span class="s4">'#push'</span><span class="s3">:</span>
+                                    <span class="s1">statestack</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">statestack</span><span class="s3">[-</span><span class="s6">1</span><span class="s3">])</span>
+                                <span class="s2">else</span><span class="s3">:</span>
+                                    <span class="s1">statestack</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">state</span><span class="s3">)</span>
+                        <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">new_state</span><span class="s3">, </span><span class="s1">int</span><span class="s3">):</span>
+                            <span class="s7"># pop, but keep at least one state on the stack</span>
+                            <span class="s7"># (random code leading to unexpected pops should</span>
+                            <span class="s7"># not allow exceptions)</span>
+                            <span class="s2">if </span><span class="s1">abs</span><span class="s3">(</span><span class="s1">new_state</span><span class="s3">) &gt;= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">statestack</span><span class="s3">):</span>
+                                <span class="s2">del </span><span class="s1">statestack</span><span class="s3">[</span><span class="s6">1</span><span class="s3">:]</span>
+                            <span class="s2">else</span><span class="s3">:</span>
+                                <span class="s2">del </span><span class="s1">statestack</span><span class="s3">[</span><span class="s1">new_state</span><span class="s3">:]</span>
+                        <span class="s2">elif </span><span class="s1">new_state </span><span class="s3">== </span><span class="s4">'#push'</span><span class="s3">:</span>
+                            <span class="s1">statestack</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">statestack</span><span class="s3">[-</span><span class="s6">1</span><span class="s3">])</span>
+                        <span class="s2">else</span><span class="s3">:</span>
+                            <span class="s2">assert False</span><span class="s3">, </span><span class="s4">&quot;wrong state def: %r&quot; </span><span class="s3">% </span><span class="s1">new_state</span>
+                        <span class="s1">statetokens </span><span class="s3">= </span><span class="s1">tokendefs</span><span class="s3">[</span><span class="s1">statestack</span><span class="s3">[-</span><span class="s6">1</span><span class="s3">]]</span>
+                    <span class="s2">break</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s7"># We are here only if all state tokens have been considered</span>
+                <span class="s7"># and there was not a match on any of them.</span>
+                <span class="s2">try</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s1">text</span><span class="s3">[</span><span class="s1">pos</span><span class="s3">] == </span><span class="s4">'</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">:</span>
+                        <span class="s7"># at EOL, reset state to &quot;root&quot;</span>
+                        <span class="s1">statestack </span><span class="s3">= [</span><span class="s4">'root'</span><span class="s3">]</span>
+                        <span class="s1">statetokens </span><span class="s3">= </span><span class="s1">tokendefs</span><span class="s3">[</span><span class="s4">'root'</span><span class="s3">]</span>
+                        <span class="s2">yield </span><span class="s1">pos</span><span class="s3">, </span><span class="s1">Whitespace</span><span class="s3">, </span><span class="s4">'</span><span class="s2">\n</span><span class="s4">'</span>
+                        <span class="s1">pos </span><span class="s3">+= </span><span class="s6">1</span>
+                        <span class="s2">continue</span>
+                    <span class="s2">yield </span><span class="s1">pos</span><span class="s3">, </span><span class="s1">Error</span><span class="s3">, </span><span class="s1">text</span><span class="s3">[</span><span class="s1">pos</span><span class="s3">]</span>
+                    <span class="s1">pos </span><span class="s3">+= </span><span class="s6">1</span>
+                <span class="s2">except </span><span class="s1">IndexError</span><span class="s3">:</span>
+                    <span class="s2">break</span>
+
+
+<span class="s2">class </span><span class="s1">LexerContext</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot; 
+    A helper object that holds lexer position data. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">text</span><span class="s3">, </span><span class="s1">pos</span><span class="s3">, </span><span class="s1">stack</span><span class="s3">=</span><span class="s2">None</span><span class="s3">, </span><span class="s1">end</span><span class="s3">=</span><span class="s2">None</span><span class="s3">):</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">text </span><span class="s3">= </span><span class="s1">text</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">pos </span><span class="s3">= </span><span class="s1">pos</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">end </span><span class="s3">= </span><span class="s1">end </span><span class="s2">or </span><span class="s1">len</span><span class="s3">(</span><span class="s1">text</span><span class="s3">)  </span><span class="s7"># end=0 not supported ;-)</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">stack </span><span class="s3">= </span><span class="s1">stack </span><span class="s2">or </span><span class="s3">[</span><span class="s4">'root'</span><span class="s3">]</span>
+
+    <span class="s2">def </span><span class="s1">__repr__</span><span class="s3">(</span><span class="s1">self</span><span class="s3">):</span>
+        <span class="s2">return </span><span class="s4">'LexerContext(%r, %r, %r)' </span><span class="s3">% (</span>
+            <span class="s1">self</span><span class="s3">.</span><span class="s1">text</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">pos</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">stack</span><span class="s3">)</span>
+
+
+<span class="s2">class </span><span class="s1">ExtendedRegexLexer</span><span class="s3">(</span><span class="s1">RegexLexer</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    A RegexLexer that uses a context object to store its state. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">get_tokens_unprocessed</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">text</span><span class="s3">=</span><span class="s2">None</span><span class="s3">, </span><span class="s1">context</span><span class="s3">=</span><span class="s2">None</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot; 
+        Split ``text`` into (tokentype, text) pairs. 
+        If ``context`` is given, use this lexer context instead. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">tokendefs </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">_tokens</span>
+        <span class="s2">if not </span><span class="s1">context</span><span class="s3">:</span>
+            <span class="s1">ctx </span><span class="s3">= </span><span class="s1">LexerContext</span><span class="s3">(</span><span class="s1">text</span><span class="s3">, </span><span class="s6">0</span><span class="s3">)</span>
+            <span class="s1">statetokens </span><span class="s3">= </span><span class="s1">tokendefs</span><span class="s3">[</span><span class="s4">'root'</span><span class="s3">]</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">ctx </span><span class="s3">= </span><span class="s1">context</span>
+            <span class="s1">statetokens </span><span class="s3">= </span><span class="s1">tokendefs</span><span class="s3">[</span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">stack</span><span class="s3">[-</span><span class="s6">1</span><span class="s3">]]</span>
+            <span class="s1">text </span><span class="s3">= </span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">text</span>
+        <span class="s2">while </span><span class="s6">1</span><span class="s3">:</span>
+            <span class="s2">for </span><span class="s1">rexmatch</span><span class="s3">, </span><span class="s1">action</span><span class="s3">, </span><span class="s1">new_state </span><span class="s2">in </span><span class="s1">statetokens</span><span class="s3">:</span>
+                <span class="s1">m </span><span class="s3">= </span><span class="s1">rexmatch</span><span class="s3">(</span><span class="s1">text</span><span class="s3">, </span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">pos</span><span class="s3">, </span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">end</span><span class="s3">)</span>
+                <span class="s2">if </span><span class="s1">m</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s1">action </span><span class="s2">is not None</span><span class="s3">:</span>
+                        <span class="s2">if </span><span class="s1">type</span><span class="s3">(</span><span class="s1">action</span><span class="s3">) </span><span class="s2">is </span><span class="s1">_TokenType</span><span class="s3">:</span>
+                            <span class="s2">yield </span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">pos</span><span class="s3">, </span><span class="s1">action</span><span class="s3">, </span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">()</span>
+                            <span class="s1">ctx</span><span class="s3">.</span><span class="s1">pos </span><span class="s3">= </span><span class="s1">m</span><span class="s3">.</span><span class="s1">end</span><span class="s3">()</span>
+                        <span class="s2">else</span><span class="s3">:</span>
+                            <span class="s2">yield from </span><span class="s1">action</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">m</span><span class="s3">, </span><span class="s1">ctx</span><span class="s3">)</span>
+                            <span class="s2">if not </span><span class="s1">new_state</span><span class="s3">:</span>
+                                <span class="s7"># altered the state stack?</span>
+                                <span class="s1">statetokens </span><span class="s3">= </span><span class="s1">tokendefs</span><span class="s3">[</span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">stack</span><span class="s3">[-</span><span class="s6">1</span><span class="s3">]]</span>
+                    <span class="s7"># CAUTION: callback must set ctx.pos!</span>
+                    <span class="s2">if </span><span class="s1">new_state </span><span class="s2">is not None</span><span class="s3">:</span>
+                        <span class="s7"># state transition</span>
+                        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">new_state</span><span class="s3">, </span><span class="s1">tuple</span><span class="s3">):</span>
+                            <span class="s2">for </span><span class="s1">state </span><span class="s2">in </span><span class="s1">new_state</span><span class="s3">:</span>
+                                <span class="s2">if </span><span class="s1">state </span><span class="s3">== </span><span class="s4">'#pop'</span><span class="s3">:</span>
+                                    <span class="s2">if </span><span class="s1">len</span><span class="s3">(</span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">stack</span><span class="s3">) &gt; </span><span class="s6">1</span><span class="s3">:</span>
+                                        <span class="s1">ctx</span><span class="s3">.</span><span class="s1">stack</span><span class="s3">.</span><span class="s1">pop</span><span class="s3">()</span>
+                                <span class="s2">elif </span><span class="s1">state </span><span class="s3">== </span><span class="s4">'#push'</span><span class="s3">:</span>
+                                    <span class="s1">ctx</span><span class="s3">.</span><span class="s1">stack</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">stack</span><span class="s3">[-</span><span class="s6">1</span><span class="s3">])</span>
+                                <span class="s2">else</span><span class="s3">:</span>
+                                    <span class="s1">ctx</span><span class="s3">.</span><span class="s1">stack</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">state</span><span class="s3">)</span>
+                        <span class="s2">elif </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">new_state</span><span class="s3">, </span><span class="s1">int</span><span class="s3">):</span>
+                            <span class="s7"># see RegexLexer for why this check is made</span>
+                            <span class="s2">if </span><span class="s1">abs</span><span class="s3">(</span><span class="s1">new_state</span><span class="s3">) &gt;= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">stack</span><span class="s3">):</span>
+                                <span class="s2">del </span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">stack</span><span class="s3">[</span><span class="s6">1</span><span class="s3">:]</span>
+                            <span class="s2">else</span><span class="s3">:</span>
+                                <span class="s2">del </span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">stack</span><span class="s3">[</span><span class="s1">new_state</span><span class="s3">:]</span>
+                        <span class="s2">elif </span><span class="s1">new_state </span><span class="s3">== </span><span class="s4">'#push'</span><span class="s3">:</span>
+                            <span class="s1">ctx</span><span class="s3">.</span><span class="s1">stack</span><span class="s3">.</span><span class="s1">append</span><span class="s3">(</span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">stack</span><span class="s3">[-</span><span class="s6">1</span><span class="s3">])</span>
+                        <span class="s2">else</span><span class="s3">:</span>
+                            <span class="s2">assert False</span><span class="s3">, </span><span class="s4">&quot;wrong state def: %r&quot; </span><span class="s3">% </span><span class="s1">new_state</span>
+                        <span class="s1">statetokens </span><span class="s3">= </span><span class="s1">tokendefs</span><span class="s3">[</span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">stack</span><span class="s3">[-</span><span class="s6">1</span><span class="s3">]]</span>
+                    <span class="s2">break</span>
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s2">try</span><span class="s3">:</span>
+                    <span class="s2">if </span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">pos </span><span class="s3">&gt;= </span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">end</span><span class="s3">:</span>
+                        <span class="s2">break</span>
+                    <span class="s2">if </span><span class="s1">text</span><span class="s3">[</span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">pos</span><span class="s3">] == </span><span class="s4">'</span><span class="s2">\n</span><span class="s4">'</span><span class="s3">:</span>
+                        <span class="s7"># at EOL, reset state to &quot;root&quot;</span>
+                        <span class="s1">ctx</span><span class="s3">.</span><span class="s1">stack </span><span class="s3">= [</span><span class="s4">'root'</span><span class="s3">]</span>
+                        <span class="s1">statetokens </span><span class="s3">= </span><span class="s1">tokendefs</span><span class="s3">[</span><span class="s4">'root'</span><span class="s3">]</span>
+                        <span class="s2">yield </span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">pos</span><span class="s3">, </span><span class="s1">Text</span><span class="s3">, </span><span class="s4">'</span><span class="s2">\n</span><span class="s4">'</span>
+                        <span class="s1">ctx</span><span class="s3">.</span><span class="s1">pos </span><span class="s3">+= </span><span class="s6">1</span>
+                        <span class="s2">continue</span>
+                    <span class="s2">yield </span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">pos</span><span class="s3">, </span><span class="s1">Error</span><span class="s3">, </span><span class="s1">text</span><span class="s3">[</span><span class="s1">ctx</span><span class="s3">.</span><span class="s1">pos</span><span class="s3">]</span>
+                    <span class="s1">ctx</span><span class="s3">.</span><span class="s1">pos </span><span class="s3">+= </span><span class="s6">1</span>
+                <span class="s2">except </span><span class="s1">IndexError</span><span class="s3">:</span>
+                    <span class="s2">break</span>
+
+
+<span class="s2">def </span><span class="s1">do_insertions</span><span class="s3">(</span><span class="s1">insertions</span><span class="s3">, </span><span class="s1">tokens</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot; 
+    Helper for lexers which must combine the results of several 
+    sublexers. 
+ 
+    ``insertions`` is a list of ``(index, itokens)`` pairs. 
+    Each ``itokens`` iterable should be inserted at position 
+    ``index`` into the token stream given by the ``tokens`` 
+    argument. 
+ 
+    The result is a combined token stream. 
+ 
+    TODO: clean up the code here. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">insertions </span><span class="s3">= </span><span class="s1">iter</span><span class="s3">(</span><span class="s1">insertions</span><span class="s3">)</span>
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">index</span><span class="s3">, </span><span class="s1">itokens </span><span class="s3">= </span><span class="s1">next</span><span class="s3">(</span><span class="s1">insertions</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s1">StopIteration</span><span class="s3">:</span>
+        <span class="s7"># no insertions</span>
+        <span class="s2">yield from </span><span class="s1">tokens</span>
+        <span class="s2">return</span>
+
+    <span class="s1">realpos </span><span class="s3">= </span><span class="s2">None</span>
+    <span class="s1">insleft </span><span class="s3">= </span><span class="s2">True</span>
+
+    <span class="s7"># iterate over the token stream where we want to insert</span>
+    <span class="s7"># the tokens from the insertion list.</span>
+    <span class="s2">for </span><span class="s1">i</span><span class="s3">, </span><span class="s1">t</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">tokens</span><span class="s3">:</span>
+        <span class="s7"># first iteration. store the position of first item</span>
+        <span class="s2">if </span><span class="s1">realpos </span><span class="s2">is None</span><span class="s3">:</span>
+            <span class="s1">realpos </span><span class="s3">= </span><span class="s1">i</span>
+        <span class="s1">oldi </span><span class="s3">= </span><span class="s6">0</span>
+        <span class="s2">while </span><span class="s1">insleft </span><span class="s2">and </span><span class="s1">i </span><span class="s3">+ </span><span class="s1">len</span><span class="s3">(</span><span class="s1">v</span><span class="s3">) &gt;= </span><span class="s1">index</span><span class="s3">:</span>
+            <span class="s1">tmpval </span><span class="s3">= </span><span class="s1">v</span><span class="s3">[</span><span class="s1">oldi</span><span class="s3">:</span><span class="s1">index </span><span class="s3">- </span><span class="s1">i</span><span class="s3">]</span>
+            <span class="s2">if </span><span class="s1">tmpval</span><span class="s3">:</span>
+                <span class="s2">yield </span><span class="s1">realpos</span><span class="s3">, </span><span class="s1">t</span><span class="s3">, </span><span class="s1">tmpval</span>
+                <span class="s1">realpos </span><span class="s3">+= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">tmpval</span><span class="s3">)</span>
+            <span class="s2">for </span><span class="s1">it_index</span><span class="s3">, </span><span class="s1">it_token</span><span class="s3">, </span><span class="s1">it_value </span><span class="s2">in </span><span class="s1">itokens</span><span class="s3">:</span>
+                <span class="s2">yield </span><span class="s1">realpos</span><span class="s3">, </span><span class="s1">it_token</span><span class="s3">, </span><span class="s1">it_value</span>
+                <span class="s1">realpos </span><span class="s3">+= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">it_value</span><span class="s3">)</span>
+            <span class="s1">oldi </span><span class="s3">= </span><span class="s1">index </span><span class="s3">- </span><span class="s1">i</span>
+            <span class="s2">try</span><span class="s3">:</span>
+                <span class="s1">index</span><span class="s3">, </span><span class="s1">itokens </span><span class="s3">= </span><span class="s1">next</span><span class="s3">(</span><span class="s1">insertions</span><span class="s3">)</span>
+            <span class="s2">except </span><span class="s1">StopIteration</span><span class="s3">:</span>
+                <span class="s1">insleft </span><span class="s3">= </span><span class="s2">False</span>
+                <span class="s2">break  </span><span class="s7"># not strictly necessary</span>
+        <span class="s2">if </span><span class="s1">oldi </span><span class="s3">&lt; </span><span class="s1">len</span><span class="s3">(</span><span class="s1">v</span><span class="s3">):</span>
+            <span class="s2">yield </span><span class="s1">realpos</span><span class="s3">, </span><span class="s1">t</span><span class="s3">, </span><span class="s1">v</span><span class="s3">[</span><span class="s1">oldi</span><span class="s3">:]</span>
+            <span class="s1">realpos </span><span class="s3">+= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">v</span><span class="s3">) - </span><span class="s1">oldi</span>
+
+    <span class="s7"># leftover tokens</span>
+    <span class="s2">while </span><span class="s1">insleft</span><span class="s3">:</span>
+        <span class="s7"># no normal tokens, set realpos to zero</span>
+        <span class="s1">realpos </span><span class="s3">= </span><span class="s1">realpos </span><span class="s2">or </span><span class="s6">0</span>
+        <span class="s2">for </span><span class="s1">p</span><span class="s3">, </span><span class="s1">t</span><span class="s3">, </span><span class="s1">v </span><span class="s2">in </span><span class="s1">itokens</span><span class="s3">:</span>
+            <span class="s2">yield </span><span class="s1">realpos</span><span class="s3">, </span><span class="s1">t</span><span class="s3">, </span><span class="s1">v</span>
+            <span class="s1">realpos </span><span class="s3">+= </span><span class="s1">len</span><span class="s3">(</span><span class="s1">v</span><span class="s3">)</span>
+        <span class="s2">try</span><span class="s3">:</span>
+            <span class="s1">index</span><span class="s3">, </span><span class="s1">itokens </span><span class="s3">= </span><span class="s1">next</span><span class="s3">(</span><span class="s1">insertions</span><span class="s3">)</span>
+        <span class="s2">except </span><span class="s1">StopIteration</span><span class="s3">:</span>
+            <span class="s1">insleft </span><span class="s3">= </span><span class="s2">False</span>
+            <span class="s2">break  </span><span class="s7"># not strictly necessary</span>
+
+
+<span class="s2">class </span><span class="s1">ProfilingRegexLexerMeta</span><span class="s3">(</span><span class="s1">RegexLexerMeta</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;Metaclass for ProfilingRegexLexer, collects regex timing info.&quot;&quot;&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_process_regex</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">regex</span><span class="s3">, </span><span class="s1">rflags</span><span class="s3">, </span><span class="s1">state</span><span class="s3">):</span>
+        <span class="s2">if </span><span class="s1">isinstance</span><span class="s3">(</span><span class="s1">regex</span><span class="s3">, </span><span class="s1">words</span><span class="s3">):</span>
+            <span class="s1">rex </span><span class="s3">= </span><span class="s1">regex_opt</span><span class="s3">(</span><span class="s1">regex</span><span class="s3">.</span><span class="s1">words</span><span class="s3">, </span><span class="s1">prefix</span><span class="s3">=</span><span class="s1">regex</span><span class="s3">.</span><span class="s1">prefix</span><span class="s3">,</span>
+                            <span class="s1">suffix</span><span class="s3">=</span><span class="s1">regex</span><span class="s3">.</span><span class="s1">suffix</span><span class="s3">)</span>
+        <span class="s2">else</span><span class="s3">:</span>
+            <span class="s1">rex </span><span class="s3">= </span><span class="s1">regex</span>
+        <span class="s1">compiled </span><span class="s3">= </span><span class="s1">re</span><span class="s3">.</span><span class="s1">compile</span><span class="s3">(</span><span class="s1">rex</span><span class="s3">, </span><span class="s1">rflags</span><span class="s3">)</span>
+
+        <span class="s2">def </span><span class="s1">match_func</span><span class="s3">(</span><span class="s1">text</span><span class="s3">, </span><span class="s1">pos</span><span class="s3">, </span><span class="s1">endpos</span><span class="s3">=</span><span class="s1">sys</span><span class="s3">.</span><span class="s1">maxsize</span><span class="s3">):</span>
+            <span class="s1">info </span><span class="s3">= </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">_prof_data</span><span class="s3">[-</span><span class="s6">1</span><span class="s3">].</span><span class="s1">setdefault</span><span class="s3">((</span><span class="s1">state</span><span class="s3">, </span><span class="s1">rex</span><span class="s3">), [</span><span class="s6">0</span><span class="s3">, </span><span class="s6">0.0</span><span class="s3">])</span>
+            <span class="s1">t0 </span><span class="s3">= </span><span class="s1">time</span><span class="s3">.</span><span class="s1">time</span><span class="s3">()</span>
+            <span class="s1">res </span><span class="s3">= </span><span class="s1">compiled</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s1">text</span><span class="s3">, </span><span class="s1">pos</span><span class="s3">, </span><span class="s1">endpos</span><span class="s3">)</span>
+            <span class="s1">t1 </span><span class="s3">= </span><span class="s1">time</span><span class="s3">.</span><span class="s1">time</span><span class="s3">()</span>
+            <span class="s1">info</span><span class="s3">[</span><span class="s6">0</span><span class="s3">] += </span><span class="s6">1</span>
+            <span class="s1">info</span><span class="s3">[</span><span class="s6">1</span><span class="s3">] += </span><span class="s1">t1 </span><span class="s3">- </span><span class="s1">t0</span>
+            <span class="s2">return </span><span class="s1">res</span>
+        <span class="s2">return </span><span class="s1">match_func</span>
+
+
+<span class="s2">class </span><span class="s1">ProfilingRegexLexer</span><span class="s3">(</span><span class="s1">RegexLexer</span><span class="s3">, </span><span class="s1">metaclass</span><span class="s3">=</span><span class="s1">ProfilingRegexLexerMeta</span><span class="s3">):</span>
+    <span class="s0">&quot;&quot;&quot;Drop-in replacement for RegexLexer that does profiling of its regexes.&quot;&quot;&quot;</span>
+
+    <span class="s1">_prof_data </span><span class="s3">= []</span>
+    <span class="s1">_prof_sort_index </span><span class="s3">= </span><span class="s6">4  </span><span class="s7"># defaults to time per call</span>
+
+    <span class="s2">def </span><span class="s1">get_tokens_unprocessed</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">text</span><span class="s3">, </span><span class="s1">stack</span><span class="s3">=(</span><span class="s4">'root'</span><span class="s3">,)):</span>
+        <span class="s7"># this needs to be a stack, since using(this) will produce nested calls</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">__class__</span><span class="s3">.</span><span class="s1">_prof_data</span><span class="s3">.</span><span class="s1">append</span><span class="s3">({})</span>
+        <span class="s2">yield from </span><span class="s1">RegexLexer</span><span class="s3">.</span><span class="s1">get_tokens_unprocessed</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">text</span><span class="s3">, </span><span class="s1">stack</span><span class="s3">)</span>
+        <span class="s1">rawdata </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">__class__</span><span class="s3">.</span><span class="s1">_prof_data</span><span class="s3">.</span><span class="s1">pop</span><span class="s3">()</span>
+        <span class="s1">data </span><span class="s3">= </span><span class="s1">sorted</span><span class="s3">(((</span><span class="s1">s</span><span class="s3">, </span><span class="s1">repr</span><span class="s3">(</span><span class="s1">r</span><span class="s3">).</span><span class="s1">strip</span><span class="s3">(</span><span class="s4">'u</span><span class="s2">\'</span><span class="s4">'</span><span class="s3">).</span><span class="s1">replace</span><span class="s3">(</span><span class="s4">'</span><span class="s2">\\\\</span><span class="s4">'</span><span class="s3">, </span><span class="s4">'</span><span class="s2">\\</span><span class="s4">'</span><span class="s3">)[:</span><span class="s6">65</span><span class="s3">],</span>
+                        <span class="s1">n</span><span class="s3">, </span><span class="s6">1000 </span><span class="s3">* </span><span class="s1">t</span><span class="s3">, </span><span class="s6">1000 </span><span class="s3">* </span><span class="s1">t </span><span class="s3">/ </span><span class="s1">n</span><span class="s3">)</span>
+                       <span class="s2">for </span><span class="s3">((</span><span class="s1">s</span><span class="s3">, </span><span class="s1">r</span><span class="s3">), (</span><span class="s1">n</span><span class="s3">, </span><span class="s1">t</span><span class="s3">)) </span><span class="s2">in </span><span class="s1">rawdata</span><span class="s3">.</span><span class="s1">items</span><span class="s3">()),</span>
+                      <span class="s1">key</span><span class="s3">=</span><span class="s2">lambda </span><span class="s1">x</span><span class="s3">: </span><span class="s1">x</span><span class="s3">[</span><span class="s1">self</span><span class="s3">.</span><span class="s1">_prof_sort_index</span><span class="s3">],</span>
+                      <span class="s1">reverse</span><span class="s3">=</span><span class="s2">True</span><span class="s3">)</span>
+        <span class="s1">sum_total </span><span class="s3">= </span><span class="s1">sum</span><span class="s3">(</span><span class="s1">x</span><span class="s3">[</span><span class="s6">3</span><span class="s3">] </span><span class="s2">for </span><span class="s1">x </span><span class="s2">in </span><span class="s1">data</span><span class="s3">)</span>
+
+        <span class="s1">print</span><span class="s3">()</span>
+        <span class="s1">print</span><span class="s3">(</span><span class="s4">'Profiling result for %s lexing %d chars in %.3f ms' </span><span class="s3">%</span>
+              <span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">__class__</span><span class="s3">.</span><span class="s1">__name__</span><span class="s3">, </span><span class="s1">len</span><span class="s3">(</span><span class="s1">text</span><span class="s3">), </span><span class="s1">sum_total</span><span class="s3">))</span>
+        <span class="s1">print</span><span class="s3">(</span><span class="s4">'=' </span><span class="s3">* </span><span class="s6">110</span><span class="s3">)</span>
+        <span class="s1">print</span><span class="s3">(</span><span class="s4">'%-20s %-64s ncalls  tottime  percall' </span><span class="s3">% (</span><span class="s4">'state'</span><span class="s3">, </span><span class="s4">'regex'</span><span class="s3">))</span>
+        <span class="s1">print</span><span class="s3">(</span><span class="s4">'-' </span><span class="s3">* </span><span class="s6">110</span><span class="s3">)</span>
+        <span class="s2">for </span><span class="s1">d </span><span class="s2">in </span><span class="s1">data</span><span class="s3">:</span>
+            <span class="s1">print</span><span class="s3">(</span><span class="s4">'%-20s %-65s %5d %8.4f %8.4f' </span><span class="s3">% </span><span class="s1">d</span><span class="s3">)</span>
+        <span class="s1">print</span><span class="s3">(</span><span class="s4">'=' </span><span class="s3">* </span><span class="s6">110</span><span class="s3">)</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,40 @@
+<html>
+<head>
+<title>httpsredirect.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+httpsredirect.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">datastructures </span><span class="s0">import </span><span class="s1">URL</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">responses </span><span class="s0">import </span><span class="s1">RedirectResponse</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">ASGIApp</span><span class="s2">, </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">Send</span>
+
+
+<span class="s0">class </span><span class="s1">HTTPSRedirectMiddleware</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">app</span><span class="s2">: </span><span class="s1">ASGIApp</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">app </span><span class="s2">= </span><span class="s1">app</span>
+
+    <span class="s0">async def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">: </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">: </span><span class="s1">Send</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">scope</span><span class="s2">[</span><span class="s3">&quot;type&quot;</span><span class="s2">] </span><span class="s0">in </span><span class="s2">(</span><span class="s3">&quot;http&quot;</span><span class="s2">, </span><span class="s3">&quot;websocket&quot;</span><span class="s2">) </span><span class="s0">and </span><span class="s1">scope</span><span class="s2">[</span><span class="s3">&quot;scheme&quot;</span><span class="s2">] </span><span class="s0">in </span><span class="s2">(</span><span class="s3">&quot;http&quot;</span><span class="s2">, </span><span class="s3">&quot;ws&quot;</span><span class="s2">):</span>
+            <span class="s1">url </span><span class="s2">= </span><span class="s1">URL</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">=</span><span class="s1">scope</span><span class="s2">)</span>
+            <span class="s1">redirect_scheme </span><span class="s2">= {</span><span class="s3">&quot;http&quot;</span><span class="s2">: </span><span class="s3">&quot;https&quot;</span><span class="s2">, </span><span class="s3">&quot;ws&quot;</span><span class="s2">: </span><span class="s3">&quot;wss&quot;</span><span class="s2">}[</span><span class="s1">url</span><span class="s2">.</span><span class="s1">scheme</span><span class="s2">]</span>
+            <span class="s1">netloc </span><span class="s2">= </span><span class="s1">url</span><span class="s2">.</span><span class="s1">hostname </span><span class="s0">if </span><span class="s1">url</span><span class="s2">.</span><span class="s1">port </span><span class="s0">in </span><span class="s2">(</span><span class="s4">80</span><span class="s2">, </span><span class="s4">443</span><span class="s2">) </span><span class="s0">else </span><span class="s1">url</span><span class="s2">.</span><span class="s1">netloc</span>
+            <span class="s1">url </span><span class="s2">= </span><span class="s1">url</span><span class="s2">.</span><span class="s1">replace</span><span class="s2">(</span><span class="s1">scheme</span><span class="s2">=</span><span class="s1">redirect_scheme</span><span class="s2">, </span><span class="s1">netloc</span><span class="s2">=</span><span class="s1">netloc</span><span class="s2">)</span>
+            <span class="s1">response </span><span class="s2">= </span><span class="s1">RedirectResponse</span><span class="s2">(</span><span class="s1">url</span><span class="s2">, </span><span class="s1">status_code</span><span class="s2">=</span><span class="s4">307</span><span class="s2">)</span>
+            <span class="s0">await </span><span class="s1">response</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">app</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

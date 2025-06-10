@@ -1,0 +1,257 @@
+<html>
+<head>
+<title>_dataclasses.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #5f826b; font-style: italic;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #7a7e85;}
+.s5 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_dataclasses.py</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;&quot;&quot;Private logic for creating pydantic dataclasses.&quot;&quot;&quot;</span>
+
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations </span><span class="s2">as </span><span class="s1">_annotations</span>
+
+<span class="s2">import </span><span class="s1">dataclasses</span>
+<span class="s2">import </span><span class="s1">typing</span>
+<span class="s2">import </span><span class="s1">warnings</span>
+<span class="s2">from </span><span class="s1">functools </span><span class="s2">import </span><span class="s1">partial</span><span class="s3">, </span><span class="s1">wraps</span>
+<span class="s2">from </span><span class="s1">typing </span><span class="s2">import </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">ClassVar</span>
+
+<span class="s2">from </span><span class="s1">pydantic_core </span><span class="s2">import </span><span class="s3">(</span>
+    <span class="s1">ArgsKwargs</span><span class="s3">,</span>
+    <span class="s1">SchemaSerializer</span><span class="s3">,</span>
+    <span class="s1">SchemaValidator</span><span class="s3">,</span>
+    <span class="s1">core_schema</span><span class="s3">,</span>
+<span class="s3">)</span>
+<span class="s2">from </span><span class="s1">typing_extensions </span><span class="s2">import </span><span class="s1">TypeGuard</span>
+
+<span class="s2">from </span><span class="s3">..</span><span class="s1">errors </span><span class="s2">import </span><span class="s1">PydanticUndefinedAnnotation</span>
+<span class="s2">from </span><span class="s3">..</span><span class="s1">plugin</span><span class="s3">.</span><span class="s1">_schema_validator </span><span class="s2">import </span><span class="s1">PluggableSchemaValidator</span><span class="s3">, </span><span class="s1">create_schema_validator</span>
+<span class="s2">from </span><span class="s3">..</span><span class="s1">warnings </span><span class="s2">import </span><span class="s1">PydanticDeprecatedSince20</span>
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">_config</span><span class="s3">, </span><span class="s1">_decorators</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_fields </span><span class="s2">import </span><span class="s1">collect_dataclass_fields</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_generate_schema </span><span class="s2">import </span><span class="s1">GenerateSchema</span><span class="s3">, </span><span class="s1">InvalidSchemaError</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_generics </span><span class="s2">import </span><span class="s1">get_standard_typevars_map</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_mock_val_ser </span><span class="s2">import </span><span class="s1">set_dataclass_mocks</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_namespace_utils </span><span class="s2">import </span><span class="s1">NsResolver</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_signature </span><span class="s2">import </span><span class="s1">generate_pydantic_signature</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_utils </span><span class="s2">import </span><span class="s1">LazyClassAttribute</span>
+
+<span class="s2">if </span><span class="s1">typing</span><span class="s3">.</span><span class="s1">TYPE_CHECKING</span><span class="s3">:</span>
+    <span class="s2">from </span><span class="s1">_typeshed </span><span class="s2">import </span><span class="s1">DataclassInstance </span><span class="s2">as </span><span class="s1">StandardDataclass</span>
+
+    <span class="s2">from </span><span class="s3">..</span><span class="s1">config </span><span class="s2">import </span><span class="s1">ConfigDict</span>
+    <span class="s2">from </span><span class="s3">..</span><span class="s1">fields </span><span class="s2">import </span><span class="s1">FieldInfo</span>
+
+    <span class="s2">class </span><span class="s1">PydanticDataclass</span><span class="s3">(</span><span class="s1">StandardDataclass</span><span class="s3">, </span><span class="s1">typing</span><span class="s3">.</span><span class="s1">Protocol</span><span class="s3">):</span>
+        <span class="s0">&quot;&quot;&quot;A protocol containing attributes only available once a class has been decorated as a Pydantic dataclass. 
+ 
+        Attributes: 
+            __pydantic_config__: Pydantic-specific configuration settings for the dataclass. 
+            __pydantic_complete__: Whether dataclass building is completed, or if there are still undefined fields. 
+            __pydantic_core_schema__: The pydantic-core schema used to build the SchemaValidator and SchemaSerializer. 
+            __pydantic_decorators__: Metadata containing the decorators defined on the dataclass. 
+            __pydantic_fields__: Metadata about the fields defined on the dataclass. 
+            __pydantic_serializer__: The pydantic-core SchemaSerializer used to dump instances of the dataclass. 
+            __pydantic_validator__: The pydantic-core SchemaValidator used to validate instances of the dataclass. 
+        &quot;&quot;&quot;</span>
+
+        <span class="s1">__pydantic_config__</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">ConfigDict</span><span class="s3">]</span>
+        <span class="s1">__pydantic_complete__</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">bool</span><span class="s3">]</span>
+        <span class="s1">__pydantic_core_schema__</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">core_schema</span><span class="s3">.</span><span class="s1">CoreSchema</span><span class="s3">]</span>
+        <span class="s1">__pydantic_decorators__</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">_decorators</span><span class="s3">.</span><span class="s1">DecoratorInfos</span><span class="s3">]</span>
+        <span class="s1">__pydantic_fields__</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">dict</span><span class="s3">[</span><span class="s1">str</span><span class="s3">, </span><span class="s1">FieldInfo</span><span class="s3">]]</span>
+        <span class="s1">__pydantic_serializer__</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">SchemaSerializer</span><span class="s3">]</span>
+        <span class="s1">__pydantic_validator__</span><span class="s3">: </span><span class="s1">ClassVar</span><span class="s3">[</span><span class="s1">SchemaValidator </span><span class="s3">| </span><span class="s1">PluggableSchemaValidator</span><span class="s3">]</span>
+
+<span class="s2">else</span><span class="s3">:</span>
+    <span class="s4"># See PyCharm issues https://youtrack.jetbrains.com/issue/PY-21915</span>
+    <span class="s4"># and https://youtrack.jetbrains.com/issue/PY-51428</span>
+    <span class="s1">DeprecationWarning </span><span class="s3">= </span><span class="s1">PydanticDeprecatedSince20</span>
+
+
+<span class="s2">def </span><span class="s1">set_dataclass_fields</span><span class="s3">(</span>
+    <span class="s1">cls</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">StandardDataclass</span><span class="s3">],</span>
+    <span class="s1">ns_resolver</span><span class="s3">: </span><span class="s1">NsResolver </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">config_wrapper</span><span class="s3">: </span><span class="s1">_config</span><span class="s3">.</span><span class="s1">ConfigWrapper </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Collect and set `cls.__pydantic_fields__`. 
+ 
+    Args: 
+        cls: The class. 
+        ns_resolver: Namespace resolver to use when getting dataclass annotations. 
+        config_wrapper: The config wrapper instance, defaults to `None`. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">typevars_map </span><span class="s3">= </span><span class="s1">get_standard_typevars_map</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">)</span>
+    <span class="s1">fields </span><span class="s3">= </span><span class="s1">collect_dataclass_fields</span><span class="s3">(</span>
+        <span class="s1">cls</span><span class="s3">, </span><span class="s1">ns_resolver</span><span class="s3">=</span><span class="s1">ns_resolver</span><span class="s3">, </span><span class="s1">typevars_map</span><span class="s3">=</span><span class="s1">typevars_map</span><span class="s3">, </span><span class="s1">config_wrapper</span><span class="s3">=</span><span class="s1">config_wrapper</span>
+    <span class="s3">)</span>
+
+    <span class="s1">cls</span><span class="s3">.</span><span class="s1">__pydantic_fields__ </span><span class="s3">= </span><span class="s1">fields  </span><span class="s4"># type: ignore</span>
+
+
+<span class="s2">def </span><span class="s1">complete_dataclass</span><span class="s3">(</span>
+    <span class="s1">cls</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">],</span>
+    <span class="s1">config_wrapper</span><span class="s3">: </span><span class="s1">_config</span><span class="s3">.</span><span class="s1">ConfigWrapper</span><span class="s3">,</span>
+    <span class="s3">*,</span>
+    <span class="s1">raise_errors</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">True</span><span class="s3">,</span>
+    <span class="s1">ns_resolver</span><span class="s3">: </span><span class="s1">NsResolver </span><span class="s3">| </span><span class="s2">None </span><span class="s3">= </span><span class="s2">None</span><span class="s3">,</span>
+    <span class="s1">_force_build</span><span class="s3">: </span><span class="s1">bool </span><span class="s3">= </span><span class="s2">False</span><span class="s3">,</span>
+<span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s0">&quot;&quot;&quot;Finish building a pydantic dataclass. 
+ 
+    This logic is called on a class which has already been wrapped in `dataclasses.dataclass()`. 
+ 
+    This is somewhat analogous to `pydantic._internal._model_construction.complete_model_class`. 
+ 
+    Args: 
+        cls: The class. 
+        config_wrapper: The config wrapper instance. 
+        raise_errors: Whether to raise errors, defaults to `True`. 
+        ns_resolver: The namespace resolver instance to use when collecting dataclass fields 
+            and during schema building. 
+        _force_build: Whether to force building the dataclass, no matter if 
+            [`defer_build`][pydantic.config.ConfigDict.defer_build] is set. 
+ 
+    Returns: 
+        `True` if building a pydantic dataclass is successfully completed, `False` otherwise. 
+ 
+    Raises: 
+        PydanticUndefinedAnnotation: If `raise_error` is `True` and there is an undefined annotations. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">original_init </span><span class="s3">= </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__init__</span>
+
+    <span class="s4"># dataclass.__init__ must be defined here so its `__qualname__` can be changed since functions can't be copied,</span>
+    <span class="s4"># and so that the mock validator is used if building was deferred:</span>
+    <span class="s2">def </span><span class="s1">__init__</span><span class="s3">(</span><span class="s1">__dataclass_self__</span><span class="s3">: </span><span class="s1">PydanticDataclass</span><span class="s3">, *</span><span class="s1">args</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, **</span><span class="s1">kwargs</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s1">__tracebackhide__ </span><span class="s3">= </span><span class="s2">True</span>
+        <span class="s1">s </span><span class="s3">= </span><span class="s1">__dataclass_self__</span>
+        <span class="s1">s</span><span class="s3">.</span><span class="s1">__pydantic_validator__</span><span class="s3">.</span><span class="s1">validate_python</span><span class="s3">(</span><span class="s1">ArgsKwargs</span><span class="s3">(</span><span class="s1">args</span><span class="s3">, </span><span class="s1">kwargs</span><span class="s3">), </span><span class="s1">self_instance</span><span class="s3">=</span><span class="s1">s</span><span class="s3">)</span>
+
+    <span class="s1">__init__</span><span class="s3">.</span><span class="s1">__qualname__ </span><span class="s3">= </span><span class="s5">f'</span><span class="s2">{</span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__qualname__</span><span class="s2">}</span><span class="s5">.__init__'</span>
+
+    <span class="s1">cls</span><span class="s3">.</span><span class="s1">__init__ </span><span class="s3">= </span><span class="s1">__init__  </span><span class="s4"># type: ignore</span>
+    <span class="s1">cls</span><span class="s3">.</span><span class="s1">__pydantic_config__ </span><span class="s3">= </span><span class="s1">config_wrapper</span><span class="s3">.</span><span class="s1">config_dict  </span><span class="s4"># type: ignore</span>
+
+    <span class="s1">set_dataclass_fields</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s1">ns_resolver</span><span class="s3">, </span><span class="s1">config_wrapper</span><span class="s3">=</span><span class="s1">config_wrapper</span><span class="s3">)</span>
+
+    <span class="s2">if not </span><span class="s1">_force_build </span><span class="s2">and </span><span class="s1">config_wrapper</span><span class="s3">.</span><span class="s1">defer_build</span><span class="s3">:</span>
+        <span class="s1">set_dataclass_mocks</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">)</span>
+        <span class="s2">return False</span>
+
+    <span class="s2">if </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s5">'__post_init_post_parse__'</span><span class="s3">):</span>
+        <span class="s1">warnings</span><span class="s3">.</span><span class="s1">warn</span><span class="s3">(</span>
+            <span class="s5">'Support for `__post_init_post_parse__` has been dropped, the method will not be called'</span><span class="s3">, </span><span class="s1">DeprecationWarning</span>
+        <span class="s3">)</span>
+
+    <span class="s1">typevars_map </span><span class="s3">= </span><span class="s1">get_standard_typevars_map</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">)</span>
+    <span class="s1">gen_schema </span><span class="s3">= </span><span class="s1">GenerateSchema</span><span class="s3">(</span>
+        <span class="s1">config_wrapper</span><span class="s3">,</span>
+        <span class="s1">ns_resolver</span><span class="s3">=</span><span class="s1">ns_resolver</span><span class="s3">,</span>
+        <span class="s1">typevars_map</span><span class="s3">=</span><span class="s1">typevars_map</span><span class="s3">,</span>
+    <span class="s3">)</span>
+
+    <span class="s4"># set __signature__ attr only for the class, but not for its instances</span>
+    <span class="s4"># (because instances can define `__call__`, and `inspect.signature` shouldn't</span>
+    <span class="s4"># use the `__signature__` attribute and instead generate from `__call__`).</span>
+    <span class="s1">cls</span><span class="s3">.</span><span class="s1">__signature__ </span><span class="s3">= </span><span class="s1">LazyClassAttribute</span><span class="s3">(</span>
+        <span class="s5">'__signature__'</span><span class="s3">,</span>
+        <span class="s1">partial</span><span class="s3">(</span>
+            <span class="s1">generate_pydantic_signature</span><span class="s3">,</span>
+            <span class="s4"># It's important that we reference the `original_init` here,</span>
+            <span class="s4"># as it is the one synthesized by the stdlib `dataclass` module:</span>
+            <span class="s1">init</span><span class="s3">=</span><span class="s1">original_init</span><span class="s3">,</span>
+            <span class="s1">fields</span><span class="s3">=</span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__pydantic_fields__</span><span class="s3">,  </span><span class="s4"># type: ignore</span>
+            <span class="s1">validate_by_name</span><span class="s3">=</span><span class="s1">config_wrapper</span><span class="s3">.</span><span class="s1">validate_by_name</span><span class="s3">,</span>
+            <span class="s1">extra</span><span class="s3">=</span><span class="s1">config_wrapper</span><span class="s3">.</span><span class="s1">extra</span><span class="s3">,</span>
+            <span class="s1">is_dataclass</span><span class="s3">=</span><span class="s2">True</span><span class="s3">,</span>
+        <span class="s3">),</span>
+    <span class="s3">)</span>
+
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">schema </span><span class="s3">= </span><span class="s1">gen_schema</span><span class="s3">.</span><span class="s1">generate_schema</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s1">PydanticUndefinedAnnotation </span><span class="s2">as </span><span class="s1">e</span><span class="s3">:</span>
+        <span class="s2">if </span><span class="s1">raise_errors</span><span class="s3">:</span>
+            <span class="s2">raise</span>
+        <span class="s1">set_dataclass_mocks</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">, </span><span class="s5">f'`</span><span class="s2">{</span><span class="s1">e</span><span class="s3">.</span><span class="s1">name</span><span class="s2">}</span><span class="s5">`'</span><span class="s3">)</span>
+        <span class="s2">return False</span>
+
+    <span class="s1">core_config </span><span class="s3">= </span><span class="s1">config_wrapper</span><span class="s3">.</span><span class="s1">core_config</span><span class="s3">(</span><span class="s1">title</span><span class="s3">=</span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__name__</span><span class="s3">)</span>
+
+    <span class="s2">try</span><span class="s3">:</span>
+        <span class="s1">schema </span><span class="s3">= </span><span class="s1">gen_schema</span><span class="s3">.</span><span class="s1">clean_schema</span><span class="s3">(</span><span class="s1">schema</span><span class="s3">)</span>
+    <span class="s2">except </span><span class="s1">InvalidSchemaError</span><span class="s3">:</span>
+        <span class="s1">set_dataclass_mocks</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">)</span>
+        <span class="s2">return False</span>
+
+    <span class="s4"># We are about to set all the remaining required properties expected for this cast;</span>
+    <span class="s4"># __pydantic_decorators__ and __pydantic_fields__ should already be set</span>
+    <span class="s1">cls </span><span class="s3">= </span><span class="s1">typing</span><span class="s3">.</span><span class="s1">cast</span><span class="s3">(</span><span class="s5">'type[PydanticDataclass]'</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">)</span>
+    <span class="s4"># debug(schema)</span>
+
+    <span class="s1">cls</span><span class="s3">.</span><span class="s1">__pydantic_core_schema__ </span><span class="s3">= </span><span class="s1">schema</span>
+    <span class="s1">cls</span><span class="s3">.</span><span class="s1">__pydantic_validator__ </span><span class="s3">= </span><span class="s1">validator </span><span class="s3">= </span><span class="s1">create_schema_validator</span><span class="s3">(</span>
+        <span class="s1">schema</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__module__</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__qualname__</span><span class="s3">, </span><span class="s5">'dataclass'</span><span class="s3">, </span><span class="s1">core_config</span><span class="s3">, </span><span class="s1">config_wrapper</span><span class="s3">.</span><span class="s1">plugin_settings</span>
+    <span class="s3">)</span>
+    <span class="s1">cls</span><span class="s3">.</span><span class="s1">__pydantic_serializer__ </span><span class="s3">= </span><span class="s1">SchemaSerializer</span><span class="s3">(</span><span class="s1">schema</span><span class="s3">, </span><span class="s1">core_config</span><span class="s3">)</span>
+
+    <span class="s2">if </span><span class="s1">config_wrapper</span><span class="s3">.</span><span class="s1">validate_assignment</span><span class="s3">:</span>
+
+        <span class="s3">@</span><span class="s1">wraps</span><span class="s3">(</span><span class="s1">cls</span><span class="s3">.</span><span class="s1">__setattr__</span><span class="s3">)</span>
+        <span class="s2">def </span><span class="s1">validated_setattr</span><span class="s3">(</span><span class="s1">instance</span><span class="s3">: </span><span class="s1">Any</span><span class="s3">, </span><span class="s1">field</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, </span><span class="s1">value</span><span class="s3">: </span><span class="s1">str</span><span class="s3">, /) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+            <span class="s1">validator</span><span class="s3">.</span><span class="s1">validate_assignment</span><span class="s3">(</span><span class="s1">instance</span><span class="s3">, </span><span class="s1">field</span><span class="s3">, </span><span class="s1">value</span><span class="s3">)</span>
+
+        <span class="s1">cls</span><span class="s3">.</span><span class="s1">__setattr__ </span><span class="s3">= </span><span class="s1">validated_setattr</span><span class="s3">.</span><span class="s1">__get__</span><span class="s3">(</span><span class="s2">None</span><span class="s3">, </span><span class="s1">cls</span><span class="s3">)  </span><span class="s4"># type: ignore</span>
+
+    <span class="s1">cls</span><span class="s3">.</span><span class="s1">__pydantic_complete__ </span><span class="s3">= </span><span class="s2">True</span>
+    <span class="s2">return True</span>
+
+
+<span class="s2">def </span><span class="s1">is_builtin_dataclass</span><span class="s3">(</span><span class="s1">_cls</span><span class="s3">: </span><span class="s1">type</span><span class="s3">[</span><span class="s1">Any</span><span class="s3">]) </span><span class="s1">-&gt; TypeGuard</span><span class="s3">[</span><span class="s1">type</span><span class="s3">[</span><span class="s1">StandardDataclass</span><span class="s3">]]:</span>
+    <span class="s0">&quot;&quot;&quot;Returns True if a class is a stdlib dataclass and *not* a pydantic dataclass. 
+ 
+    We check that 
+    - `_cls` is a dataclass 
+    - `_cls` does not inherit from a processed pydantic dataclass (and thus have a `__pydantic_validator__`) 
+    - `_cls` does not have any annotations that are not dataclass fields 
+    e.g. 
+    ```python 
+    import dataclasses 
+ 
+    import pydantic.dataclasses 
+ 
+    @dataclasses.dataclass 
+    class A: 
+        x: int 
+ 
+    @pydantic.dataclasses.dataclass 
+    class B(A): 
+        y: int 
+    ``` 
+    In this case, when we first check `B`, we make an extra check and look at the annotations ('y'), 
+    which won't be a superset of all the dataclass fields (only the stdlib fields i.e. 'x') 
+ 
+    Args: 
+        cls: The class. 
+ 
+    Returns: 
+        `True` if the class is a stdlib dataclass, `False` otherwise. 
+    &quot;&quot;&quot;</span>
+    <span class="s2">return </span><span class="s3">(</span>
+        <span class="s1">dataclasses</span><span class="s3">.</span><span class="s1">is_dataclass</span><span class="s3">(</span><span class="s1">_cls</span><span class="s3">)</span>
+        <span class="s2">and not </span><span class="s1">hasattr</span><span class="s3">(</span><span class="s1">_cls</span><span class="s3">, </span><span class="s5">'__pydantic_validator__'</span><span class="s3">)</span>
+        <span class="s2">and </span><span class="s1">set</span><span class="s3">(</span><span class="s1">_cls</span><span class="s3">.</span><span class="s1">__dataclass_fields__</span><span class="s3">).</span><span class="s1">issuperset</span><span class="s3">(</span><span class="s1">set</span><span class="s3">(</span><span class="s1">getattr</span><span class="s3">(</span><span class="s1">_cls</span><span class="s3">, </span><span class="s5">'__annotations__'</span><span class="s3">, {})))</span>
+    <span class="s3">)</span>
+</pre>
+</body>
+</html>

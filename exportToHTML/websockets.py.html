@@ -1,0 +1,218 @@
+<html>
+<head>
+<title>websockets.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #2aacb8;}
+.s4 { color: #6aab73;}
+.s5 { color: #5f826b; font-style: italic;}
+.s6 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+websockets.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">enum</span>
+<span class="s0">import </span><span class="s1">json</span>
+<span class="s0">import </span><span class="s1">typing</span>
+
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">requests </span><span class="s0">import </span><span class="s1">HTTPConnection</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">responses </span><span class="s0">import </span><span class="s1">Response</span>
+<span class="s0">from </span><span class="s1">starlette</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">Message</span><span class="s2">, </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">Send</span>
+
+
+<span class="s0">class </span><span class="s1">WebSocketState</span><span class="s2">(</span><span class="s1">enum</span><span class="s2">.</span><span class="s1">Enum</span><span class="s2">):</span>
+    <span class="s1">CONNECTING </span><span class="s2">= </span><span class="s3">0</span>
+    <span class="s1">CONNECTED </span><span class="s2">= </span><span class="s3">1</span>
+    <span class="s1">DISCONNECTED </span><span class="s2">= </span><span class="s3">2</span>
+    <span class="s1">RESPONSE </span><span class="s2">= </span><span class="s3">3</span>
+
+
+<span class="s0">class </span><span class="s1">WebSocketDisconnect</span><span class="s2">(</span><span class="s1">Exception</span><span class="s2">):</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">code</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s3">1000</span><span class="s2">, </span><span class="s1">reason</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">code </span><span class="s2">= </span><span class="s1">code</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">reason </span><span class="s2">= </span><span class="s1">reason </span><span class="s0">or </span><span class="s4">&quot;&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">WebSocket</span><span class="s2">(</span><span class="s1">HTTPConnection</span><span class="s2">):</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">: </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">: </span><span class="s1">Send</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">)</span>
+        <span class="s0">assert </span><span class="s1">scope</span><span class="s2">[</span><span class="s4">&quot;type&quot;</span><span class="s2">] == </span><span class="s4">&quot;websocket&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_receive </span><span class="s2">= </span><span class="s1">receive</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_send </span><span class="s2">= </span><span class="s1">send</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">client_state </span><span class="s2">= </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">CONNECTING</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">application_state </span><span class="s2">= </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">CONNECTING</span>
+
+    <span class="s0">async def </span><span class="s1">receive</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; Message</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Receive ASGI websocket messages, ensuring valid state transitions. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">client_state </span><span class="s2">== </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">CONNECTING</span><span class="s2">:</span>
+            <span class="s1">message </span><span class="s2">= </span><span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_receive</span><span class="s2">()</span>
+            <span class="s1">message_type </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s4">&quot;type&quot;</span><span class="s2">]</span>
+            <span class="s0">if </span><span class="s1">message_type </span><span class="s2">!= </span><span class="s4">&quot;websocket.connect&quot;</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s4">f'Expected ASGI message &quot;websocket.connect&quot;, but got </span><span class="s0">{</span><span class="s1">message_type</span><span class="s0">!r}</span><span class="s4">'</span><span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">client_state </span><span class="s2">= </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">CONNECTED</span>
+            <span class="s0">return </span><span class="s1">message</span>
+        <span class="s0">elif </span><span class="s1">self</span><span class="s2">.</span><span class="s1">client_state </span><span class="s2">== </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">CONNECTED</span><span class="s2">:</span>
+            <span class="s1">message </span><span class="s2">= </span><span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_receive</span><span class="s2">()</span>
+            <span class="s1">message_type </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s4">&quot;type&quot;</span><span class="s2">]</span>
+            <span class="s0">if </span><span class="s1">message_type </span><span class="s0">not in </span><span class="s2">{</span><span class="s4">&quot;websocket.receive&quot;</span><span class="s2">, </span><span class="s4">&quot;websocket.disconnect&quot;</span><span class="s2">}:</span>
+                <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span>
+                    <span class="s4">f'Expected ASGI message &quot;websocket.receive&quot; or &quot;websocket.disconnect&quot;, but got </span><span class="s0">{</span><span class="s1">message_type</span><span class="s0">!r}</span><span class="s4">'</span>
+                <span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">message_type </span><span class="s2">== </span><span class="s4">&quot;websocket.disconnect&quot;</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">client_state </span><span class="s2">= </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">DISCONNECTED</span>
+            <span class="s0">return </span><span class="s1">message</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s4">'Cannot call &quot;receive&quot; once a disconnect message has been received.'</span><span class="s2">)</span>
+
+    <span class="s0">async def </span><span class="s1">send</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">message</span><span class="s2">: </span><span class="s1">Message</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot; 
+        Send ASGI websocket messages, ensuring valid state transitions. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">application_state </span><span class="s2">== </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">CONNECTING</span><span class="s2">:</span>
+            <span class="s1">message_type </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s4">&quot;type&quot;</span><span class="s2">]</span>
+            <span class="s0">if </span><span class="s1">message_type </span><span class="s0">not in </span><span class="s2">{</span><span class="s4">&quot;websocket.accept&quot;</span><span class="s2">, </span><span class="s4">&quot;websocket.close&quot;</span><span class="s2">, </span><span class="s4">&quot;websocket.http.response.start&quot;</span><span class="s2">}:</span>
+                <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span>
+                    <span class="s4">'Expected ASGI message &quot;websocket.accept&quot;, &quot;websocket.close&quot; or &quot;websocket.http.response.start&quot;, '</span>
+                    <span class="s4">f&quot;but got </span><span class="s0">{</span><span class="s1">message_type</span><span class="s0">!r}</span><span class="s4">&quot;</span>
+                <span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">message_type </span><span class="s2">== </span><span class="s4">&quot;websocket.close&quot;</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">application_state </span><span class="s2">= </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">DISCONNECTED</span>
+            <span class="s0">elif </span><span class="s1">message_type </span><span class="s2">== </span><span class="s4">&quot;websocket.http.response.start&quot;</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">application_state </span><span class="s2">= </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">RESPONSE</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">application_state </span><span class="s2">= </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">CONNECTED</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_send</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+        <span class="s0">elif </span><span class="s1">self</span><span class="s2">.</span><span class="s1">application_state </span><span class="s2">== </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">CONNECTED</span><span class="s2">:</span>
+            <span class="s1">message_type </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s4">&quot;type&quot;</span><span class="s2">]</span>
+            <span class="s0">if </span><span class="s1">message_type </span><span class="s0">not in </span><span class="s2">{</span><span class="s4">&quot;websocket.send&quot;</span><span class="s2">, </span><span class="s4">&quot;websocket.close&quot;</span><span class="s2">}:</span>
+                <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span>
+                    <span class="s4">f'Expected ASGI message &quot;websocket.send&quot; or &quot;websocket.close&quot;, but got </span><span class="s0">{</span><span class="s1">message_type</span><span class="s0">!r}</span><span class="s4">'</span>
+                <span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">message_type </span><span class="s2">== </span><span class="s4">&quot;websocket.close&quot;</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">application_state </span><span class="s2">= </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">DISCONNECTED</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_send</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+            <span class="s0">except </span><span class="s1">OSError</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">application_state </span><span class="s2">= </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">DISCONNECTED</span>
+                <span class="s0">raise </span><span class="s1">WebSocketDisconnect</span><span class="s2">(</span><span class="s1">code</span><span class="s2">=</span><span class="s3">1006</span><span class="s2">)</span>
+        <span class="s0">elif </span><span class="s1">self</span><span class="s2">.</span><span class="s1">application_state </span><span class="s2">== </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">RESPONSE</span><span class="s2">:</span>
+            <span class="s1">message_type </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s4">&quot;type&quot;</span><span class="s2">]</span>
+            <span class="s0">if </span><span class="s1">message_type </span><span class="s2">!= </span><span class="s4">&quot;websocket.http.response.body&quot;</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s4">f'Expected ASGI message &quot;websocket.http.response.body&quot;, but got </span><span class="s0">{</span><span class="s1">message_type</span><span class="s0">!r}</span><span class="s4">'</span><span class="s2">)</span>
+            <span class="s0">if not </span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;more_body&quot;</span><span class="s2">, </span><span class="s0">False</span><span class="s2">):</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">application_state </span><span class="s2">= </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">DISCONNECTED</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_send</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s4">'Cannot call &quot;send&quot; once a close message has been sent.'</span><span class="s2">)</span>
+
+    <span class="s0">async def </span><span class="s1">accept</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">subprotocol</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">headers</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">bytes</span><span class="s2">]] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">headers </span><span class="s2">= </span><span class="s1">headers </span><span class="s0">or </span><span class="s2">[]</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">client_state </span><span class="s2">== </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">CONNECTING</span><span class="s2">:  </span><span class="s6"># pragma: no branch</span>
+            <span class="s6"># If we haven't yet seen the 'connect' message, then wait for it first.</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">()</span>
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">({</span><span class="s4">&quot;type&quot;</span><span class="s2">: </span><span class="s4">&quot;websocket.accept&quot;</span><span class="s2">, </span><span class="s4">&quot;subprotocol&quot;</span><span class="s2">: </span><span class="s1">subprotocol</span><span class="s2">, </span><span class="s4">&quot;headers&quot;</span><span class="s2">: </span><span class="s1">headers</span><span class="s2">})</span>
+
+    <span class="s0">def </span><span class="s1">_raise_on_disconnect</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">message</span><span class="s2">: </span><span class="s1">Message</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">message</span><span class="s2">[</span><span class="s4">&quot;type&quot;</span><span class="s2">] == </span><span class="s4">&quot;websocket.disconnect&quot;</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">WebSocketDisconnect</span><span class="s2">(</span><span class="s1">message</span><span class="s2">[</span><span class="s4">&quot;code&quot;</span><span class="s2">], </span><span class="s1">message</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;reason&quot;</span><span class="s2">))</span>
+
+    <span class="s0">async def </span><span class="s1">receive_text</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">application_state </span><span class="s2">!= </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">CONNECTED</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s4">'WebSocket is not connected. Need to call &quot;accept&quot; first.'</span><span class="s2">)</span>
+        <span class="s1">message </span><span class="s2">= </span><span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_raise_on_disconnect</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">cast</span><span class="s2">(</span><span class="s1">str</span><span class="s2">, </span><span class="s1">message</span><span class="s2">[</span><span class="s4">&quot;text&quot;</span><span class="s2">])</span>
+
+    <span class="s0">async def </span><span class="s1">receive_bytes</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; bytes</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">application_state </span><span class="s2">!= </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">CONNECTED</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s4">'WebSocket is not connected. Need to call &quot;accept&quot; first.'</span><span class="s2">)</span>
+        <span class="s1">message </span><span class="s2">= </span><span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_raise_on_disconnect</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">cast</span><span class="s2">(</span><span class="s1">bytes</span><span class="s2">, </span><span class="s1">message</span><span class="s2">[</span><span class="s4">&quot;bytes&quot;</span><span class="s2">])</span>
+
+    <span class="s0">async def </span><span class="s1">receive_json</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s4">&quot;text&quot;</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">mode </span><span class="s0">not in </span><span class="s2">{</span><span class="s4">&quot;text&quot;</span><span class="s2">, </span><span class="s4">&quot;binary&quot;</span><span class="s2">}:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s4">'The &quot;mode&quot; argument should be &quot;text&quot; or &quot;binary&quot;.'</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">application_state </span><span class="s2">!= </span><span class="s1">WebSocketState</span><span class="s2">.</span><span class="s1">CONNECTED</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s4">'WebSocket is not connected. Need to call &quot;accept&quot; first.'</span><span class="s2">)</span>
+        <span class="s1">message </span><span class="s2">= </span><span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_raise_on_disconnect</span><span class="s2">(</span><span class="s1">message</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">mode </span><span class="s2">== </span><span class="s4">&quot;text&quot;</span><span class="s2">:</span>
+            <span class="s1">text </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s4">&quot;text&quot;</span><span class="s2">]</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">text </span><span class="s2">= </span><span class="s1">message</span><span class="s2">[</span><span class="s4">&quot;bytes&quot;</span><span class="s2">].</span><span class="s1">decode</span><span class="s2">(</span><span class="s4">&quot;utf-8&quot;</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">json</span><span class="s2">.</span><span class="s1">loads</span><span class="s2">(</span><span class="s1">text</span><span class="s2">)</span>
+
+    <span class="s0">async def </span><span class="s1">iter_text</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">AsyncIterator</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">while True</span><span class="s2">:</span>
+                <span class="s0">yield await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">receive_text</span><span class="s2">()</span>
+        <span class="s0">except </span><span class="s1">WebSocketDisconnect</span><span class="s2">:</span>
+            <span class="s0">pass</span>
+
+    <span class="s0">async def </span><span class="s1">iter_bytes</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">AsyncIterator</span><span class="s2">[</span><span class="s1">bytes</span><span class="s2">]:</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">while True</span><span class="s2">:</span>
+                <span class="s0">yield await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">receive_bytes</span><span class="s2">()</span>
+        <span class="s0">except </span><span class="s1">WebSocketDisconnect</span><span class="s2">:</span>
+            <span class="s0">pass</span>
+
+    <span class="s0">async def </span><span class="s1">iter_json</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; typing</span><span class="s2">.</span><span class="s1">AsyncIterator</span><span class="s2">[</span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]:</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">while True</span><span class="s2">:</span>
+                <span class="s0">yield await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">receive_json</span><span class="s2">()</span>
+        <span class="s0">except </span><span class="s1">WebSocketDisconnect</span><span class="s2">:</span>
+            <span class="s0">pass</span>
+
+    <span class="s0">async def </span><span class="s1">send_text</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">data</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">({</span><span class="s4">&quot;type&quot;</span><span class="s2">: </span><span class="s4">&quot;websocket.send&quot;</span><span class="s2">, </span><span class="s4">&quot;text&quot;</span><span class="s2">: </span><span class="s1">data</span><span class="s2">})</span>
+
+    <span class="s0">async def </span><span class="s1">send_bytes</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">data</span><span class="s2">: </span><span class="s1">bytes</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">({</span><span class="s4">&quot;type&quot;</span><span class="s2">: </span><span class="s4">&quot;websocket.send&quot;</span><span class="s2">, </span><span class="s4">&quot;bytes&quot;</span><span class="s2">: </span><span class="s1">data</span><span class="s2">})</span>
+
+    <span class="s0">async def </span><span class="s1">send_json</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">data</span><span class="s2">: </span><span class="s1">typing</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, </span><span class="s1">mode</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s4">&quot;text&quot;</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">mode </span><span class="s0">not in </span><span class="s2">{</span><span class="s4">&quot;text&quot;</span><span class="s2">, </span><span class="s4">&quot;binary&quot;</span><span class="s2">}:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s4">'The &quot;mode&quot; argument should be &quot;text&quot; or &quot;binary&quot;.'</span><span class="s2">)</span>
+        <span class="s1">text </span><span class="s2">= </span><span class="s1">json</span><span class="s2">.</span><span class="s1">dumps</span><span class="s2">(</span><span class="s1">data</span><span class="s2">, </span><span class="s1">separators</span><span class="s2">=(</span><span class="s4">&quot;,&quot;</span><span class="s2">, </span><span class="s4">&quot;:&quot;</span><span class="s2">), </span><span class="s1">ensure_ascii</span><span class="s2">=</span><span class="s0">False</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">mode </span><span class="s2">== </span><span class="s4">&quot;text&quot;</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">({</span><span class="s4">&quot;type&quot;</span><span class="s2">: </span><span class="s4">&quot;websocket.send&quot;</span><span class="s2">, </span><span class="s4">&quot;text&quot;</span><span class="s2">: </span><span class="s1">text</span><span class="s2">})</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">({</span><span class="s4">&quot;type&quot;</span><span class="s2">: </span><span class="s4">&quot;websocket.send&quot;</span><span class="s2">, </span><span class="s4">&quot;bytes&quot;</span><span class="s2">: </span><span class="s1">text</span><span class="s2">.</span><span class="s1">encode</span><span class="s2">(</span><span class="s4">&quot;utf-8&quot;</span><span class="s2">)})</span>
+
+    <span class="s0">async def </span><span class="s1">close</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">code</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s3">1000</span><span class="s2">, </span><span class="s1">reason</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">({</span><span class="s4">&quot;type&quot;</span><span class="s2">: </span><span class="s4">&quot;websocket.close&quot;</span><span class="s2">, </span><span class="s4">&quot;code&quot;</span><span class="s2">: </span><span class="s1">code</span><span class="s2">, </span><span class="s4">&quot;reason&quot;</span><span class="s2">: </span><span class="s1">reason </span><span class="s0">or </span><span class="s4">&quot;&quot;</span><span class="s2">})</span>
+
+    <span class="s0">async def </span><span class="s1">send_denial_response</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">response</span><span class="s2">: </span><span class="s1">Response</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s4">&quot;websocket.http.response&quot; </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;extensions&quot;</span><span class="s2">, {}):</span>
+            <span class="s0">await </span><span class="s1">response</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">scope</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">receive</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">send</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">RuntimeError</span><span class="s2">(</span><span class="s4">&quot;The server doesn't support the Websocket Denial Response extension.&quot;</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">WebSocketClose</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">code</span><span class="s2">: </span><span class="s1">int </span><span class="s2">= </span><span class="s3">1000</span><span class="s2">, </span><span class="s1">reason</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">code </span><span class="s2">= </span><span class="s1">code</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">reason </span><span class="s2">= </span><span class="s1">reason </span><span class="s0">or </span><span class="s4">&quot;&quot;</span>
+
+    <span class="s0">async def </span><span class="s1">__call__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">: </span><span class="s1">Receive</span><span class="s2">, </span><span class="s1">send</span><span class="s2">: </span><span class="s1">Send</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">await </span><span class="s1">send</span><span class="s2">({</span><span class="s4">&quot;type&quot;</span><span class="s2">: </span><span class="s4">&quot;websocket.close&quot;</span><span class="s2">, </span><span class="s4">&quot;code&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">code</span><span class="s2">, </span><span class="s4">&quot;reason&quot;</span><span class="s2">: </span><span class="s1">self</span><span class="s2">.</span><span class="s1">reason</span><span class="s2">})</span>
+</pre>
+</body>
+</html>

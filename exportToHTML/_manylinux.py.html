@@ -1,0 +1,324 @@
+<html>
+<head>
+<title>_manylinux.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #7a7e85;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #2aacb8;}
+.s6 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_manylinux.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">collections</span>
+<span class="s0">import </span><span class="s1">functools</span>
+<span class="s0">import </span><span class="s1">os</span>
+<span class="s0">import </span><span class="s1">re</span>
+<span class="s0">import </span><span class="s1">struct</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">import </span><span class="s1">warnings</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">IO</span><span class="s2">, </span><span class="s1">Dict</span><span class="s2">, </span><span class="s1">Iterator</span><span class="s2">, </span><span class="s1">NamedTuple</span><span class="s2">, </span><span class="s1">Optional</span><span class="s2">, </span><span class="s1">Tuple</span>
+
+
+<span class="s3"># Python does not provide platform information at sufficient granularity to</span>
+<span class="s3"># identify the architecture of the running executable in some cases, so we</span>
+<span class="s3"># determine it dynamically by reading the information from the running</span>
+<span class="s3"># process. This only applies on Linux, which uses the ELF format.</span>
+<span class="s0">class </span><span class="s1">_ELFFileHeader</span><span class="s2">:</span>
+    <span class="s3"># https://en.wikipedia.org/wiki/Executable_and_Linkable_Format#File_header</span>
+    <span class="s0">class </span><span class="s1">_InvalidELFFileHeader</span><span class="s2">(</span><span class="s1">ValueError</span><span class="s2">):</span>
+        <span class="s4">&quot;&quot;&quot; 
+        An invalid ELF file header was found. 
+        &quot;&quot;&quot;</span>
+
+    <span class="s1">ELF_MAGIC_NUMBER </span><span class="s2">= </span><span class="s5">0x7F454C46</span>
+    <span class="s1">ELFCLASS32 </span><span class="s2">= </span><span class="s5">1</span>
+    <span class="s1">ELFCLASS64 </span><span class="s2">= </span><span class="s5">2</span>
+    <span class="s1">ELFDATA2LSB </span><span class="s2">= </span><span class="s5">1</span>
+    <span class="s1">ELFDATA2MSB </span><span class="s2">= </span><span class="s5">2</span>
+    <span class="s1">EM_386 </span><span class="s2">= </span><span class="s5">3</span>
+    <span class="s1">EM_S390 </span><span class="s2">= </span><span class="s5">22</span>
+    <span class="s1">EM_ARM </span><span class="s2">= </span><span class="s5">40</span>
+    <span class="s1">EM_X86_64 </span><span class="s2">= </span><span class="s5">62</span>
+    <span class="s1">EF_ARM_ABIMASK </span><span class="s2">= </span><span class="s5">0xFF000000</span>
+    <span class="s1">EF_ARM_ABI_VER5 </span><span class="s2">= </span><span class="s5">0x05000000</span>
+    <span class="s1">EF_ARM_ABI_FLOAT_HARD </span><span class="s2">= </span><span class="s5">0x00000400</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">file</span><span class="s2">: </span><span class="s1">IO</span><span class="s2">[</span><span class="s1">bytes</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">def </span><span class="s1">unpack</span><span class="s2">(</span><span class="s1">fmt</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; int</span><span class="s2">:</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">data </span><span class="s2">= </span><span class="s1">file</span><span class="s2">.</span><span class="s1">read</span><span class="s2">(</span><span class="s1">struct</span><span class="s2">.</span><span class="s1">calcsize</span><span class="s2">(</span><span class="s1">fmt</span><span class="s2">))</span>
+                <span class="s1">result</span><span class="s2">: </span><span class="s1">Tuple</span><span class="s2">[</span><span class="s1">int</span><span class="s2">, ...] = </span><span class="s1">struct</span><span class="s2">.</span><span class="s1">unpack</span><span class="s2">(</span><span class="s1">fmt</span><span class="s2">, </span><span class="s1">data</span><span class="s2">)</span>
+            <span class="s0">except </span><span class="s1">struct</span><span class="s2">.</span><span class="s1">error</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">_ELFFileHeader</span><span class="s2">.</span><span class="s1">_InvalidELFFileHeader</span><span class="s2">()</span>
+            <span class="s0">return </span><span class="s1">result</span><span class="s2">[</span><span class="s5">0</span><span class="s2">]</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_ident_magic </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s6">&quot;&gt;I&quot;</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">e_ident_magic </span><span class="s2">!= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">ELF_MAGIC_NUMBER</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">_ELFFileHeader</span><span class="s2">.</span><span class="s1">_InvalidELFFileHeader</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_ident_class </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s6">&quot;B&quot;</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">e_ident_class </span><span class="s0">not in </span><span class="s2">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">ELFCLASS32</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">ELFCLASS64</span><span class="s2">}:</span>
+            <span class="s0">raise </span><span class="s1">_ELFFileHeader</span><span class="s2">.</span><span class="s1">_InvalidELFFileHeader</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_ident_data </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s6">&quot;B&quot;</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">e_ident_data </span><span class="s0">not in </span><span class="s2">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">ELFDATA2LSB</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">ELFDATA2MSB</span><span class="s2">}:</span>
+            <span class="s0">raise </span><span class="s1">_ELFFileHeader</span><span class="s2">.</span><span class="s1">_InvalidELFFileHeader</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_ident_version </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s6">&quot;B&quot;</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_ident_osabi </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s6">&quot;B&quot;</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_ident_abiversion </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s6">&quot;B&quot;</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_ident_pad </span><span class="s2">= </span><span class="s1">file</span><span class="s2">.</span><span class="s1">read</span><span class="s2">(</span><span class="s5">7</span><span class="s2">)</span>
+        <span class="s1">format_h </span><span class="s2">= </span><span class="s6">&quot;&lt;H&quot; </span><span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">e_ident_data </span><span class="s2">== </span><span class="s1">self</span><span class="s2">.</span><span class="s1">ELFDATA2LSB </span><span class="s0">else </span><span class="s6">&quot;&gt;H&quot;</span>
+        <span class="s1">format_i </span><span class="s2">= </span><span class="s6">&quot;&lt;I&quot; </span><span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">e_ident_data </span><span class="s2">== </span><span class="s1">self</span><span class="s2">.</span><span class="s1">ELFDATA2LSB </span><span class="s0">else </span><span class="s6">&quot;&gt;I&quot;</span>
+        <span class="s1">format_q </span><span class="s2">= </span><span class="s6">&quot;&lt;Q&quot; </span><span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">e_ident_data </span><span class="s2">== </span><span class="s1">self</span><span class="s2">.</span><span class="s1">ELFDATA2LSB </span><span class="s0">else </span><span class="s6">&quot;&gt;Q&quot;</span>
+        <span class="s1">format_p </span><span class="s2">= </span><span class="s1">format_i </span><span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">e_ident_class </span><span class="s2">== </span><span class="s1">self</span><span class="s2">.</span><span class="s1">ELFCLASS32 </span><span class="s0">else </span><span class="s1">format_q</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_type </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s1">format_h</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_machine </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s1">format_h</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_version </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s1">format_i</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_entry </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s1">format_p</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_phoff </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s1">format_p</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_shoff </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s1">format_p</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_flags </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s1">format_i</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_ehsize </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s1">format_h</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_phentsize </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s1">format_h</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_phnum </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s1">format_h</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_shentsize </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s1">format_h</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_shnum </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s1">format_h</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">e_shstrndx </span><span class="s2">= </span><span class="s1">unpack</span><span class="s2">(</span><span class="s1">format_h</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">_get_elf_header</span><span class="s2">() </span><span class="s1">-&gt; Optional</span><span class="s2">[</span><span class="s1">_ELFFileHeader</span><span class="s2">]:</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">with </span><span class="s1">open</span><span class="s2">(</span><span class="s1">sys</span><span class="s2">.</span><span class="s1">executable</span><span class="s2">, </span><span class="s6">&quot;rb&quot;</span><span class="s2">) </span><span class="s0">as </span><span class="s1">f</span><span class="s2">:</span>
+            <span class="s1">elf_header </span><span class="s2">= </span><span class="s1">_ELFFileHeader</span><span class="s2">(</span><span class="s1">f</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s2">(</span><span class="s1">OSError</span><span class="s2">, </span><span class="s1">TypeError</span><span class="s2">, </span><span class="s1">_ELFFileHeader</span><span class="s2">.</span><span class="s1">_InvalidELFFileHeader</span><span class="s2">):</span>
+        <span class="s0">return None</span>
+    <span class="s0">return </span><span class="s1">elf_header</span>
+
+
+<span class="s0">def </span><span class="s1">_is_linux_armhf</span><span class="s2">() </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+    <span class="s3"># hard-float ABI can be detected from the ELF header of the running</span>
+    <span class="s3"># process</span>
+    <span class="s3"># https://static.docs.arm.com/ihi0044/g/aaelf32.pdf</span>
+    <span class="s1">elf_header </span><span class="s2">= </span><span class="s1">_get_elf_header</span><span class="s2">()</span>
+    <span class="s0">if </span><span class="s1">elf_header </span><span class="s0">is None</span><span class="s2">:</span>
+        <span class="s0">return False</span>
+    <span class="s1">result </span><span class="s2">= </span><span class="s1">elf_header</span><span class="s2">.</span><span class="s1">e_ident_class </span><span class="s2">== </span><span class="s1">elf_header</span><span class="s2">.</span><span class="s1">ELFCLASS32</span>
+    <span class="s1">result </span><span class="s2">&amp;= </span><span class="s1">elf_header</span><span class="s2">.</span><span class="s1">e_ident_data </span><span class="s2">== </span><span class="s1">elf_header</span><span class="s2">.</span><span class="s1">ELFDATA2LSB</span>
+    <span class="s1">result </span><span class="s2">&amp;= </span><span class="s1">elf_header</span><span class="s2">.</span><span class="s1">e_machine </span><span class="s2">== </span><span class="s1">elf_header</span><span class="s2">.</span><span class="s1">EM_ARM</span>
+    <span class="s1">result </span><span class="s2">&amp;= (</span>
+        <span class="s1">elf_header</span><span class="s2">.</span><span class="s1">e_flags </span><span class="s2">&amp; </span><span class="s1">elf_header</span><span class="s2">.</span><span class="s1">EF_ARM_ABIMASK</span>
+    <span class="s2">) == </span><span class="s1">elf_header</span><span class="s2">.</span><span class="s1">EF_ARM_ABI_VER5</span>
+    <span class="s1">result </span><span class="s2">&amp;= (</span>
+        <span class="s1">elf_header</span><span class="s2">.</span><span class="s1">e_flags </span><span class="s2">&amp; </span><span class="s1">elf_header</span><span class="s2">.</span><span class="s1">EF_ARM_ABI_FLOAT_HARD</span>
+    <span class="s2">) == </span><span class="s1">elf_header</span><span class="s2">.</span><span class="s1">EF_ARM_ABI_FLOAT_HARD</span>
+    <span class="s0">return </span><span class="s1">result</span>
+
+
+<span class="s0">def </span><span class="s1">_is_linux_i686</span><span class="s2">() </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+    <span class="s1">elf_header </span><span class="s2">= </span><span class="s1">_get_elf_header</span><span class="s2">()</span>
+    <span class="s0">if </span><span class="s1">elf_header </span><span class="s0">is None</span><span class="s2">:</span>
+        <span class="s0">return False</span>
+    <span class="s1">result </span><span class="s2">= </span><span class="s1">elf_header</span><span class="s2">.</span><span class="s1">e_ident_class </span><span class="s2">== </span><span class="s1">elf_header</span><span class="s2">.</span><span class="s1">ELFCLASS32</span>
+    <span class="s1">result </span><span class="s2">&amp;= </span><span class="s1">elf_header</span><span class="s2">.</span><span class="s1">e_ident_data </span><span class="s2">== </span><span class="s1">elf_header</span><span class="s2">.</span><span class="s1">ELFDATA2LSB</span>
+    <span class="s1">result </span><span class="s2">&amp;= </span><span class="s1">elf_header</span><span class="s2">.</span><span class="s1">e_machine </span><span class="s2">== </span><span class="s1">elf_header</span><span class="s2">.</span><span class="s1">EM_386</span>
+    <span class="s0">return </span><span class="s1">result</span>
+
+
+<span class="s0">def </span><span class="s1">_have_compatible_abi</span><span class="s2">(</span><span class="s1">arch</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+    <span class="s0">if </span><span class="s1">arch </span><span class="s2">== </span><span class="s6">&quot;armv7l&quot;</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">_is_linux_armhf</span><span class="s2">()</span>
+    <span class="s0">if </span><span class="s1">arch </span><span class="s2">== </span><span class="s6">&quot;i686&quot;</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">_is_linux_i686</span><span class="s2">()</span>
+    <span class="s0">return </span><span class="s1">arch </span><span class="s0">in </span><span class="s2">{</span><span class="s6">&quot;x86_64&quot;</span><span class="s2">, </span><span class="s6">&quot;aarch64&quot;</span><span class="s2">, </span><span class="s6">&quot;ppc64&quot;</span><span class="s2">, </span><span class="s6">&quot;ppc64le&quot;</span><span class="s2">, </span><span class="s6">&quot;s390x&quot;</span><span class="s2">}</span>
+
+
+<span class="s3"># If glibc ever changes its major version, we need to know what the last</span>
+<span class="s3"># minor version was, so we can build the complete list of all versions.</span>
+<span class="s3"># For now, guess what the highest minor version might be, assume it will</span>
+<span class="s3"># be 50 for testing. Once this actually happens, update the dictionary</span>
+<span class="s3"># with the actual value.</span>
+<span class="s1">_LAST_GLIBC_MINOR</span><span class="s2">: </span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">int</span><span class="s2">, </span><span class="s1">int</span><span class="s2">] = </span><span class="s1">collections</span><span class="s2">.</span><span class="s1">defaultdict</span><span class="s2">(</span><span class="s0">lambda</span><span class="s2">: </span><span class="s5">50</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">_GLibCVersion</span><span class="s2">(</span><span class="s1">NamedTuple</span><span class="s2">):</span>
+    <span class="s1">major</span><span class="s2">: </span><span class="s1">int</span>
+    <span class="s1">minor</span><span class="s2">: </span><span class="s1">int</span>
+
+
+<span class="s0">def </span><span class="s1">_glibc_version_string_confstr</span><span class="s2">() </span><span class="s1">-&gt; Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Primary implementation of glibc_version_string using os.confstr. 
+    &quot;&quot;&quot;</span>
+    <span class="s3"># os.confstr is quite a bit faster than ctypes.DLL. It's also less likely</span>
+    <span class="s3"># to be broken or missing. This strategy is used in the standard library</span>
+    <span class="s3"># platform module.</span>
+    <span class="s3"># https://github.com/python/cpython/blob/fcf1d003bf4f0100c/Lib/platform.py#L175-L183</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s3"># os.confstr(&quot;CS_GNU_LIBC_VERSION&quot;) returns a string like &quot;glibc 2.17&quot;.</span>
+        <span class="s1">version_string </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">confstr</span><span class="s2">(</span><span class="s6">&quot;CS_GNU_LIBC_VERSION&quot;</span><span class="s2">)</span>
+        <span class="s0">assert </span><span class="s1">version_string </span><span class="s0">is not None</span>
+        <span class="s1">_</span><span class="s2">, </span><span class="s1">version </span><span class="s2">= </span><span class="s1">version_string</span><span class="s2">.</span><span class="s1">split</span><span class="s2">()</span>
+    <span class="s0">except </span><span class="s2">(</span><span class="s1">AssertionError</span><span class="s2">, </span><span class="s1">AttributeError</span><span class="s2">, </span><span class="s1">OSError</span><span class="s2">, </span><span class="s1">ValueError</span><span class="s2">):</span>
+        <span class="s3"># os.confstr() or CS_GNU_LIBC_VERSION not available (or a bad value)...</span>
+        <span class="s0">return None</span>
+    <span class="s0">return </span><span class="s1">version</span>
+
+
+<span class="s0">def </span><span class="s1">_glibc_version_string_ctypes</span><span class="s2">() </span><span class="s1">-&gt; Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Fallback implementation of glibc_version_string using ctypes. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">import </span><span class="s1">ctypes</span>
+    <span class="s0">except </span><span class="s1">ImportError</span><span class="s2">:</span>
+        <span class="s0">return None</span>
+
+    <span class="s3"># ctypes.CDLL(None) internally calls dlopen(NULL), and as the dlopen</span>
+    <span class="s3"># manpage says, &quot;If filename is NULL, then the returned handle is for the</span>
+    <span class="s3"># main program&quot;. This way we can let the linker do the work to figure out</span>
+    <span class="s3"># which libc our process is actually using.</span>
+    <span class="s3">#</span>
+    <span class="s3"># We must also handle the special case where the executable is not a</span>
+    <span class="s3"># dynamically linked executable. This can occur when using musl libc,</span>
+    <span class="s3"># for example. In this situation, dlopen() will error, leading to an</span>
+    <span class="s3"># OSError. Interestingly, at least in the case of musl, there is no</span>
+    <span class="s3"># errno set on the OSError. The single string argument used to construct</span>
+    <span class="s3"># OSError comes from libc itself and is therefore not portable to</span>
+    <span class="s3"># hard code here. In any case, failure to call dlopen() means we</span>
+    <span class="s3"># can proceed, so we bail on our attempt.</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s1">process_namespace </span><span class="s2">= </span><span class="s1">ctypes</span><span class="s2">.</span><span class="s1">CDLL</span><span class="s2">(</span><span class="s0">None</span><span class="s2">)</span>
+    <span class="s0">except </span><span class="s1">OSError</span><span class="s2">:</span>
+        <span class="s0">return None</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s1">gnu_get_libc_version </span><span class="s2">= </span><span class="s1">process_namespace</span><span class="s2">.</span><span class="s1">gnu_get_libc_version</span>
+    <span class="s0">except </span><span class="s1">AttributeError</span><span class="s2">:</span>
+        <span class="s3"># Symbol doesn't exist -&gt; therefore, we are not linked to</span>
+        <span class="s3"># glibc.</span>
+        <span class="s0">return None</span>
+
+    <span class="s3"># Call gnu_get_libc_version, which returns a string like &quot;2.5&quot;</span>
+    <span class="s1">gnu_get_libc_version</span><span class="s2">.</span><span class="s1">restype </span><span class="s2">= </span><span class="s1">ctypes</span><span class="s2">.</span><span class="s1">c_char_p</span>
+    <span class="s1">version_str</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s1">gnu_get_libc_version</span><span class="s2">()</span>
+    <span class="s3"># py2 / py3 compatibility:</span>
+    <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">version_str</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+        <span class="s1">version_str </span><span class="s2">= </span><span class="s1">version_str</span><span class="s2">.</span><span class="s1">decode</span><span class="s2">(</span><span class="s6">&quot;ascii&quot;</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">version_str</span>
+
+
+<span class="s0">def </span><span class="s1">_glibc_version_string</span><span class="s2">() </span><span class="s1">-&gt; Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s4">&quot;&quot;&quot;Returns glibc version string, or None if not using glibc.&quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s1">_glibc_version_string_confstr</span><span class="s2">() </span><span class="s0">or </span><span class="s1">_glibc_version_string_ctypes</span><span class="s2">()</span>
+
+
+<span class="s0">def </span><span class="s1">_parse_glibc_version</span><span class="s2">(</span><span class="s1">version_str</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; Tuple</span><span class="s2">[</span><span class="s1">int</span><span class="s2">, </span><span class="s1">int</span><span class="s2">]:</span>
+    <span class="s4">&quot;&quot;&quot;Parse glibc version. 
+ 
+    We use a regexp instead of str.split because we want to discard any 
+    random junk that might come after the minor version -- this might happen 
+    in patched/forked versions of glibc (e.g. Linaro's version of glibc 
+    uses version strings like &quot;2.20-2014.11&quot;). See gh-3588. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">m </span><span class="s2">= </span><span class="s1">re</span><span class="s2">.</span><span class="s1">match</span><span class="s2">(</span><span class="s6">r&quot;(?P&lt;major&gt;[0-9]+)\.(?P&lt;minor&gt;[0-9]+)&quot;</span><span class="s2">, </span><span class="s1">version_str</span><span class="s2">)</span>
+    <span class="s0">if not </span><span class="s1">m</span><span class="s2">:</span>
+        <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span>
+            <span class="s6">&quot;Expected glibc version with 2 components major.minor,&quot;</span>
+            <span class="s6">&quot; got: %s&quot; </span><span class="s2">% </span><span class="s1">version_str</span><span class="s2">,</span>
+            <span class="s1">RuntimeWarning</span><span class="s2">,</span>
+        <span class="s2">)</span>
+        <span class="s0">return </span><span class="s2">-</span><span class="s5">1</span><span class="s2">, -</span><span class="s5">1</span>
+    <span class="s0">return </span><span class="s1">int</span><span class="s2">(</span><span class="s1">m</span><span class="s2">.</span><span class="s1">group</span><span class="s2">(</span><span class="s6">&quot;major&quot;</span><span class="s2">)), </span><span class="s1">int</span><span class="s2">(</span><span class="s1">m</span><span class="s2">.</span><span class="s1">group</span><span class="s2">(</span><span class="s6">&quot;minor&quot;</span><span class="s2">))</span>
+
+
+<span class="s2">@</span><span class="s1">functools</span><span class="s2">.</span><span class="s1">lru_cache</span><span class="s2">()</span>
+<span class="s0">def </span><span class="s1">_get_glibc_version</span><span class="s2">() </span><span class="s1">-&gt; Tuple</span><span class="s2">[</span><span class="s1">int</span><span class="s2">, </span><span class="s1">int</span><span class="s2">]:</span>
+    <span class="s1">version_str </span><span class="s2">= </span><span class="s1">_glibc_version_string</span><span class="s2">()</span>
+    <span class="s0">if </span><span class="s1">version_str </span><span class="s0">is None</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s2">(-</span><span class="s5">1</span><span class="s2">, -</span><span class="s5">1</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">_parse_glibc_version</span><span class="s2">(</span><span class="s1">version_str</span><span class="s2">)</span>
+
+
+<span class="s3"># From PEP 513, PEP 600</span>
+<span class="s0">def </span><span class="s1">_is_compatible</span><span class="s2">(</span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">arch</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">version</span><span class="s2">: </span><span class="s1">_GLibCVersion</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+    <span class="s1">sys_glibc </span><span class="s2">= </span><span class="s1">_get_glibc_version</span><span class="s2">()</span>
+    <span class="s0">if </span><span class="s1">sys_glibc </span><span class="s2">&lt; </span><span class="s1">version</span><span class="s2">:</span>
+        <span class="s0">return False</span>
+    <span class="s3"># Check for presence of _manylinux module.</span>
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">import </span><span class="s1">_manylinux  </span><span class="s3"># noqa</span>
+    <span class="s0">except </span><span class="s1">ImportError</span><span class="s2">:</span>
+        <span class="s0">return True</span>
+    <span class="s0">if </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">_manylinux</span><span class="s2">, </span><span class="s6">&quot;manylinux_compatible&quot;</span><span class="s2">):</span>
+        <span class="s1">result </span><span class="s2">= </span><span class="s1">_manylinux</span><span class="s2">.</span><span class="s1">manylinux_compatible</span><span class="s2">(</span><span class="s1">version</span><span class="s2">[</span><span class="s5">0</span><span class="s2">], </span><span class="s1">version</span><span class="s2">[</span><span class="s5">1</span><span class="s2">], </span><span class="s1">arch</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">result </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">bool</span><span class="s2">(</span><span class="s1">result</span><span class="s2">)</span>
+        <span class="s0">return True</span>
+    <span class="s0">if </span><span class="s1">version </span><span class="s2">== </span><span class="s1">_GLibCVersion</span><span class="s2">(</span><span class="s5">2</span><span class="s2">, </span><span class="s5">5</span><span class="s2">):</span>
+        <span class="s0">if </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">_manylinux</span><span class="s2">, </span><span class="s6">&quot;manylinux1_compatible&quot;</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">bool</span><span class="s2">(</span><span class="s1">_manylinux</span><span class="s2">.</span><span class="s1">manylinux1_compatible</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">version </span><span class="s2">== </span><span class="s1">_GLibCVersion</span><span class="s2">(</span><span class="s5">2</span><span class="s2">, </span><span class="s5">12</span><span class="s2">):</span>
+        <span class="s0">if </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">_manylinux</span><span class="s2">, </span><span class="s6">&quot;manylinux2010_compatible&quot;</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">bool</span><span class="s2">(</span><span class="s1">_manylinux</span><span class="s2">.</span><span class="s1">manylinux2010_compatible</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">version </span><span class="s2">== </span><span class="s1">_GLibCVersion</span><span class="s2">(</span><span class="s5">2</span><span class="s2">, </span><span class="s5">17</span><span class="s2">):</span>
+        <span class="s0">if </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">_manylinux</span><span class="s2">, </span><span class="s6">&quot;manylinux2014_compatible&quot;</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">bool</span><span class="s2">(</span><span class="s1">_manylinux</span><span class="s2">.</span><span class="s1">manylinux2014_compatible</span><span class="s2">)</span>
+    <span class="s0">return True</span>
+
+
+<span class="s1">_LEGACY_MANYLINUX_MAP </span><span class="s2">= {</span>
+    <span class="s3"># CentOS 7 w/ glibc 2.17 (PEP 599)</span>
+    <span class="s2">(</span><span class="s5">2</span><span class="s2">, </span><span class="s5">17</span><span class="s2">): </span><span class="s6">&quot;manylinux2014&quot;</span><span class="s2">,</span>
+    <span class="s3"># CentOS 6 w/ glibc 2.12 (PEP 571)</span>
+    <span class="s2">(</span><span class="s5">2</span><span class="s2">, </span><span class="s5">12</span><span class="s2">): </span><span class="s6">&quot;manylinux2010&quot;</span><span class="s2">,</span>
+    <span class="s3"># CentOS 5 w/ glibc 2.5 (PEP 513)</span>
+    <span class="s2">(</span><span class="s5">2</span><span class="s2">, </span><span class="s5">5</span><span class="s2">): </span><span class="s6">&quot;manylinux1&quot;</span><span class="s2">,</span>
+<span class="s2">}</span>
+
+
+<span class="s0">def </span><span class="s1">platform_tags</span><span class="s2">(</span><span class="s1">linux</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">arch</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; Iterator</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s0">if not </span><span class="s1">_have_compatible_abi</span><span class="s2">(</span><span class="s1">arch</span><span class="s2">):</span>
+        <span class="s0">return</span>
+    <span class="s3"># Oldest glibc to be supported regardless of architecture is (2, 17).</span>
+    <span class="s1">too_old_glibc2 </span><span class="s2">= </span><span class="s1">_GLibCVersion</span><span class="s2">(</span><span class="s5">2</span><span class="s2">, </span><span class="s5">16</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">arch </span><span class="s0">in </span><span class="s2">{</span><span class="s6">&quot;x86_64&quot;</span><span class="s2">, </span><span class="s6">&quot;i686&quot;</span><span class="s2">}:</span>
+        <span class="s3"># On x86/i686 also oldest glibc to be supported is (2, 5).</span>
+        <span class="s1">too_old_glibc2 </span><span class="s2">= </span><span class="s1">_GLibCVersion</span><span class="s2">(</span><span class="s5">2</span><span class="s2">, </span><span class="s5">4</span><span class="s2">)</span>
+    <span class="s1">current_glibc </span><span class="s2">= </span><span class="s1">_GLibCVersion</span><span class="s2">(*</span><span class="s1">_get_glibc_version</span><span class="s2">())</span>
+    <span class="s1">glibc_max_list </span><span class="s2">= [</span><span class="s1">current_glibc</span><span class="s2">]</span>
+    <span class="s3"># We can assume compatibility across glibc major versions.</span>
+    <span class="s3"># https://sourceware.org/bugzilla/show_bug.cgi?id=24636</span>
+    <span class="s3">#</span>
+    <span class="s3"># Build a list of maximum glibc versions so that we can</span>
+    <span class="s3"># output the canonical list of all glibc from current_glibc</span>
+    <span class="s3"># down to too_old_glibc2, including all intermediary versions.</span>
+    <span class="s0">for </span><span class="s1">glibc_major </span><span class="s0">in </span><span class="s1">range</span><span class="s2">(</span><span class="s1">current_glibc</span><span class="s2">.</span><span class="s1">major </span><span class="s2">- </span><span class="s5">1</span><span class="s2">, </span><span class="s5">1</span><span class="s2">, -</span><span class="s5">1</span><span class="s2">):</span>
+        <span class="s1">glibc_minor </span><span class="s2">= </span><span class="s1">_LAST_GLIBC_MINOR</span><span class="s2">[</span><span class="s1">glibc_major</span><span class="s2">]</span>
+        <span class="s1">glibc_max_list</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">_GLibCVersion</span><span class="s2">(</span><span class="s1">glibc_major</span><span class="s2">, </span><span class="s1">glibc_minor</span><span class="s2">))</span>
+    <span class="s0">for </span><span class="s1">glibc_max </span><span class="s0">in </span><span class="s1">glibc_max_list</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">glibc_max</span><span class="s2">.</span><span class="s1">major </span><span class="s2">== </span><span class="s1">too_old_glibc2</span><span class="s2">.</span><span class="s1">major</span><span class="s2">:</span>
+            <span class="s1">min_minor </span><span class="s2">= </span><span class="s1">too_old_glibc2</span><span class="s2">.</span><span class="s1">minor</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s3"># For other glibc major versions oldest supported is (x, 0).</span>
+            <span class="s1">min_minor </span><span class="s2">= -</span><span class="s5">1</span>
+        <span class="s0">for </span><span class="s1">glibc_minor </span><span class="s0">in </span><span class="s1">range</span><span class="s2">(</span><span class="s1">glibc_max</span><span class="s2">.</span><span class="s1">minor</span><span class="s2">, </span><span class="s1">min_minor</span><span class="s2">, -</span><span class="s5">1</span><span class="s2">):</span>
+            <span class="s1">glibc_version </span><span class="s2">= </span><span class="s1">_GLibCVersion</span><span class="s2">(</span><span class="s1">glibc_max</span><span class="s2">.</span><span class="s1">major</span><span class="s2">, </span><span class="s1">glibc_minor</span><span class="s2">)</span>
+            <span class="s1">tag </span><span class="s2">= </span><span class="s6">&quot;manylinux_{}_{}&quot;</span><span class="s2">.</span><span class="s1">format</span><span class="s2">(*</span><span class="s1">glibc_version</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">_is_compatible</span><span class="s2">(</span><span class="s1">tag</span><span class="s2">, </span><span class="s1">arch</span><span class="s2">, </span><span class="s1">glibc_version</span><span class="s2">):</span>
+                <span class="s0">yield </span><span class="s1">linux</span><span class="s2">.</span><span class="s1">replace</span><span class="s2">(</span><span class="s6">&quot;linux&quot;</span><span class="s2">, </span><span class="s1">tag</span><span class="s2">)</span>
+            <span class="s3"># Handle the legacy manylinux1, manylinux2010, manylinux2014 tags.</span>
+            <span class="s0">if </span><span class="s1">glibc_version </span><span class="s0">in </span><span class="s1">_LEGACY_MANYLINUX_MAP</span><span class="s2">:</span>
+                <span class="s1">legacy_tag </span><span class="s2">= </span><span class="s1">_LEGACY_MANYLINUX_MAP</span><span class="s2">[</span><span class="s1">glibc_version</span><span class="s2">]</span>
+                <span class="s0">if </span><span class="s1">_is_compatible</span><span class="s2">(</span><span class="s1">legacy_tag</span><span class="s2">, </span><span class="s1">arch</span><span class="s2">, </span><span class="s1">glibc_version</span><span class="s2">):</span>
+                    <span class="s0">yield </span><span class="s1">linux</span><span class="s2">.</span><span class="s1">replace</span><span class="s2">(</span><span class="s6">&quot;linux&quot;</span><span class="s2">, </span><span class="s1">legacy_tag</span><span class="s2">)</span>
+</pre>
+</body>
+</html>

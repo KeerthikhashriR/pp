@@ -1,0 +1,502 @@
+<html>
+<head>
+<title>_discriminated_union.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #5f826b; font-style: italic;}
+.s4 { color: #6aab73;}
+.s5 { color: #7a7e85;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_discriminated_union.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations </span><span class="s0">as </span><span class="s1">_annotations</span>
+
+<span class="s0">from </span><span class="s1">collections</span><span class="s2">.</span><span class="s1">abc </span><span class="s0">import </span><span class="s1">Hashable</span><span class="s2">, </span><span class="s1">Sequence</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">TYPE_CHECKING</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">cast</span>
+
+<span class="s0">from </span><span class="s1">pydantic_core </span><span class="s0">import </span><span class="s1">CoreSchema</span><span class="s2">, </span><span class="s1">core_schema</span>
+
+<span class="s0">from </span><span class="s2">..</span><span class="s1">errors </span><span class="s0">import </span><span class="s1">PydanticUserError</span>
+<span class="s0">from </span><span class="s2">. </span><span class="s0">import </span><span class="s1">_core_utils</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">_core_utils </span><span class="s0">import </span><span class="s2">(</span>
+    <span class="s1">CoreSchemaField</span><span class="s2">,</span>
+<span class="s2">)</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+    <span class="s0">from </span><span class="s2">..</span><span class="s1">types </span><span class="s0">import </span><span class="s1">Discriminator</span>
+    <span class="s0">from </span><span class="s2">.</span><span class="s1">_core_metadata </span><span class="s0">import </span><span class="s1">CoreMetadata</span>
+
+
+<span class="s0">class </span><span class="s1">MissingDefinitionForUnionRef</span><span class="s2">(</span><span class="s1">Exception</span><span class="s2">):</span>
+    <span class="s3">&quot;&quot;&quot;Raised when applying a discriminated union discriminator to a schema 
+    requires a definition that is not yet defined 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">ref</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">ref </span><span class="s2">= </span><span class="s1">ref</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(</span><span class="s4">f'Missing definition for ref </span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">ref</span><span class="s0">!r}</span><span class="s4">'</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">set_discriminator_in_metadata</span><span class="s2">(</span><span class="s1">schema</span><span class="s2">: </span><span class="s1">CoreSchema</span><span class="s2">, </span><span class="s1">discriminator</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s1">metadata </span><span class="s2">= </span><span class="s1">cast</span><span class="s2">(</span><span class="s4">'CoreMetadata'</span><span class="s2">, </span><span class="s1">schema</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s4">'metadata'</span><span class="s2">, {}))</span>
+    <span class="s1">metadata</span><span class="s2">[</span><span class="s4">'pydantic_internal_union_discriminator'</span><span class="s2">] = </span><span class="s1">discriminator</span>
+
+
+<span class="s0">def </span><span class="s1">apply_discriminator</span><span class="s2">(</span>
+    <span class="s1">schema</span><span class="s2">: </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">CoreSchema</span><span class="s2">,</span>
+    <span class="s1">discriminator</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s1">Discriminator</span><span class="s2">,</span>
+    <span class="s1">definitions</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">CoreSchema</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+<span class="s2">) </span><span class="s1">-&gt; core_schema</span><span class="s2">.</span><span class="s1">CoreSchema</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;Applies the discriminator and returns a new core schema. 
+ 
+    Args: 
+        schema: The input schema. 
+        discriminator: The name of the field which will serve as the discriminator. 
+        definitions: A mapping of schema ref to schema. 
+ 
+    Returns: 
+        The new core schema. 
+ 
+    Raises: 
+        TypeError: 
+            - If `discriminator` is used with invalid union variant. 
+            - If `discriminator` is used with `Union` type with one variant. 
+            - If `discriminator` value mapped to multiple choices. 
+        MissingDefinitionForUnionRef: 
+            If the definition for ref is missing. 
+        PydanticUserError: 
+            - If a model in union doesn't have a discriminator field. 
+            - If discriminator field has a non-string alias. 
+            - If discriminator fields have different aliases. 
+            - If discriminator field not of type `Literal`. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">from </span><span class="s2">..</span><span class="s1">types </span><span class="s0">import </span><span class="s1">Discriminator</span>
+
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">discriminator</span><span class="s2">, </span><span class="s1">Discriminator</span><span class="s2">):</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">discriminator</span><span class="s2">.</span><span class="s1">discriminator</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+            <span class="s1">discriminator </span><span class="s2">= </span><span class="s1">discriminator</span><span class="s2">.</span><span class="s1">discriminator</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">discriminator</span><span class="s2">.</span><span class="s1">_convert_schema</span><span class="s2">(</span><span class="s1">schema</span><span class="s2">)</span>
+
+    <span class="s0">return </span><span class="s1">_ApplyInferredDiscriminator</span><span class="s2">(</span><span class="s1">discriminator</span><span class="s2">, </span><span class="s1">definitions </span><span class="s0">or </span><span class="s2">{}).</span><span class="s1">apply</span><span class="s2">(</span><span class="s1">schema</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">_ApplyInferredDiscriminator</span><span class="s2">:</span>
+    <span class="s3">&quot;&quot;&quot;This class is used to convert an input schema containing a union schema into one where that union is 
+    replaced with a tagged-union, with all the associated debugging and performance benefits. 
+ 
+    This is done by: 
+    * Validating that the input schema is compatible with the provided discriminator 
+    * Introspecting the schema to determine which discriminator values should map to which union choices 
+    * Handling various edge cases such as 'definitions', 'default', 'nullable' schemas, and more 
+ 
+    I have chosen to implement the conversion algorithm in this class, rather than a function, 
+    to make it easier to maintain state while recursively walking the provided CoreSchema. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">discriminator</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">definitions</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">CoreSchema</span><span class="s2">]):</span>
+        <span class="s5"># `discriminator` should be the name of the field which will serve as the discriminator.</span>
+        <span class="s5"># It must be the python name of the field, and *not* the field's alias. Note that as of now,</span>
+        <span class="s5"># all members of a discriminated union _must_ use a field with the same name as the discriminator.</span>
+        <span class="s5"># This may change if/when we expose a way to manually specify the TaggedUnionSchema's choices.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator </span><span class="s2">= </span><span class="s1">discriminator</span>
+
+        <span class="s5"># `definitions` should contain a mapping of schema ref to schema for all schemas which might</span>
+        <span class="s5"># be referenced by some choice</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">definitions </span><span class="s2">= </span><span class="s1">definitions</span>
+
+        <span class="s5"># `_discriminator_alias` will hold the value, if present, of the alias for the discriminator</span>
+        <span class="s5">#</span>
+        <span class="s5"># Note: following the v1 implementation, we currently disallow the use of different aliases</span>
+        <span class="s5"># for different choices. This is not a limitation of pydantic_core, but if we try to handle</span>
+        <span class="s5"># this, the inference logic gets complicated very quickly, and could result in confusing</span>
+        <span class="s5"># debugging challenges for users making subtle mistakes.</span>
+        <span class="s5">#</span>
+        <span class="s5"># Rather than trying to do the most powerful inference possible, I think we should eventually</span>
+        <span class="s5"># expose a way to more-manually control the way the TaggedUnionSchema is constructed through</span>
+        <span class="s5"># the use of a new type which would be placed as an Annotation on the Union type. This would</span>
+        <span class="s5"># provide the full flexibility/power of pydantic_core's TaggedUnionSchema where necessary for</span>
+        <span class="s5"># more complex cases, without over-complicating the inference logic for the common cases.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_discriminator_alias</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+
+        <span class="s5"># `_should_be_nullable` indicates whether the converted union has `None` as an allowed value.</span>
+        <span class="s5"># If `None` is an acceptable value of the (possibly-wrapped) union, we ignore it while</span>
+        <span class="s5"># constructing the TaggedUnionSchema, but set the `_should_be_nullable` attribute to True.</span>
+        <span class="s5"># Once we have constructed the TaggedUnionSchema, if `_should_be_nullable` is True, we ensure</span>
+        <span class="s5"># that the final schema gets wrapped as a NullableSchema. This has the same semantics on the</span>
+        <span class="s5"># python side, but resolves the issue that `None` cannot correspond to any discriminator values.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_should_be_nullable </span><span class="s2">= </span><span class="s0">False</span>
+
+        <span class="s5"># `_is_nullable` is used to track if the final produced schema will definitely be nullable;</span>
+        <span class="s5"># we set it to True if the input schema is wrapped in a nullable schema that we know will be preserved</span>
+        <span class="s5"># as an indication that, even if None is discovered as one of the union choices, we will not need to wrap</span>
+        <span class="s5"># the final value in another nullable schema.</span>
+        <span class="s5">#</span>
+        <span class="s5"># This is more complicated than just checking for the final outermost schema having type 'nullable' thanks</span>
+        <span class="s5"># to the possible presence of other wrapper schemas such as DefinitionsSchema, WithDefaultSchema, etc.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_is_nullable </span><span class="s2">= </span><span class="s0">False</span>
+
+        <span class="s5"># `_choices_to_handle` serves as a stack of choices to add to the tagged union. Initially, choices</span>
+        <span class="s5"># from the union in the wrapped schema will be appended to this list, and the recursive choice-handling</span>
+        <span class="s5"># algorithm may add more choices to this stack as (nested) unions are encountered.</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_choices_to_handle</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">CoreSchema</span><span class="s2">] = []</span>
+
+        <span class="s5"># `_tagged_union_choices` is built during the call to `apply`, and will hold the choices to be included</span>
+        <span class="s5"># in the output TaggedUnionSchema that will replace the union from the input schema</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_tagged_union_choices</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">Hashable</span><span class="s2">, </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">CoreSchema</span><span class="s2">] = {}</span>
+
+        <span class="s5"># `_used` is changed to True after applying the discriminator to prevent accidental reuse</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_used </span><span class="s2">= </span><span class="s0">False</span>
+
+    <span class="s0">def </span><span class="s1">apply</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">schema</span><span class="s2">: </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">CoreSchema</span><span class="s2">) </span><span class="s1">-&gt; core_schema</span><span class="s2">.</span><span class="s1">CoreSchema</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;Return a new CoreSchema based on `schema` that uses a tagged-union with the discriminator provided 
+        to this class. 
+ 
+        Args: 
+            schema: The input schema. 
+ 
+        Returns: 
+            The new core schema. 
+ 
+        Raises: 
+            TypeError: 
+                - If `discriminator` is used with invalid union variant. 
+                - If `discriminator` is used with `Union` type with one variant. 
+                - If `discriminator` value mapped to multiple choices. 
+            ValueError: 
+                If the definition for ref is missing. 
+            PydanticUserError: 
+                - If a model in union doesn't have a discriminator field. 
+                - If discriminator field has a non-string alias. 
+                - If discriminator fields have different aliases. 
+                - If discriminator field not of type `Literal`. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">assert not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_used</span>
+        <span class="s1">schema </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_apply_to_root</span><span class="s2">(</span><span class="s1">schema</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_should_be_nullable </span><span class="s0">and not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_is_nullable</span><span class="s2">:</span>
+            <span class="s1">schema </span><span class="s2">= </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">nullable_schema</span><span class="s2">(</span><span class="s1">schema</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_used </span><span class="s2">= </span><span class="s0">True</span>
+        <span class="s0">return </span><span class="s1">schema</span>
+
+    <span class="s0">def </span><span class="s1">_apply_to_root</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">schema</span><span class="s2">: </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">CoreSchema</span><span class="s2">) </span><span class="s1">-&gt; core_schema</span><span class="s2">.</span><span class="s1">CoreSchema</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;This method handles the outer-most stage of recursion over the input schema: 
+        unwrapping nullable or definitions schemas, and calling the `_handle_choice` 
+        method iteratively on the choices extracted (recursively) from the possibly-wrapped union. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">schema</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'nullable'</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_is_nullable </span><span class="s2">= </span><span class="s0">True</span>
+            <span class="s1">wrapped </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_apply_to_root</span><span class="s2">(</span><span class="s1">schema</span><span class="s2">[</span><span class="s4">'schema'</span><span class="s2">])</span>
+            <span class="s1">nullable_wrapper </span><span class="s2">= </span><span class="s1">schema</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">()</span>
+            <span class="s1">nullable_wrapper</span><span class="s2">[</span><span class="s4">'schema'</span><span class="s2">] = </span><span class="s1">wrapped</span>
+            <span class="s0">return </span><span class="s1">nullable_wrapper</span>
+
+        <span class="s0">if </span><span class="s1">schema</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'definitions'</span><span class="s2">:</span>
+            <span class="s1">wrapped </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_apply_to_root</span><span class="s2">(</span><span class="s1">schema</span><span class="s2">[</span><span class="s4">'schema'</span><span class="s2">])</span>
+            <span class="s1">definitions_wrapper </span><span class="s2">= </span><span class="s1">schema</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">()</span>
+            <span class="s1">definitions_wrapper</span><span class="s2">[</span><span class="s4">'schema'</span><span class="s2">] = </span><span class="s1">wrapped</span>
+            <span class="s0">return </span><span class="s1">definitions_wrapper</span>
+
+        <span class="s0">if </span><span class="s1">schema</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] != </span><span class="s4">'union'</span><span class="s2">:</span>
+            <span class="s5"># If the schema is not a union, it probably means it just had a single member and</span>
+            <span class="s5"># was flattened by pydantic_core.</span>
+            <span class="s5"># However, it still may make sense to apply the discriminator to this schema,</span>
+            <span class="s5"># as a way to get discriminated-union-style error messages, so we allow this here.</span>
+            <span class="s1">schema </span><span class="s2">= </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">union_schema</span><span class="s2">([</span><span class="s1">schema</span><span class="s2">])</span>
+
+        <span class="s5"># Reverse the choices list before extending the stack so that they get handled in the order they occur</span>
+        <span class="s1">choices_schemas </span><span class="s2">= [</span><span class="s1">v</span><span class="s2">[</span><span class="s6">0</span><span class="s2">] </span><span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">tuple</span><span class="s2">) </span><span class="s0">else </span><span class="s1">v </span><span class="s0">for </span><span class="s1">v </span><span class="s0">in </span><span class="s1">schema</span><span class="s2">[</span><span class="s4">'choices'</span><span class="s2">][::-</span><span class="s6">1</span><span class="s2">]]</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_choices_to_handle</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">(</span><span class="s1">choices_schemas</span><span class="s2">)</span>
+        <span class="s0">while </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_choices_to_handle</span><span class="s2">:</span>
+            <span class="s1">choice </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_choices_to_handle</span><span class="s2">.</span><span class="s1">pop</span><span class="s2">()</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_handle_choice</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_discriminator_alias </span><span class="s0">is not None and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_discriminator_alias </span><span class="s2">!= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator</span><span class="s2">:</span>
+            <span class="s5"># * We need to annotate `discriminator` as a union here to handle both branches of this conditional</span>
+            <span class="s5"># * We need to annotate `discriminator` as list[list[str | int]] and not list[list[str]] due to the</span>
+            <span class="s5">#   invariance of list, and because list[list[str | int]] is the type of the discriminator argument</span>
+            <span class="s5">#   to tagged_union_schema below</span>
+            <span class="s5"># * See the docstring of pydantic_core.core_schema.tagged_union_schema for more details about how to</span>
+            <span class="s5">#   interpret the value of the discriminator argument to tagged_union_schema. (The list[list[str]] here</span>
+            <span class="s5">#   is the appropriate way to provide a list of fallback attributes to check for a discriminator value.)</span>
+            <span class="s1">discriminator</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s1">list</span><span class="s2">[</span><span class="s1">list</span><span class="s2">[</span><span class="s1">str </span><span class="s2">| </span><span class="s1">int</span><span class="s2">]] = [[</span><span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator</span><span class="s2">], [</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_discriminator_alias</span><span class="s2">]]</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">discriminator </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator</span>
+        <span class="s0">return </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">tagged_union_schema</span><span class="s2">(</span>
+            <span class="s1">choices</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_tagged_union_choices</span><span class="s2">,</span>
+            <span class="s1">discriminator</span><span class="s2">=</span><span class="s1">discriminator</span><span class="s2">,</span>
+            <span class="s1">custom_error_type</span><span class="s2">=</span><span class="s1">schema</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'custom_error_type'</span><span class="s2">),</span>
+            <span class="s1">custom_error_message</span><span class="s2">=</span><span class="s1">schema</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'custom_error_message'</span><span class="s2">),</span>
+            <span class="s1">custom_error_context</span><span class="s2">=</span><span class="s1">schema</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'custom_error_context'</span><span class="s2">),</span>
+            <span class="s1">strict</span><span class="s2">=</span><span class="s0">False</span><span class="s2">,</span>
+            <span class="s1">from_attributes</span><span class="s2">=</span><span class="s0">True</span><span class="s2">,</span>
+            <span class="s1">ref</span><span class="s2">=</span><span class="s1">schema</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'ref'</span><span class="s2">),</span>
+            <span class="s1">metadata</span><span class="s2">=</span><span class="s1">schema</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'metadata'</span><span class="s2">),</span>
+            <span class="s1">serialization</span><span class="s2">=</span><span class="s1">schema</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'serialization'</span><span class="s2">),</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_handle_choice</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">choice</span><span class="s2">: </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">CoreSchema</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;This method handles the &quot;middle&quot; stage of recursion over the input schema. 
+        Specifically, it is responsible for handling each choice of the outermost union 
+        (and any &quot;coalesced&quot; choices obtained from inner unions). 
+ 
+        Here, &quot;handling&quot; entails: 
+        * Coalescing nested unions and compatible tagged-unions 
+        * Tracking the presence of 'none' and 'nullable' schemas occurring as choices 
+        * Validating that each allowed discriminator value maps to a unique choice 
+        * Updating the _tagged_union_choices mapping that will ultimately be used to build the TaggedUnionSchema. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'definition-ref'</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'schema_ref'</span><span class="s2">] </span><span class="s0">not in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">definitions</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">MissingDefinitionForUnionRef</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'schema_ref'</span><span class="s2">])</span>
+
+        <span class="s0">if </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'none'</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_should_be_nullable </span><span class="s2">= </span><span class="s0">True</span>
+        <span class="s0">elif </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'definitions'</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_handle_choice</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'schema'</span><span class="s2">])</span>
+        <span class="s0">elif </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'nullable'</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_should_be_nullable </span><span class="s2">= </span><span class="s0">True</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_handle_choice</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'schema'</span><span class="s2">])  </span><span class="s5"># unwrap the nullable schema</span>
+        <span class="s0">elif </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'union'</span><span class="s2">:</span>
+            <span class="s5"># Reverse the choices list before extending the stack so that they get handled in the order they occur</span>
+            <span class="s1">choices_schemas </span><span class="s2">= [</span><span class="s1">v</span><span class="s2">[</span><span class="s6">0</span><span class="s2">] </span><span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">v</span><span class="s2">, </span><span class="s1">tuple</span><span class="s2">) </span><span class="s0">else </span><span class="s1">v </span><span class="s0">for </span><span class="s1">v </span><span class="s0">in </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'choices'</span><span class="s2">][::-</span><span class="s6">1</span><span class="s2">]]</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_choices_to_handle</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">(</span><span class="s1">choices_schemas</span><span class="s2">)</span>
+        <span class="s0">elif </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] </span><span class="s0">not in </span><span class="s2">{</span>
+            <span class="s4">'model'</span><span class="s2">,</span>
+            <span class="s4">'typed-dict'</span><span class="s2">,</span>
+            <span class="s4">'tagged-union'</span><span class="s2">,</span>
+            <span class="s4">'lax-or-strict'</span><span class="s2">,</span>
+            <span class="s4">'dataclass'</span><span class="s2">,</span>
+            <span class="s4">'dataclass-args'</span><span class="s2">,</span>
+            <span class="s4">'definition-ref'</span><span class="s2">,</span>
+        <span class="s2">} </span><span class="s0">and not </span><span class="s1">_core_utils</span><span class="s2">.</span><span class="s1">is_function_with_inner_schema</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">):</span>
+            <span class="s5"># We should eventually handle 'definition-ref' as well</span>
+            <span class="s1">err_str </span><span class="s2">= </span><span class="s4">f'The core schema type </span><span class="s0">{</span><span class="s1">choice</span><span class="s2">[</span><span class="s4">&quot;type&quot;</span><span class="s2">]</span><span class="s0">!r} </span><span class="s4">is not a valid discriminated union variant.'</span>
+            <span class="s0">if </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'list'</span><span class="s2">:</span>
+                <span class="s1">err_str </span><span class="s2">+= (</span>
+                    <span class="s4">' If you are making use of a list of union types, make sure the discriminator is applied to the '</span>
+                    <span class="s4">'union type and not the list (e.g. `list[Annotated[&lt;T&gt; | &lt;U&gt;, Field(discriminator=...)]]`).'</span>
+                <span class="s2">)</span>
+            <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span><span class="s1">err_str</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'tagged-union' </span><span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_is_discriminator_shared</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">):</span>
+                <span class="s5"># In this case, this inner tagged-union is compatible with the outer tagged-union,</span>
+                <span class="s5"># and its choices can be coalesced into the outer TaggedUnionSchema.</span>
+                <span class="s1">subchoices </span><span class="s2">= [</span><span class="s1">x </span><span class="s0">for </span><span class="s1">x </span><span class="s0">in </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'choices'</span><span class="s2">].</span><span class="s1">values</span><span class="s2">() </span><span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">x</span><span class="s2">, (</span><span class="s1">str</span><span class="s2">, </span><span class="s1">int</span><span class="s2">))]</span>
+                <span class="s5"># Reverse the choices list before extending the stack so that they get handled in the order they occur</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_choices_to_handle</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">(</span><span class="s1">subchoices</span><span class="s2">[::-</span><span class="s6">1</span><span class="s2">])</span>
+                <span class="s0">return</span>
+
+            <span class="s1">inferred_discriminator_values </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_choice</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">, </span><span class="s1">source_name</span><span class="s2">=</span><span class="s0">None</span><span class="s2">)</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_set_unique_choice_for_values</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">, </span><span class="s1">inferred_discriminator_values</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_is_discriminator_shared</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">choice</span><span class="s2">: </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">TaggedUnionSchema</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;This method returns a boolean indicating whether the discriminator for the `choice` 
+        is the same as that being used for the outermost tagged union. This is used to 
+        determine whether this TaggedUnionSchema choice should be &quot;coalesced&quot; into the top level, 
+        or whether it should be treated as a separate (nested) choice. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">inner_discriminator </span><span class="s2">= </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'discriminator'</span><span class="s2">]</span>
+        <span class="s0">return </span><span class="s1">inner_discriminator </span><span class="s2">== </span><span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator </span><span class="s0">or </span><span class="s2">(</span>
+            <span class="s1">isinstance</span><span class="s2">(</span><span class="s1">inner_discriminator</span><span class="s2">, </span><span class="s1">list</span><span class="s2">)</span>
+            <span class="s0">and </span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator </span><span class="s0">in </span><span class="s1">inner_discriminator </span><span class="s0">or </span><span class="s2">[</span><span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator</span><span class="s2">] </span><span class="s0">in </span><span class="s1">inner_discriminator</span><span class="s2">)</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_infer_discriminator_values_for_choice</span><span class="s2">(  </span><span class="s5"># noqa C901</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">choice</span><span class="s2">: </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">CoreSchema</span><span class="s2">, </span><span class="s1">source_name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">str </span><span class="s2">| </span><span class="s1">int</span><span class="s2">]:</span>
+        <span class="s3">&quot;&quot;&quot;This function recurses over `choice`, extracting all discriminator values that should map to this choice. 
+ 
+        `model_name` is accepted for the purpose of producing useful error messages. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'definitions'</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_choice</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'schema'</span><span class="s2">], </span><span class="s1">source_name</span><span class="s2">=</span><span class="s1">source_name</span><span class="s2">)</span>
+
+        <span class="s0">elif </span><span class="s1">_core_utils</span><span class="s2">.</span><span class="s1">is_function_with_inner_schema</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_choice</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'schema'</span><span class="s2">], </span><span class="s1">source_name</span><span class="s2">=</span><span class="s1">source_name</span><span class="s2">)</span>
+
+        <span class="s0">elif </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'lax-or-strict'</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">sorted</span><span class="s2">(</span>
+                <span class="s1">set</span><span class="s2">(</span>
+                    <span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_choice</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'lax_schema'</span><span class="s2">], </span><span class="s1">source_name</span><span class="s2">=</span><span class="s0">None</span><span class="s2">)</span>
+                    <span class="s2">+ </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_choice</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'strict_schema'</span><span class="s2">], </span><span class="s1">source_name</span><span class="s2">=</span><span class="s0">None</span><span class="s2">)</span>
+                <span class="s2">)</span>
+            <span class="s2">)</span>
+
+        <span class="s0">elif </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'tagged-union'</span><span class="s2">:</span>
+            <span class="s1">values</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">str </span><span class="s2">| </span><span class="s1">int</span><span class="s2">] = []</span>
+            <span class="s5"># Ignore str/int &quot;choices&quot; since these are just references to other choices</span>
+            <span class="s1">subchoices </span><span class="s2">= [</span><span class="s1">x </span><span class="s0">for </span><span class="s1">x </span><span class="s0">in </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'choices'</span><span class="s2">].</span><span class="s1">values</span><span class="s2">() </span><span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">x</span><span class="s2">, (</span><span class="s1">str</span><span class="s2">, </span><span class="s1">int</span><span class="s2">))]</span>
+            <span class="s0">for </span><span class="s1">subchoice </span><span class="s0">in </span><span class="s1">subchoices</span><span class="s2">:</span>
+                <span class="s1">subchoice_values </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_choice</span><span class="s2">(</span><span class="s1">subchoice</span><span class="s2">, </span><span class="s1">source_name</span><span class="s2">=</span><span class="s0">None</span><span class="s2">)</span>
+                <span class="s1">values</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">(</span><span class="s1">subchoice_values</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">values</span>
+
+        <span class="s0">elif </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'union'</span><span class="s2">:</span>
+            <span class="s1">values </span><span class="s2">= []</span>
+            <span class="s0">for </span><span class="s1">subchoice </span><span class="s0">in </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'choices'</span><span class="s2">]:</span>
+                <span class="s1">subchoice_schema </span><span class="s2">= </span><span class="s1">subchoice</span><span class="s2">[</span><span class="s6">0</span><span class="s2">] </span><span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">subchoice</span><span class="s2">, </span><span class="s1">tuple</span><span class="s2">) </span><span class="s0">else </span><span class="s1">subchoice</span>
+                <span class="s1">subchoice_values </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_choice</span><span class="s2">(</span><span class="s1">subchoice_schema</span><span class="s2">, </span><span class="s1">source_name</span><span class="s2">=</span><span class="s0">None</span><span class="s2">)</span>
+                <span class="s1">values</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">(</span><span class="s1">subchoice_values</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">values</span>
+
+        <span class="s0">elif </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'nullable'</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_should_be_nullable </span><span class="s2">= </span><span class="s0">True</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_choice</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'schema'</span><span class="s2">], </span><span class="s1">source_name</span><span class="s2">=</span><span class="s0">None</span><span class="s2">)</span>
+
+        <span class="s0">elif </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'model'</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_choice</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'schema'</span><span class="s2">], </span><span class="s1">source_name</span><span class="s2">=</span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'cls'</span><span class="s2">].</span><span class="s1">__name__</span><span class="s2">)</span>
+
+        <span class="s0">elif </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'dataclass'</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_choice</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'schema'</span><span class="s2">], </span><span class="s1">source_name</span><span class="s2">=</span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'cls'</span><span class="s2">].</span><span class="s1">__name__</span><span class="s2">)</span>
+
+        <span class="s0">elif </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'model-fields'</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_model_choice</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">, </span><span class="s1">source_name</span><span class="s2">=</span><span class="s1">source_name</span><span class="s2">)</span>
+
+        <span class="s0">elif </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'dataclass-args'</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_dataclass_choice</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">, </span><span class="s1">source_name</span><span class="s2">=</span><span class="s1">source_name</span><span class="s2">)</span>
+
+        <span class="s0">elif </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'typed-dict'</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_typed_dict_choice</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">, </span><span class="s1">source_name</span><span class="s2">=</span><span class="s1">source_name</span><span class="s2">)</span>
+
+        <span class="s0">elif </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'definition-ref'</span><span class="s2">:</span>
+            <span class="s1">schema_ref </span><span class="s2">= </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'schema_ref'</span><span class="s2">]</span>
+            <span class="s0">if </span><span class="s1">schema_ref </span><span class="s0">not in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">definitions</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">MissingDefinitionForUnionRef</span><span class="s2">(</span><span class="s1">schema_ref</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_choice</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">definitions</span><span class="s2">[</span><span class="s1">schema_ref</span><span class="s2">], </span><span class="s1">source_name</span><span class="s2">=</span><span class="s1">source_name</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">err_str </span><span class="s2">= </span><span class="s4">f'The core schema type </span><span class="s0">{</span><span class="s1">choice</span><span class="s2">[</span><span class="s4">&quot;type&quot;</span><span class="s2">]</span><span class="s0">!r} </span><span class="s4">is not a valid discriminated union variant.'</span>
+            <span class="s0">if </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'list'</span><span class="s2">:</span>
+                <span class="s1">err_str </span><span class="s2">+= (</span>
+                    <span class="s4">' If you are making use of a list of union types, make sure the discriminator is applied to the '</span>
+                    <span class="s4">'union type and not the list (e.g. `list[Annotated[&lt;T&gt; | &lt;U&gt;, Field(discriminator=...)]]`).'</span>
+                <span class="s2">)</span>
+            <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span><span class="s1">err_str</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_infer_discriminator_values_for_typed_dict_choice</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">choice</span><span class="s2">: </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">TypedDictSchema</span><span class="s2">, </span><span class="s1">source_name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">str </span><span class="s2">| </span><span class="s1">int</span><span class="s2">]:</span>
+        <span class="s3">&quot;&quot;&quot;This method just extracts the _infer_discriminator_values_for_choice logic specific to TypedDictSchema 
+        for the sake of readability. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">source </span><span class="s2">= </span><span class="s4">'TypedDict' </span><span class="s0">if </span><span class="s1">source_name </span><span class="s0">is None else </span><span class="s4">f'TypedDict </span><span class="s0">{</span><span class="s1">source_name</span><span class="s0">!r}</span><span class="s4">'</span>
+        <span class="s1">field </span><span class="s2">= </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'fields'</span><span class="s2">].</span><span class="s1">get</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">field </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">PydanticUserError</span><span class="s2">(</span>
+                <span class="s4">f'</span><span class="s0">{</span><span class="s1">source</span><span class="s0">} </span><span class="s4">needs a discriminator field for key </span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator</span><span class="s0">!r}</span><span class="s4">'</span><span class="s2">, </span><span class="s1">code</span><span class="s2">=</span><span class="s4">'discriminator-no-field'</span>
+            <span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_field</span><span class="s2">(</span><span class="s1">field</span><span class="s2">, </span><span class="s1">source</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_infer_discriminator_values_for_model_choice</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">choice</span><span class="s2">: </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">ModelFieldsSchema</span><span class="s2">, </span><span class="s1">source_name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">str </span><span class="s2">| </span><span class="s1">int</span><span class="s2">]:</span>
+        <span class="s1">source </span><span class="s2">= </span><span class="s4">'ModelFields' </span><span class="s0">if </span><span class="s1">source_name </span><span class="s0">is None else </span><span class="s4">f'Model </span><span class="s0">{</span><span class="s1">source_name</span><span class="s0">!r}</span><span class="s4">'</span>
+        <span class="s1">field </span><span class="s2">= </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'fields'</span><span class="s2">].</span><span class="s1">get</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">field </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">PydanticUserError</span><span class="s2">(</span>
+                <span class="s4">f'</span><span class="s0">{</span><span class="s1">source</span><span class="s0">} </span><span class="s4">needs a discriminator field for key </span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator</span><span class="s0">!r}</span><span class="s4">'</span><span class="s2">, </span><span class="s1">code</span><span class="s2">=</span><span class="s4">'discriminator-no-field'</span>
+            <span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_field</span><span class="s2">(</span><span class="s1">field</span><span class="s2">, </span><span class="s1">source</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_infer_discriminator_values_for_dataclass_choice</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">choice</span><span class="s2">: </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">DataclassArgsSchema</span><span class="s2">, </span><span class="s1">source_name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s2">) </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">str </span><span class="s2">| </span><span class="s1">int</span><span class="s2">]:</span>
+        <span class="s1">source </span><span class="s2">= </span><span class="s4">'DataclassArgs' </span><span class="s0">if </span><span class="s1">source_name </span><span class="s0">is None else </span><span class="s4">f'Dataclass </span><span class="s0">{</span><span class="s1">source_name</span><span class="s0">!r}</span><span class="s4">'</span>
+        <span class="s0">for </span><span class="s1">field </span><span class="s0">in </span><span class="s1">choice</span><span class="s2">[</span><span class="s4">'fields'</span><span class="s2">]:</span>
+            <span class="s0">if </span><span class="s1">field</span><span class="s2">[</span><span class="s4">'name'</span><span class="s2">] == </span><span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator</span><span class="s2">:</span>
+                <span class="s0">break</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">PydanticUserError</span><span class="s2">(</span>
+                <span class="s4">f'</span><span class="s0">{</span><span class="s1">source</span><span class="s0">} </span><span class="s4">needs a discriminator field for key </span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator</span><span class="s0">!r}</span><span class="s4">'</span><span class="s2">, </span><span class="s1">code</span><span class="s2">=</span><span class="s4">'discriminator-no-field'</span>
+            <span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_field</span><span class="s2">(</span><span class="s1">field</span><span class="s2">, </span><span class="s1">source</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_infer_discriminator_values_for_field</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">field</span><span class="s2">: </span><span class="s1">CoreSchemaField</span><span class="s2">, </span><span class="s1">source</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">str </span><span class="s2">| </span><span class="s1">int</span><span class="s2">]:</span>
+        <span class="s0">if </span><span class="s1">field</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'computed-field'</span><span class="s2">:</span>
+            <span class="s5"># This should never occur as a discriminator, as it is only relevant to serialization</span>
+            <span class="s0">return </span><span class="s2">[]</span>
+        <span class="s1">alias </span><span class="s2">= </span><span class="s1">field</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'validation_alias'</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator</span><span class="s2">)</span>
+        <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">alias</span><span class="s2">, </span><span class="s1">str</span><span class="s2">):</span>
+            <span class="s0">raise </span><span class="s1">PydanticUserError</span><span class="s2">(</span>
+                <span class="s4">f'Alias </span><span class="s0">{</span><span class="s1">alias</span><span class="s0">!r} </span><span class="s4">is not supported in a discriminated union'</span><span class="s2">, </span><span class="s1">code</span><span class="s2">=</span><span class="s4">'discriminator-alias-type'</span>
+            <span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_discriminator_alias </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_discriminator_alias </span><span class="s2">= </span><span class="s1">alias</span>
+        <span class="s0">elif </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_discriminator_alias </span><span class="s2">!= </span><span class="s1">alias</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">PydanticUserError</span><span class="s2">(</span>
+                <span class="s4">f'Aliases for discriminator </span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator</span><span class="s0">!r} </span><span class="s4">must be the same '</span>
+                <span class="s4">f'(got </span><span class="s0">{</span><span class="s1">alias</span><span class="s0">}</span><span class="s4">, </span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_discriminator_alias</span><span class="s0">}</span><span class="s4">)'</span><span class="s2">,</span>
+                <span class="s1">code</span><span class="s2">=</span><span class="s4">'discriminator-alias'</span><span class="s2">,</span>
+            <span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_inner_schema</span><span class="s2">(</span><span class="s1">field</span><span class="s2">[</span><span class="s4">'schema'</span><span class="s2">], </span><span class="s1">source</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_infer_discriminator_values_for_inner_schema</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">schema</span><span class="s2">: </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">CoreSchema</span><span class="s2">, </span><span class="s1">source</span><span class="s2">: </span><span class="s1">str</span>
+    <span class="s2">) </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">str </span><span class="s2">| </span><span class="s1">int</span><span class="s2">]:</span>
+        <span class="s3">&quot;&quot;&quot;When inferring discriminator values for a field, we typically extract the expected values from a literal 
+        schema. This function does that, but also handles nested unions and defaults. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">schema</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'literal'</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">schema</span><span class="s2">[</span><span class="s4">'expected'</span><span class="s2">]</span>
+
+        <span class="s0">elif </span><span class="s1">schema</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'union'</span><span class="s2">:</span>
+            <span class="s5"># Generally when multiple values are allowed they should be placed in a single `Literal`, but</span>
+            <span class="s5"># we add this case to handle the situation where a field is annotated as a `Union` of `Literal`s.</span>
+            <span class="s5"># For example, this lets us handle `Union[Literal['key'], Union[Literal['Key'], Literal['KEY']]]`</span>
+            <span class="s1">values</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">Any</span><span class="s2">] = []</span>
+            <span class="s0">for </span><span class="s1">choice </span><span class="s0">in </span><span class="s1">schema</span><span class="s2">[</span><span class="s4">'choices'</span><span class="s2">]:</span>
+                <span class="s1">choice_schema </span><span class="s2">= </span><span class="s1">choice</span><span class="s2">[</span><span class="s6">0</span><span class="s2">] </span><span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">choice</span><span class="s2">, </span><span class="s1">tuple</span><span class="s2">) </span><span class="s0">else </span><span class="s1">choice</span>
+                <span class="s1">choice_values </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_inner_schema</span><span class="s2">(</span><span class="s1">choice_schema</span><span class="s2">, </span><span class="s1">source</span><span class="s2">)</span>
+                <span class="s1">values</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">(</span><span class="s1">choice_values</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">values</span>
+
+        <span class="s0">elif </span><span class="s1">schema</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'default'</span><span class="s2">:</span>
+            <span class="s5"># This will happen if the field has a default value; we ignore it while extracting the discriminator values</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_inner_schema</span><span class="s2">(</span><span class="s1">schema</span><span class="s2">[</span><span class="s4">'schema'</span><span class="s2">], </span><span class="s1">source</span><span class="s2">)</span>
+
+        <span class="s0">elif </span><span class="s1">schema</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] == </span><span class="s4">'function-after'</span><span class="s2">:</span>
+            <span class="s5"># After validators don't affect the discriminator values</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_infer_discriminator_values_for_inner_schema</span><span class="s2">(</span><span class="s1">schema</span><span class="s2">[</span><span class="s4">'schema'</span><span class="s2">], </span><span class="s1">source</span><span class="s2">)</span>
+
+        <span class="s0">elif </span><span class="s1">schema</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">] </span><span class="s0">in </span><span class="s2">{</span><span class="s4">'function-before'</span><span class="s2">, </span><span class="s4">'function-wrap'</span><span class="s2">, </span><span class="s4">'function-plain'</span><span class="s2">}:</span>
+            <span class="s1">validator_type </span><span class="s2">= </span><span class="s1">repr</span><span class="s2">(</span><span class="s1">schema</span><span class="s2">[</span><span class="s4">'type'</span><span class="s2">].</span><span class="s1">split</span><span class="s2">(</span><span class="s4">'-'</span><span class="s2">)[</span><span class="s6">1</span><span class="s2">])</span>
+            <span class="s0">raise </span><span class="s1">PydanticUserError</span><span class="s2">(</span>
+                <span class="s4">f'Cannot use a mode=</span><span class="s0">{</span><span class="s1">validator_type</span><span class="s0">} </span><span class="s4">validator in the'</span>
+                <span class="s4">f' discriminator field </span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator</span><span class="s0">!r} </span><span class="s4">of </span><span class="s0">{</span><span class="s1">source</span><span class="s0">}</span><span class="s4">'</span><span class="s2">,</span>
+                <span class="s1">code</span><span class="s2">=</span><span class="s4">'discriminator-validator'</span><span class="s2">,</span>
+            <span class="s2">)</span>
+
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">raise </span><span class="s1">PydanticUserError</span><span class="s2">(</span>
+                <span class="s4">f'</span><span class="s0">{</span><span class="s1">source</span><span class="s0">} </span><span class="s4">needs field </span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator</span><span class="s0">!r} </span><span class="s4">to be of type `Literal`'</span><span class="s2">,</span>
+                <span class="s1">code</span><span class="s2">=</span><span class="s4">'discriminator-needs-literal'</span><span class="s2">,</span>
+            <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_set_unique_choice_for_values</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">choice</span><span class="s2">: </span><span class="s1">core_schema</span><span class="s2">.</span><span class="s1">CoreSchema</span><span class="s2">, </span><span class="s1">values</span><span class="s2">: </span><span class="s1">Sequence</span><span class="s2">[</span><span class="s1">str </span><span class="s2">| </span><span class="s1">int</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3">&quot;&quot;&quot;This method updates `self.tagged_union_choices` so that all provided (discriminator) `values` map to the 
+        provided `choice`, validating that none of these values already map to another (different) choice. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">for </span><span class="s1">discriminator_value </span><span class="s0">in </span><span class="s1">values</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">discriminator_value </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_tagged_union_choices</span><span class="s2">:</span>
+                <span class="s5"># It is okay if `value` is already in tagged_union_choices as long as it maps to the same value.</span>
+                <span class="s5"># Because tagged_union_choices may map values to other values, we need to walk the choices dict</span>
+                <span class="s5"># until we get to a &quot;real&quot; choice, and confirm that is equal to the one assigned.</span>
+                <span class="s1">existing_choice </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_tagged_union_choices</span><span class="s2">[</span><span class="s1">discriminator_value</span><span class="s2">]</span>
+                <span class="s0">if </span><span class="s1">existing_choice </span><span class="s2">!= </span><span class="s1">choice</span><span class="s2">:</span>
+                    <span class="s0">raise </span><span class="s1">TypeError</span><span class="s2">(</span>
+                        <span class="s4">f'Value </span><span class="s0">{</span><span class="s1">discriminator_value</span><span class="s0">!r} </span><span class="s4">for discriminator '</span>
+                        <span class="s4">f'</span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">discriminator</span><span class="s0">!r} </span><span class="s4">mapped to multiple choices'</span>
+                    <span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_tagged_union_choices</span><span class="s2">[</span><span class="s1">discriminator_value</span><span class="s2">] = </span><span class="s1">choice</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,972 @@
+<html>
+<head>
+<title>mypy.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #7a7e85;}
+.s4 { color: #6aab73;}
+.s5 { color: #2aacb8;}
+.s6 { color: #5f826b; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+mypy.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">from </span><span class="s1">configparser </span><span class="s0">import </span><span class="s1">ConfigParser</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Callable</span><span class="s2">, </span><span class="s1">Dict</span><span class="s2">, </span><span class="s1">List</span><span class="s2">, </span><span class="s1">Optional</span><span class="s2">, </span><span class="s1">Set</span><span class="s2">, </span><span class="s1">Tuple</span><span class="s2">, </span><span class="s1">Type </span><span class="s0">as </span><span class="s1">TypingType</span><span class="s2">, </span><span class="s1">Union</span>
+
+<span class="s0">from </span><span class="s1">mypy</span><span class="s2">.</span><span class="s1">errorcodes </span><span class="s0">import </span><span class="s1">ErrorCode</span>
+<span class="s0">from </span><span class="s1">mypy</span><span class="s2">.</span><span class="s1">nodes </span><span class="s0">import </span><span class="s2">(</span>
+    <span class="s1">ARG_NAMED</span><span class="s2">,</span>
+    <span class="s1">ARG_NAMED_OPT</span><span class="s2">,</span>
+    <span class="s1">ARG_OPT</span><span class="s2">,</span>
+    <span class="s1">ARG_POS</span><span class="s2">,</span>
+    <span class="s1">ARG_STAR2</span><span class="s2">,</span>
+    <span class="s1">MDEF</span><span class="s2">,</span>
+    <span class="s1">Argument</span><span class="s2">,</span>
+    <span class="s1">AssignmentStmt</span><span class="s2">,</span>
+    <span class="s1">Block</span><span class="s2">,</span>
+    <span class="s1">CallExpr</span><span class="s2">,</span>
+    <span class="s1">ClassDef</span><span class="s2">,</span>
+    <span class="s1">Context</span><span class="s2">,</span>
+    <span class="s1">Decorator</span><span class="s2">,</span>
+    <span class="s1">EllipsisExpr</span><span class="s2">,</span>
+    <span class="s1">FuncBase</span><span class="s2">,</span>
+    <span class="s1">FuncDef</span><span class="s2">,</span>
+    <span class="s1">JsonDict</span><span class="s2">,</span>
+    <span class="s1">MemberExpr</span><span class="s2">,</span>
+    <span class="s1">NameExpr</span><span class="s2">,</span>
+    <span class="s1">PassStmt</span><span class="s2">,</span>
+    <span class="s1">PlaceholderNode</span><span class="s2">,</span>
+    <span class="s1">RefExpr</span><span class="s2">,</span>
+    <span class="s1">StrExpr</span><span class="s2">,</span>
+    <span class="s1">SymbolNode</span><span class="s2">,</span>
+    <span class="s1">SymbolTableNode</span><span class="s2">,</span>
+    <span class="s1">TempNode</span><span class="s2">,</span>
+    <span class="s1">TypeInfo</span><span class="s2">,</span>
+    <span class="s1">TypeVarExpr</span><span class="s2">,</span>
+    <span class="s1">Var</span><span class="s2">,</span>
+<span class="s2">)</span>
+<span class="s0">from </span><span class="s1">mypy</span><span class="s2">.</span><span class="s1">options </span><span class="s0">import </span><span class="s1">Options</span>
+<span class="s0">from </span><span class="s1">mypy</span><span class="s2">.</span><span class="s1">plugin </span><span class="s0">import </span><span class="s2">(</span>
+    <span class="s1">CheckerPluginInterface</span><span class="s2">,</span>
+    <span class="s1">ClassDefContext</span><span class="s2">,</span>
+    <span class="s1">FunctionContext</span><span class="s2">,</span>
+    <span class="s1">MethodContext</span><span class="s2">,</span>
+    <span class="s1">Plugin</span><span class="s2">,</span>
+    <span class="s1">ReportConfigContext</span><span class="s2">,</span>
+    <span class="s1">SemanticAnalyzerPluginInterface</span><span class="s2">,</span>
+<span class="s2">)</span>
+<span class="s0">from </span><span class="s1">mypy</span><span class="s2">.</span><span class="s1">plugins </span><span class="s0">import </span><span class="s1">dataclasses</span>
+<span class="s0">from </span><span class="s1">mypy</span><span class="s2">.</span><span class="s1">semanal </span><span class="s0">import </span><span class="s1">set_callable_name  </span><span class="s3"># type: ignore</span>
+<span class="s0">from </span><span class="s1">mypy</span><span class="s2">.</span><span class="s1">server</span><span class="s2">.</span><span class="s1">trigger </span><span class="s0">import </span><span class="s1">make_wildcard_trigger</span>
+<span class="s0">from </span><span class="s1">mypy</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s2">(</span>
+    <span class="s1">AnyType</span><span class="s2">,</span>
+    <span class="s1">CallableType</span><span class="s2">,</span>
+    <span class="s1">Instance</span><span class="s2">,</span>
+    <span class="s1">NoneType</span><span class="s2">,</span>
+    <span class="s1">Overloaded</span><span class="s2">,</span>
+    <span class="s1">ProperType</span><span class="s2">,</span>
+    <span class="s1">Type</span><span class="s2">,</span>
+    <span class="s1">TypeOfAny</span><span class="s2">,</span>
+    <span class="s1">TypeType</span><span class="s2">,</span>
+    <span class="s1">TypeVarId</span><span class="s2">,</span>
+    <span class="s1">TypeVarType</span><span class="s2">,</span>
+    <span class="s1">UnionType</span><span class="s2">,</span>
+    <span class="s1">get_proper_type</span><span class="s2">,</span>
+<span class="s2">)</span>
+<span class="s0">from </span><span class="s1">mypy</span><span class="s2">.</span><span class="s1">typevars </span><span class="s0">import </span><span class="s1">fill_typevars</span>
+<span class="s0">from </span><span class="s1">mypy</span><span class="s2">.</span><span class="s1">util </span><span class="s0">import </span><span class="s1">get_unique_redefinition_name</span>
+<span class="s0">from </span><span class="s1">mypy</span><span class="s2">.</span><span class="s1">version </span><span class="s0">import </span><span class="s1">__version__ </span><span class="s0">as </span><span class="s1">mypy_version</span>
+
+<span class="s0">from </span><span class="s1">pydantic</span><span class="s2">.</span><span class="s1">v1</span><span class="s2">.</span><span class="s1">utils </span><span class="s0">import </span><span class="s1">is_valid_field</span>
+
+<span class="s0">try</span><span class="s2">:</span>
+    <span class="s0">from </span><span class="s1">mypy</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">TypeVarDef  </span><span class="s3"># type: ignore[attr-defined]</span>
+<span class="s0">except </span><span class="s1">ImportError</span><span class="s2">:  </span><span class="s3"># pragma: no cover</span>
+    <span class="s3"># Backward-compatible with TypeVarDef from Mypy 0.910.</span>
+    <span class="s0">from </span><span class="s1">mypy</span><span class="s2">.</span><span class="s1">types </span><span class="s0">import </span><span class="s1">TypeVarType </span><span class="s0">as </span><span class="s1">TypeVarDef</span>
+
+<span class="s1">CONFIGFILE_KEY </span><span class="s2">= </span><span class="s4">'pydantic-mypy'</span>
+<span class="s1">METADATA_KEY </span><span class="s2">= </span><span class="s4">'pydantic-mypy-metadata'</span>
+<span class="s1">_NAMESPACE </span><span class="s2">= </span><span class="s1">__name__</span><span class="s2">[:-</span><span class="s5">5</span><span class="s2">]  </span><span class="s3"># 'pydantic' in 1.10.X, 'pydantic.v1' in v2.X</span>
+<span class="s1">BASEMODEL_FULLNAME </span><span class="s2">= </span><span class="s4">f'</span><span class="s0">{</span><span class="s1">_NAMESPACE</span><span class="s0">}</span><span class="s4">.main.BaseModel'</span>
+<span class="s1">BASESETTINGS_FULLNAME </span><span class="s2">= </span><span class="s4">f'</span><span class="s0">{</span><span class="s1">_NAMESPACE</span><span class="s0">}</span><span class="s4">.env_settings.BaseSettings'</span>
+<span class="s1">MODEL_METACLASS_FULLNAME </span><span class="s2">= </span><span class="s4">f'</span><span class="s0">{</span><span class="s1">_NAMESPACE</span><span class="s0">}</span><span class="s4">.main.ModelMetaclass'</span>
+<span class="s1">FIELD_FULLNAME </span><span class="s2">= </span><span class="s4">f'</span><span class="s0">{</span><span class="s1">_NAMESPACE</span><span class="s0">}</span><span class="s4">.fields.Field'</span>
+<span class="s1">DATACLASS_FULLNAME </span><span class="s2">= </span><span class="s4">f'</span><span class="s0">{</span><span class="s1">_NAMESPACE</span><span class="s0">}</span><span class="s4">.dataclasses.dataclass'</span>
+
+
+<span class="s0">def </span><span class="s1">parse_mypy_version</span><span class="s2">(</span><span class="s1">version</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; Tuple</span><span class="s2">[</span><span class="s1">int</span><span class="s2">, ...]:</span>
+    <span class="s0">return </span><span class="s1">tuple</span><span class="s2">(</span><span class="s1">map</span><span class="s2">(</span><span class="s1">int</span><span class="s2">, </span><span class="s1">version</span><span class="s2">.</span><span class="s1">partition</span><span class="s2">(</span><span class="s4">'+'</span><span class="s2">)[</span><span class="s5">0</span><span class="s2">].</span><span class="s1">split</span><span class="s2">(</span><span class="s4">'.'</span><span class="s2">)))</span>
+
+
+<span class="s1">MYPY_VERSION_TUPLE </span><span class="s2">= </span><span class="s1">parse_mypy_version</span><span class="s2">(</span><span class="s1">mypy_version</span><span class="s2">)</span>
+<span class="s1">BUILTINS_NAME </span><span class="s2">= </span><span class="s4">'builtins' </span><span class="s0">if </span><span class="s1">MYPY_VERSION_TUPLE </span><span class="s2">&gt;= (</span><span class="s5">0</span><span class="s2">, </span><span class="s5">930</span><span class="s2">) </span><span class="s0">else </span><span class="s4">'__builtins__'</span>
+
+<span class="s3"># Increment version if plugin changes and mypy caches should be invalidated</span>
+<span class="s1">__version__ </span><span class="s2">= </span><span class="s5">2</span>
+
+
+<span class="s0">def </span><span class="s1">plugin</span><span class="s2">(</span><span class="s1">version</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s4">'TypingType[Plugin]'</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    `version` is the mypy version string 
+ 
+    We might want to use this to print a warning if the mypy version being used is 
+    newer, or especially older, than we expect (or need). 
+    &quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s1">PydanticPlugin</span>
+
+
+<span class="s0">class </span><span class="s1">PydanticPlugin</span><span class="s2">(</span><span class="s1">Plugin</span><span class="s2">):</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">options</span><span class="s2">: </span><span class="s1">Options</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">plugin_config </span><span class="s2">= </span><span class="s1">PydanticPluginConfig</span><span class="s2">(</span><span class="s1">options</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_plugin_data </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">plugin_config</span><span class="s2">.</span><span class="s1">to_data</span><span class="s2">()</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">options</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">get_base_class_hook</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">fullname</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s4">'Optional[Callable[[ClassDefContext], None]]'</span><span class="s2">:</span>
+        <span class="s1">sym </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">lookup_fully_qualified</span><span class="s2">(</span><span class="s1">fullname</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">sym </span><span class="s0">and </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">sym</span><span class="s2">.</span><span class="s1">node</span><span class="s2">, </span><span class="s1">TypeInfo</span><span class="s2">):  </span><span class="s3"># pragma: no branch</span>
+            <span class="s3"># No branching may occur if the mypy cache has not been cleared</span>
+            <span class="s0">if </span><span class="s1">any</span><span class="s2">(</span><span class="s1">get_fullname</span><span class="s2">(</span><span class="s1">base</span><span class="s2">) == </span><span class="s1">BASEMODEL_FULLNAME </span><span class="s0">for </span><span class="s1">base </span><span class="s0">in </span><span class="s1">sym</span><span class="s2">.</span><span class="s1">node</span><span class="s2">.</span><span class="s1">mro</span><span class="s2">):</span>
+                <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_pydantic_model_class_maker_callback</span>
+        <span class="s0">return None</span>
+
+    <span class="s0">def </span><span class="s1">get_metaclass_hook</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">fullname</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; Optional</span><span class="s2">[</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">ClassDefContext</span><span class="s2">], </span><span class="s0">None</span><span class="s2">]]:</span>
+        <span class="s0">if </span><span class="s1">fullname </span><span class="s2">== </span><span class="s1">MODEL_METACLASS_FULLNAME</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_pydantic_model_metaclass_marker_callback</span>
+        <span class="s0">return None</span>
+
+    <span class="s0">def </span><span class="s1">get_function_hook</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">fullname</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s4">'Optional[Callable[[FunctionContext], Type]]'</span><span class="s2">:</span>
+        <span class="s1">sym </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">lookup_fully_qualified</span><span class="s2">(</span><span class="s1">fullname</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">sym </span><span class="s0">and </span><span class="s1">sym</span><span class="s2">.</span><span class="s1">fullname </span><span class="s2">== </span><span class="s1">FIELD_FULLNAME</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_pydantic_field_callback</span>
+        <span class="s0">return None</span>
+
+    <span class="s0">def </span><span class="s1">get_method_hook</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">fullname</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; Optional</span><span class="s2">[</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">MethodContext</span><span class="s2">], </span><span class="s1">Type</span><span class="s2">]]:</span>
+        <span class="s0">if </span><span class="s1">fullname</span><span class="s2">.</span><span class="s1">endswith</span><span class="s2">(</span><span class="s4">'.from_orm'</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">from_orm_callback</span>
+        <span class="s0">return None</span>
+
+    <span class="s0">def </span><span class="s1">get_class_decorator_hook</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">fullname</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; Optional</span><span class="s2">[</span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">ClassDefContext</span><span class="s2">], </span><span class="s0">None</span><span class="s2">]]:</span>
+        <span class="s6">&quot;&quot;&quot;Mark pydantic.dataclasses as dataclass. 
+ 
+        Mypy version 1.1.1 added support for `@dataclass_transform` decorator. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">fullname </span><span class="s2">== </span><span class="s1">DATACLASS_FULLNAME </span><span class="s0">and </span><span class="s1">MYPY_VERSION_TUPLE </span><span class="s2">&lt; (</span><span class="s5">1</span><span class="s2">, </span><span class="s5">1</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">dataclasses</span><span class="s2">.</span><span class="s1">dataclass_class_maker_callback  </span><span class="s3"># type: ignore[return-value]</span>
+        <span class="s0">return None</span>
+
+    <span class="s0">def </span><span class="s1">report_config_data</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">ctx</span><span class="s2">: </span><span class="s1">ReportConfigContext</span><span class="s2">) </span><span class="s1">-&gt; Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]:</span>
+        <span class="s6">&quot;&quot;&quot;Return all plugin config data. 
+ 
+        Used by mypy to determine if cache needs to be discarded. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_plugin_data</span>
+
+    <span class="s0">def </span><span class="s1">_pydantic_model_class_maker_callback</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">ctx</span><span class="s2">: </span><span class="s1">ClassDefContext</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">transformer </span><span class="s2">= </span><span class="s1">PydanticModelTransformer</span><span class="s2">(</span><span class="s1">ctx</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">plugin_config</span><span class="s2">)</span>
+        <span class="s1">transformer</span><span class="s2">.</span><span class="s1">transform</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">_pydantic_model_metaclass_marker_callback</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">ctx</span><span class="s2">: </span><span class="s1">ClassDefContext</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot;Reset dataclass_transform_spec attribute of ModelMetaclass. 
+ 
+        Let the plugin handle it. This behavior can be disabled 
+        if 'debug_dataclass_transform' is set to True', for testing purposes. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">plugin_config</span><span class="s2">.</span><span class="s1">debug_dataclass_transform</span><span class="s2">:</span>
+            <span class="s0">return</span>
+        <span class="s1">info_metaclass </span><span class="s2">= </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">info</span><span class="s2">.</span><span class="s1">declared_metaclass</span>
+        <span class="s0">assert </span><span class="s1">info_metaclass</span><span class="s2">, </span><span class="s4">&quot;callback not passed from 'get_metaclass_hook'&quot;</span>
+        <span class="s0">if </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">info_metaclass</span><span class="s2">.</span><span class="s1">type</span><span class="s2">, </span><span class="s4">'dataclass_transform_spec'</span><span class="s2">, </span><span class="s0">None</span><span class="s2">):</span>
+            <span class="s1">info_metaclass</span><span class="s2">.</span><span class="s1">type</span><span class="s2">.</span><span class="s1">dataclass_transform_spec </span><span class="s2">= </span><span class="s0">None  </span><span class="s3"># type: ignore[attr-defined]</span>
+
+    <span class="s0">def </span><span class="s1">_pydantic_field_callback</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">ctx</span><span class="s2">: </span><span class="s1">FunctionContext</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s4">'Type'</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Extract the type of the `default` argument from the Field function, and use it as the return type. 
+ 
+        In particular: 
+        * Check whether the default and default_factory argument is specified. 
+        * Output an error if both are specified. 
+        * Retrieve the type of the argument which is specified, and use it as return type for the function. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">default_any_type </span><span class="s2">= </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">default_return_type</span>
+
+        <span class="s0">assert </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">callee_arg_names</span><span class="s2">[</span><span class="s5">0</span><span class="s2">] == </span><span class="s4">'default'</span><span class="s2">, </span><span class="s4">'&quot;default&quot; is no longer first argument in Field()'</span>
+        <span class="s0">assert </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">callee_arg_names</span><span class="s2">[</span><span class="s5">1</span><span class="s2">] == </span><span class="s4">'default_factory'</span><span class="s2">, </span><span class="s4">'&quot;default_factory&quot; is no longer second argument in Field()'</span>
+        <span class="s1">default_args </span><span class="s2">= </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">args</span><span class="s2">[</span><span class="s5">0</span><span class="s2">]</span>
+        <span class="s1">default_factory_args </span><span class="s2">= </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">args</span><span class="s2">[</span><span class="s5">1</span><span class="s2">]</span>
+
+        <span class="s0">if </span><span class="s1">default_args </span><span class="s0">and </span><span class="s1">default_factory_args</span><span class="s2">:</span>
+            <span class="s1">error_default_and_default_factory_specified</span><span class="s2">(</span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">api</span><span class="s2">, </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">context</span><span class="s2">)</span>
+            <span class="s0">return </span><span class="s1">default_any_type</span>
+
+        <span class="s0">if </span><span class="s1">default_args</span><span class="s2">:</span>
+            <span class="s1">default_type </span><span class="s2">= </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">arg_types</span><span class="s2">[</span><span class="s5">0</span><span class="s2">][</span><span class="s5">0</span><span class="s2">]</span>
+            <span class="s1">default_arg </span><span class="s2">= </span><span class="s1">default_args</span><span class="s2">[</span><span class="s5">0</span><span class="s2">]</span>
+
+            <span class="s3"># Fallback to default Any type if the field is required</span>
+            <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">default_arg</span><span class="s2">, </span><span class="s1">EllipsisExpr</span><span class="s2">):</span>
+                <span class="s0">return </span><span class="s1">default_type</span>
+
+        <span class="s0">elif </span><span class="s1">default_factory_args</span><span class="s2">:</span>
+            <span class="s1">default_factory_type </span><span class="s2">= </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">arg_types</span><span class="s2">[</span><span class="s5">1</span><span class="s2">][</span><span class="s5">0</span><span class="s2">]</span>
+
+            <span class="s3"># Functions which use `ParamSpec` can be overloaded, exposing the callable's types as a parameter</span>
+            <span class="s3"># Pydantic calls the default factory without any argument, so we retrieve the first item</span>
+            <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">default_factory_type</span><span class="s2">, </span><span class="s1">Overloaded</span><span class="s2">):</span>
+                <span class="s0">if </span><span class="s1">MYPY_VERSION_TUPLE </span><span class="s2">&gt; (</span><span class="s5">0</span><span class="s2">, </span><span class="s5">910</span><span class="s2">):</span>
+                    <span class="s1">default_factory_type </span><span class="s2">= </span><span class="s1">default_factory_type</span><span class="s2">.</span><span class="s1">items</span><span class="s2">[</span><span class="s5">0</span><span class="s2">]</span>
+                <span class="s0">else</span><span class="s2">:</span>
+                    <span class="s3"># Mypy0.910 exposes the items of overloaded types in a function</span>
+                    <span class="s1">default_factory_type </span><span class="s2">= </span><span class="s1">default_factory_type</span><span class="s2">.</span><span class="s1">items</span><span class="s2">()[</span><span class="s5">0</span><span class="s2">]  </span><span class="s3"># type: ignore[operator]</span>
+
+            <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">default_factory_type</span><span class="s2">, </span><span class="s1">CallableType</span><span class="s2">):</span>
+                <span class="s1">ret_type </span><span class="s2">= </span><span class="s1">default_factory_type</span><span class="s2">.</span><span class="s1">ret_type</span>
+                <span class="s3"># mypy doesn't think `ret_type` has `args`, you'd think mypy should know,</span>
+                <span class="s3"># add this check in case it varies by version</span>
+                <span class="s1">args </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">ret_type</span><span class="s2">, </span><span class="s4">'args'</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+                <span class="s0">if </span><span class="s1">args</span><span class="s2">:</span>
+                    <span class="s0">if </span><span class="s1">all</span><span class="s2">(</span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">arg</span><span class="s2">, </span><span class="s1">TypeVarType</span><span class="s2">) </span><span class="s0">for </span><span class="s1">arg </span><span class="s0">in </span><span class="s1">args</span><span class="s2">):</span>
+                        <span class="s3"># Looks like the default factory is a type like `list` or `dict`, replace all args with `Any`</span>
+                        <span class="s1">ret_type</span><span class="s2">.</span><span class="s1">args </span><span class="s2">= </span><span class="s1">tuple</span><span class="s2">(</span><span class="s1">default_any_type </span><span class="s0">for </span><span class="s1">_ </span><span class="s0">in </span><span class="s1">args</span><span class="s2">)  </span><span class="s3"># type: ignore[attr-defined]</span>
+                <span class="s0">return </span><span class="s1">ret_type</span>
+
+        <span class="s0">return </span><span class="s1">default_any_type</span>
+
+
+<span class="s0">class </span><span class="s1">PydanticPluginConfig</span><span class="s2">:</span>
+    <span class="s1">__slots__ </span><span class="s2">= (</span>
+        <span class="s4">'init_forbid_extra'</span><span class="s2">,</span>
+        <span class="s4">'init_typed'</span><span class="s2">,</span>
+        <span class="s4">'warn_required_dynamic_aliases'</span><span class="s2">,</span>
+        <span class="s4">'warn_untyped_fields'</span><span class="s2">,</span>
+        <span class="s4">'debug_dataclass_transform'</span><span class="s2">,</span>
+    <span class="s2">)</span>
+    <span class="s1">init_forbid_extra</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">init_typed</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">warn_required_dynamic_aliases</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">warn_untyped_fields</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s1">debug_dataclass_transform</span><span class="s2">: </span><span class="s1">bool  </span><span class="s3"># undocumented</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">options</span><span class="s2">: </span><span class="s1">Options</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">options</span><span class="s2">.</span><span class="s1">config_file </span><span class="s0">is None</span><span class="s2">:  </span><span class="s3"># pragma: no cover</span>
+            <span class="s0">return</span>
+
+        <span class="s1">toml_config </span><span class="s2">= </span><span class="s1">parse_toml</span><span class="s2">(</span><span class="s1">options</span><span class="s2">.</span><span class="s1">config_file</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">toml_config </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">config </span><span class="s2">= </span><span class="s1">toml_config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'tool'</span><span class="s2">, {}).</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'pydantic-mypy'</span><span class="s2">, {})</span>
+            <span class="s0">for </span><span class="s1">key </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__slots__</span><span class="s2">:</span>
+                <span class="s1">setting </span><span class="s2">= </span><span class="s1">config</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">key</span><span class="s2">, </span><span class="s0">False</span><span class="s2">)</span>
+                <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">setting</span><span class="s2">, </span><span class="s1">bool</span><span class="s2">):</span>
+                    <span class="s0">raise </span><span class="s1">ValueError</span><span class="s2">(</span><span class="s4">f'Configuration value must be a boolean for key: </span><span class="s0">{</span><span class="s1">key</span><span class="s0">}</span><span class="s4">'</span><span class="s2">)</span>
+                <span class="s1">setattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">, </span><span class="s1">setting</span><span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">plugin_config </span><span class="s2">= </span><span class="s1">ConfigParser</span><span class="s2">()</span>
+            <span class="s1">plugin_config</span><span class="s2">.</span><span class="s1">read</span><span class="s2">(</span><span class="s1">options</span><span class="s2">.</span><span class="s1">config_file</span><span class="s2">)</span>
+            <span class="s0">for </span><span class="s1">key </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__slots__</span><span class="s2">:</span>
+                <span class="s1">setting </span><span class="s2">= </span><span class="s1">plugin_config</span><span class="s2">.</span><span class="s1">getboolean</span><span class="s2">(</span><span class="s1">CONFIGFILE_KEY</span><span class="s2">, </span><span class="s1">key</span><span class="s2">, </span><span class="s1">fallback</span><span class="s2">=</span><span class="s0">False</span><span class="s2">)</span>
+                <span class="s1">setattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">, </span><span class="s1">setting</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">to_data</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]:</span>
+        <span class="s0">return </span><span class="s2">{</span><span class="s1">key</span><span class="s2">: </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">) </span><span class="s0">for </span><span class="s1">key </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__slots__</span><span class="s2">}</span>
+
+
+<span class="s0">def </span><span class="s1">from_orm_callback</span><span class="s2">(</span><span class="s1">ctx</span><span class="s2">: </span><span class="s1">MethodContext</span><span class="s2">) </span><span class="s1">-&gt; Type</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Raise an error if orm_mode is not enabled 
+    &quot;&quot;&quot;</span>
+    <span class="s1">model_type</span><span class="s2">: </span><span class="s1">Instance</span>
+    <span class="s1">ctx_type </span><span class="s2">= </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">type</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">ctx_type</span><span class="s2">, </span><span class="s1">TypeType</span><span class="s2">):</span>
+        <span class="s1">ctx_type </span><span class="s2">= </span><span class="s1">ctx_type</span><span class="s2">.</span><span class="s1">item</span>
+    <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">ctx_type</span><span class="s2">, </span><span class="s1">CallableType</span><span class="s2">) </span><span class="s0">and </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">ctx_type</span><span class="s2">.</span><span class="s1">ret_type</span><span class="s2">, </span><span class="s1">Instance</span><span class="s2">):</span>
+        <span class="s1">model_type </span><span class="s2">= </span><span class="s1">ctx_type</span><span class="s2">.</span><span class="s1">ret_type  </span><span class="s3"># called on the class</span>
+    <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">ctx_type</span><span class="s2">, </span><span class="s1">Instance</span><span class="s2">):</span>
+        <span class="s1">model_type </span><span class="s2">= </span><span class="s1">ctx_type  </span><span class="s3"># called on an instance (unusual, but still valid)</span>
+    <span class="s0">else</span><span class="s2">:  </span><span class="s3"># pragma: no cover</span>
+        <span class="s1">detail </span><span class="s2">= </span><span class="s4">f'ctx.type: </span><span class="s0">{</span><span class="s1">ctx_type</span><span class="s0">} </span><span class="s4">(of type </span><span class="s0">{</span><span class="s1">ctx_type</span><span class="s2">.</span><span class="s1">__class__</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">}</span><span class="s4">)'</span>
+        <span class="s1">error_unexpected_behavior</span><span class="s2">(</span><span class="s1">detail</span><span class="s2">, </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">api</span><span class="s2">, </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">context</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">default_return_type</span>
+    <span class="s1">pydantic_metadata </span><span class="s2">= </span><span class="s1">model_type</span><span class="s2">.</span><span class="s1">type</span><span class="s2">.</span><span class="s1">metadata</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">METADATA_KEY</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">pydantic_metadata </span><span class="s0">is None</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">default_return_type</span>
+    <span class="s1">orm_mode </span><span class="s2">= </span><span class="s1">pydantic_metadata</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'config'</span><span class="s2">, {}).</span><span class="s1">get</span><span class="s2">(</span><span class="s4">'orm_mode'</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">orm_mode </span><span class="s0">is not True</span><span class="s2">:</span>
+        <span class="s1">error_from_orm</span><span class="s2">(</span><span class="s1">get_name</span><span class="s2">(</span><span class="s1">model_type</span><span class="s2">.</span><span class="s1">type</span><span class="s2">), </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">api</span><span class="s2">, </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">context</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">default_return_type</span>
+
+
+<span class="s0">class </span><span class="s1">PydanticModelTransformer</span><span class="s2">:</span>
+    <span class="s1">tracked_config_fields</span><span class="s2">: </span><span class="s1">Set</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = {</span>
+        <span class="s4">'extra'</span><span class="s2">,</span>
+        <span class="s4">'allow_mutation'</span><span class="s2">,</span>
+        <span class="s4">'frozen'</span><span class="s2">,</span>
+        <span class="s4">'orm_mode'</span><span class="s2">,</span>
+        <span class="s4">'allow_population_by_field_name'</span><span class="s2">,</span>
+        <span class="s4">'alias_generator'</span><span class="s2">,</span>
+    <span class="s2">}</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">ctx</span><span class="s2">: </span><span class="s1">ClassDefContext</span><span class="s2">, </span><span class="s1">plugin_config</span><span class="s2">: </span><span class="s1">PydanticPluginConfig</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_ctx </span><span class="s2">= </span><span class="s1">ctx</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">plugin_config </span><span class="s2">= </span><span class="s1">plugin_config</span>
+
+    <span class="s0">def </span><span class="s1">transform</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Configures the BaseModel subclass according to the plugin settings. 
+ 
+        In particular: 
+        * determines the model config and fields, 
+        * adds a fields-aware signature for the initializer and construct methods 
+        * freezes the class if allow_mutation = False or frozen = True 
+        * stores the fields, config, and if the class is settings in the mypy metadata for access by subclasses 
+        &quot;&quot;&quot;</span>
+        <span class="s1">ctx </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_ctx</span>
+        <span class="s1">info </span><span class="s2">= </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">info</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">adjust_validator_signatures</span><span class="s2">()</span>
+        <span class="s1">config </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">collect_config</span><span class="s2">()</span>
+        <span class="s1">fields </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">collect_fields</span><span class="s2">(</span><span class="s1">config</span><span class="s2">)</span>
+        <span class="s1">is_settings </span><span class="s2">= </span><span class="s1">any</span><span class="s2">(</span><span class="s1">get_fullname</span><span class="s2">(</span><span class="s1">base</span><span class="s2">) == </span><span class="s1">BASESETTINGS_FULLNAME </span><span class="s0">for </span><span class="s1">base </span><span class="s0">in </span><span class="s1">info</span><span class="s2">.</span><span class="s1">mro</span><span class="s2">[:-</span><span class="s5">1</span><span class="s2">])</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">add_initializer</span><span class="s2">(</span><span class="s1">fields</span><span class="s2">, </span><span class="s1">config</span><span class="s2">, </span><span class="s1">is_settings</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">add_construct_method</span><span class="s2">(</span><span class="s1">fields</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">set_frozen</span><span class="s2">(</span><span class="s1">fields</span><span class="s2">, </span><span class="s1">frozen</span><span class="s2">=</span><span class="s1">config</span><span class="s2">.</span><span class="s1">allow_mutation </span><span class="s0">is False or </span><span class="s1">config</span><span class="s2">.</span><span class="s1">frozen </span><span class="s0">is True</span><span class="s2">)</span>
+        <span class="s1">info</span><span class="s2">.</span><span class="s1">metadata</span><span class="s2">[</span><span class="s1">METADATA_KEY</span><span class="s2">] = {</span>
+            <span class="s4">'fields'</span><span class="s2">: {</span><span class="s1">field</span><span class="s2">.</span><span class="s1">name</span><span class="s2">: </span><span class="s1">field</span><span class="s2">.</span><span class="s1">serialize</span><span class="s2">() </span><span class="s0">for </span><span class="s1">field </span><span class="s0">in </span><span class="s1">fields</span><span class="s2">},</span>
+            <span class="s4">'config'</span><span class="s2">: </span><span class="s1">config</span><span class="s2">.</span><span class="s1">set_values_dict</span><span class="s2">(),</span>
+        <span class="s2">}</span>
+
+    <span class="s0">def </span><span class="s1">adjust_validator_signatures</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot;When we decorate a function `f` with `pydantic.validator(...), mypy sees 
+        `f` as a regular method taking a `self` instance, even though pydantic 
+        internally wraps `f` with `classmethod` if necessary. 
+ 
+        Teach mypy this by marking any function whose outermost decorator is a 
+        `validator()` call as a classmethod. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">for </span><span class="s1">name</span><span class="s2">, </span><span class="s1">sym </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_ctx</span><span class="s2">.</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">info</span><span class="s2">.</span><span class="s1">names</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+            <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">sym</span><span class="s2">.</span><span class="s1">node</span><span class="s2">, </span><span class="s1">Decorator</span><span class="s2">):</span>
+                <span class="s1">first_dec </span><span class="s2">= </span><span class="s1">sym</span><span class="s2">.</span><span class="s1">node</span><span class="s2">.</span><span class="s1">original_decorators</span><span class="s2">[</span><span class="s5">0</span><span class="s2">]</span>
+                <span class="s0">if </span><span class="s2">(</span>
+                    <span class="s1">isinstance</span><span class="s2">(</span><span class="s1">first_dec</span><span class="s2">, </span><span class="s1">CallExpr</span><span class="s2">)</span>
+                    <span class="s0">and </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">first_dec</span><span class="s2">.</span><span class="s1">callee</span><span class="s2">, </span><span class="s1">NameExpr</span><span class="s2">)</span>
+                    <span class="s0">and </span><span class="s1">first_dec</span><span class="s2">.</span><span class="s1">callee</span><span class="s2">.</span><span class="s1">fullname </span><span class="s2">== </span><span class="s4">f'</span><span class="s0">{</span><span class="s1">_NAMESPACE</span><span class="s0">}</span><span class="s4">.class_validators.validator'</span>
+                <span class="s2">):</span>
+                    <span class="s1">sym</span><span class="s2">.</span><span class="s1">node</span><span class="s2">.</span><span class="s1">func</span><span class="s2">.</span><span class="s1">is_class </span><span class="s2">= </span><span class="s0">True</span>
+
+    <span class="s0">def </span><span class="s1">collect_config</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s4">'ModelConfigData'</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Collects the values of the config attributes that are used by the plugin, accounting for parent classes. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">ctx </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_ctx</span>
+        <span class="s1">cls </span><span class="s2">= </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">cls</span>
+        <span class="s1">config </span><span class="s2">= </span><span class="s1">ModelConfigData</span><span class="s2">()</span>
+        <span class="s0">for </span><span class="s1">stmt </span><span class="s0">in </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">defs</span><span class="s2">.</span><span class="s1">body</span><span class="s2">:</span>
+            <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">stmt</span><span class="s2">, </span><span class="s1">ClassDef</span><span class="s2">):</span>
+                <span class="s0">continue</span>
+            <span class="s0">if </span><span class="s1">stmt</span><span class="s2">.</span><span class="s1">name </span><span class="s2">== </span><span class="s4">'Config'</span><span class="s2">:</span>
+                <span class="s0">for </span><span class="s1">substmt </span><span class="s0">in </span><span class="s1">stmt</span><span class="s2">.</span><span class="s1">defs</span><span class="s2">.</span><span class="s1">body</span><span class="s2">:</span>
+                    <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">substmt</span><span class="s2">, </span><span class="s1">AssignmentStmt</span><span class="s2">):</span>
+                        <span class="s0">continue</span>
+                    <span class="s1">config</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">get_config_update</span><span class="s2">(</span><span class="s1">substmt</span><span class="s2">))</span>
+                <span class="s0">if </span><span class="s2">(</span>
+                    <span class="s1">config</span><span class="s2">.</span><span class="s1">has_alias_generator</span>
+                    <span class="s0">and not </span><span class="s1">config</span><span class="s2">.</span><span class="s1">allow_population_by_field_name</span>
+                    <span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">plugin_config</span><span class="s2">.</span><span class="s1">warn_required_dynamic_aliases</span>
+                <span class="s2">):</span>
+                    <span class="s1">error_required_dynamic_aliases</span><span class="s2">(</span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">api</span><span class="s2">, </span><span class="s1">stmt</span><span class="s2">)</span>
+        <span class="s0">for </span><span class="s1">info </span><span class="s0">in </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">info</span><span class="s2">.</span><span class="s1">mro</span><span class="s2">[</span><span class="s5">1</span><span class="s2">:]:  </span><span class="s3"># 0 is the current class</span>
+            <span class="s0">if </span><span class="s1">METADATA_KEY </span><span class="s0">not in </span><span class="s1">info</span><span class="s2">.</span><span class="s1">metadata</span><span class="s2">:</span>
+                <span class="s0">continue</span>
+
+            <span class="s3"># Each class depends on the set of fields in its ancestors</span>
+            <span class="s1">ctx</span><span class="s2">.</span><span class="s1">api</span><span class="s2">.</span><span class="s1">add_plugin_dependency</span><span class="s2">(</span><span class="s1">make_wildcard_trigger</span><span class="s2">(</span><span class="s1">get_fullname</span><span class="s2">(</span><span class="s1">info</span><span class="s2">)))</span>
+            <span class="s0">for </span><span class="s1">name</span><span class="s2">, </span><span class="s1">value </span><span class="s0">in </span><span class="s1">info</span><span class="s2">.</span><span class="s1">metadata</span><span class="s2">[</span><span class="s1">METADATA_KEY</span><span class="s2">][</span><span class="s4">'config'</span><span class="s2">].</span><span class="s1">items</span><span class="s2">():</span>
+                <span class="s1">config</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s1">name</span><span class="s2">, </span><span class="s1">value</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">config</span>
+
+    <span class="s0">def </span><span class="s1">collect_fields</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">model_config</span><span class="s2">: </span><span class="s4">'ModelConfigData'</span><span class="s2">) </span><span class="s1">-&gt; List</span><span class="s2">[</span><span class="s4">'PydanticModelField'</span><span class="s2">]:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Collects the fields for the model, accounting for parent classes 
+        &quot;&quot;&quot;</span>
+        <span class="s3"># First, collect fields belonging to the current class.</span>
+        <span class="s1">ctx </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_ctx</span>
+        <span class="s1">cls </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_ctx</span><span class="s2">.</span><span class="s1">cls</span>
+        <span class="s1">fields </span><span class="s2">= []  </span><span class="s3"># type: List[PydanticModelField]</span>
+        <span class="s1">known_fields </span><span class="s2">= </span><span class="s1">set</span><span class="s2">()  </span><span class="s3"># type: Set[str]</span>
+        <span class="s0">for </span><span class="s1">stmt </span><span class="s0">in </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">defs</span><span class="s2">.</span><span class="s1">body</span><span class="s2">:</span>
+            <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">stmt</span><span class="s2">, </span><span class="s1">AssignmentStmt</span><span class="s2">):  </span><span class="s3"># `and stmt.new_syntax` to require annotation</span>
+                <span class="s0">continue</span>
+
+            <span class="s1">lhs </span><span class="s2">= </span><span class="s1">stmt</span><span class="s2">.</span><span class="s1">lvalues</span><span class="s2">[</span><span class="s5">0</span><span class="s2">]</span>
+            <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">lhs</span><span class="s2">, </span><span class="s1">NameExpr</span><span class="s2">) </span><span class="s0">or not </span><span class="s1">is_valid_field</span><span class="s2">(</span><span class="s1">lhs</span><span class="s2">.</span><span class="s1">name</span><span class="s2">):</span>
+                <span class="s0">continue</span>
+
+            <span class="s0">if not </span><span class="s1">stmt</span><span class="s2">.</span><span class="s1">new_syntax </span><span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">plugin_config</span><span class="s2">.</span><span class="s1">warn_untyped_fields</span><span class="s2">:</span>
+                <span class="s1">error_untyped_fields</span><span class="s2">(</span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">api</span><span class="s2">, </span><span class="s1">stmt</span><span class="s2">)</span>
+
+            <span class="s3"># if lhs.name == '__config__':  # BaseConfig not well handled; I'm not sure why yet</span>
+            <span class="s3">#     continue</span>
+
+            <span class="s1">sym </span><span class="s2">= </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">info</span><span class="s2">.</span><span class="s1">names</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">lhs</span><span class="s2">.</span><span class="s1">name</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">sym </span><span class="s0">is None</span><span class="s2">:  </span><span class="s3"># pragma: no cover</span>
+                <span class="s3"># This is likely due to a star import (see the dataclasses plugin for a more detailed explanation)</span>
+                <span class="s3"># This is the same logic used in the dataclasses plugin</span>
+                <span class="s0">continue</span>
+
+            <span class="s1">node </span><span class="s2">= </span><span class="s1">sym</span><span class="s2">.</span><span class="s1">node</span>
+            <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">node</span><span class="s2">, </span><span class="s1">PlaceholderNode</span><span class="s2">):  </span><span class="s3"># pragma: no cover</span>
+                <span class="s3"># See the PlaceholderNode docstring for more detail about how this can occur</span>
+                <span class="s3"># Basically, it is an edge case when dealing with complex import logic</span>
+                <span class="s3"># This is the same logic used in the dataclasses plugin</span>
+                <span class="s0">continue</span>
+            <span class="s0">if not </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">node</span><span class="s2">, </span><span class="s1">Var</span><span class="s2">):  </span><span class="s3"># pragma: no cover</span>
+                <span class="s3"># Don't know if this edge case still happens with the `is_valid_field` check above</span>
+                <span class="s3"># but better safe than sorry</span>
+                <span class="s0">continue</span>
+
+            <span class="s3"># x: ClassVar[int] is ignored by dataclasses.</span>
+            <span class="s0">if </span><span class="s1">node</span><span class="s2">.</span><span class="s1">is_classvar</span><span class="s2">:</span>
+                <span class="s0">continue</span>
+
+            <span class="s1">is_required </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">get_is_required</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, </span><span class="s1">stmt</span><span class="s2">, </span><span class="s1">lhs</span><span class="s2">)</span>
+            <span class="s1">alias</span><span class="s2">, </span><span class="s1">has_dynamic_alias </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">get_alias_info</span><span class="s2">(</span><span class="s1">stmt</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s2">(</span>
+                <span class="s1">has_dynamic_alias</span>
+                <span class="s0">and not </span><span class="s1">model_config</span><span class="s2">.</span><span class="s1">allow_population_by_field_name</span>
+                <span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">plugin_config</span><span class="s2">.</span><span class="s1">warn_required_dynamic_aliases</span>
+            <span class="s2">):</span>
+                <span class="s1">error_required_dynamic_aliases</span><span class="s2">(</span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">api</span><span class="s2">, </span><span class="s1">stmt</span><span class="s2">)</span>
+            <span class="s1">fields</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span>
+                <span class="s1">PydanticModelField</span><span class="s2">(</span>
+                    <span class="s1">name</span><span class="s2">=</span><span class="s1">lhs</span><span class="s2">.</span><span class="s1">name</span><span class="s2">,</span>
+                    <span class="s1">is_required</span><span class="s2">=</span><span class="s1">is_required</span><span class="s2">,</span>
+                    <span class="s1">alias</span><span class="s2">=</span><span class="s1">alias</span><span class="s2">,</span>
+                    <span class="s1">has_dynamic_alias</span><span class="s2">=</span><span class="s1">has_dynamic_alias</span><span class="s2">,</span>
+                    <span class="s1">line</span><span class="s2">=</span><span class="s1">stmt</span><span class="s2">.</span><span class="s1">line</span><span class="s2">,</span>
+                    <span class="s1">column</span><span class="s2">=</span><span class="s1">stmt</span><span class="s2">.</span><span class="s1">column</span><span class="s2">,</span>
+                <span class="s2">)</span>
+            <span class="s2">)</span>
+            <span class="s1">known_fields</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">lhs</span><span class="s2">.</span><span class="s1">name</span><span class="s2">)</span>
+        <span class="s1">all_fields </span><span class="s2">= </span><span class="s1">fields</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">()</span>
+        <span class="s0">for </span><span class="s1">info </span><span class="s0">in </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">info</span><span class="s2">.</span><span class="s1">mro</span><span class="s2">[</span><span class="s5">1</span><span class="s2">:]:  </span><span class="s3"># 0 is the current class, -2 is BaseModel, -1 is object</span>
+            <span class="s0">if </span><span class="s1">METADATA_KEY </span><span class="s0">not in </span><span class="s1">info</span><span class="s2">.</span><span class="s1">metadata</span><span class="s2">:</span>
+                <span class="s0">continue</span>
+
+            <span class="s1">superclass_fields </span><span class="s2">= []</span>
+            <span class="s3"># Each class depends on the set of fields in its ancestors</span>
+            <span class="s1">ctx</span><span class="s2">.</span><span class="s1">api</span><span class="s2">.</span><span class="s1">add_plugin_dependency</span><span class="s2">(</span><span class="s1">make_wildcard_trigger</span><span class="s2">(</span><span class="s1">get_fullname</span><span class="s2">(</span><span class="s1">info</span><span class="s2">)))</span>
+
+            <span class="s0">for </span><span class="s1">name</span><span class="s2">, </span><span class="s1">data </span><span class="s0">in </span><span class="s1">info</span><span class="s2">.</span><span class="s1">metadata</span><span class="s2">[</span><span class="s1">METADATA_KEY</span><span class="s2">][</span><span class="s4">'fields'</span><span class="s2">].</span><span class="s1">items</span><span class="s2">():</span>
+                <span class="s0">if </span><span class="s1">name </span><span class="s0">not in </span><span class="s1">known_fields</span><span class="s2">:</span>
+                    <span class="s1">field </span><span class="s2">= </span><span class="s1">PydanticModelField</span><span class="s2">.</span><span class="s1">deserialize</span><span class="s2">(</span><span class="s1">info</span><span class="s2">, </span><span class="s1">data</span><span class="s2">)</span>
+                    <span class="s1">known_fields</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">name</span><span class="s2">)</span>
+                    <span class="s1">superclass_fields</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">field</span><span class="s2">)</span>
+                <span class="s0">else</span><span class="s2">:</span>
+                    <span class="s2">(</span><span class="s1">field</span><span class="s2">,) = (</span><span class="s1">a </span><span class="s0">for </span><span class="s1">a </span><span class="s0">in </span><span class="s1">all_fields </span><span class="s0">if </span><span class="s1">a</span><span class="s2">.</span><span class="s1">name </span><span class="s2">== </span><span class="s1">name</span><span class="s2">)</span>
+                    <span class="s1">all_fields</span><span class="s2">.</span><span class="s1">remove</span><span class="s2">(</span><span class="s1">field</span><span class="s2">)</span>
+                    <span class="s1">superclass_fields</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">field</span><span class="s2">)</span>
+            <span class="s1">all_fields </span><span class="s2">= </span><span class="s1">superclass_fields </span><span class="s2">+ </span><span class="s1">all_fields</span>
+        <span class="s0">return </span><span class="s1">all_fields</span>
+
+    <span class="s0">def </span><span class="s1">add_initializer</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">fields</span><span class="s2">: </span><span class="s1">List</span><span class="s2">[</span><span class="s4">'PydanticModelField'</span><span class="s2">], </span><span class="s1">config</span><span class="s2">: </span><span class="s4">'ModelConfigData'</span><span class="s2">, </span><span class="s1">is_settings</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Adds a fields-aware `__init__` method to the class. 
+ 
+        The added `__init__` will be annotated with types vs. all `Any` depending on the plugin settings. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">ctx </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_ctx</span>
+        <span class="s1">typed </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">plugin_config</span><span class="s2">.</span><span class="s1">init_typed</span>
+        <span class="s1">use_alias </span><span class="s2">= </span><span class="s1">config</span><span class="s2">.</span><span class="s1">allow_population_by_field_name </span><span class="s0">is not True</span>
+        <span class="s1">force_all_optional </span><span class="s2">= </span><span class="s1">is_settings </span><span class="s0">or </span><span class="s1">bool</span><span class="s2">(</span>
+            <span class="s1">config</span><span class="s2">.</span><span class="s1">has_alias_generator </span><span class="s0">and not </span><span class="s1">config</span><span class="s2">.</span><span class="s1">allow_population_by_field_name</span>
+        <span class="s2">)</span>
+        <span class="s1">init_arguments </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">get_field_arguments</span><span class="s2">(</span>
+            <span class="s1">fields</span><span class="s2">, </span><span class="s1">typed</span><span class="s2">=</span><span class="s1">typed</span><span class="s2">, </span><span class="s1">force_all_optional</span><span class="s2">=</span><span class="s1">force_all_optional</span><span class="s2">, </span><span class="s1">use_alias</span><span class="s2">=</span><span class="s1">use_alias</span>
+        <span class="s2">)</span>
+        <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">should_init_forbid_extra</span><span class="s2">(</span><span class="s1">fields</span><span class="s2">, </span><span class="s1">config</span><span class="s2">):</span>
+            <span class="s1">var </span><span class="s2">= </span><span class="s1">Var</span><span class="s2">(</span><span class="s4">'kwargs'</span><span class="s2">)</span>
+            <span class="s1">init_arguments</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">Argument</span><span class="s2">(</span><span class="s1">var</span><span class="s2">, </span><span class="s1">AnyType</span><span class="s2">(</span><span class="s1">TypeOfAny</span><span class="s2">.</span><span class="s1">explicit</span><span class="s2">), </span><span class="s0">None</span><span class="s2">, </span><span class="s1">ARG_STAR2</span><span class="s2">))</span>
+
+        <span class="s0">if </span><span class="s4">'__init__' </span><span class="s0">not in </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">info</span><span class="s2">.</span><span class="s1">names</span><span class="s2">:</span>
+            <span class="s1">add_method</span><span class="s2">(</span><span class="s1">ctx</span><span class="s2">, </span><span class="s4">'__init__'</span><span class="s2">, </span><span class="s1">init_arguments</span><span class="s2">, </span><span class="s1">NoneType</span><span class="s2">())</span>
+
+    <span class="s0">def </span><span class="s1">add_construct_method</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">fields</span><span class="s2">: </span><span class="s1">List</span><span class="s2">[</span><span class="s4">'PydanticModelField'</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Adds a fully typed `construct` classmethod to the class. 
+ 
+        Similar to the fields-aware __init__ method, but always uses the field names (not aliases), 
+        and does not treat settings fields as optional. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">ctx </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_ctx</span>
+        <span class="s1">set_str </span><span class="s2">= </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">api</span><span class="s2">.</span><span class="s1">named_type</span><span class="s2">(</span><span class="s4">f'</span><span class="s0">{</span><span class="s1">BUILTINS_NAME</span><span class="s0">}</span><span class="s4">.set'</span><span class="s2">, [</span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">api</span><span class="s2">.</span><span class="s1">named_type</span><span class="s2">(</span><span class="s4">f'</span><span class="s0">{</span><span class="s1">BUILTINS_NAME</span><span class="s0">}</span><span class="s4">.str'</span><span class="s2">)])</span>
+        <span class="s1">optional_set_str </span><span class="s2">= </span><span class="s1">UnionType</span><span class="s2">([</span><span class="s1">set_str</span><span class="s2">, </span><span class="s1">NoneType</span><span class="s2">()])</span>
+        <span class="s1">fields_set_argument </span><span class="s2">= </span><span class="s1">Argument</span><span class="s2">(</span><span class="s1">Var</span><span class="s2">(</span><span class="s4">'_fields_set'</span><span class="s2">, </span><span class="s1">optional_set_str</span><span class="s2">), </span><span class="s1">optional_set_str</span><span class="s2">, </span><span class="s0">None</span><span class="s2">, </span><span class="s1">ARG_OPT</span><span class="s2">)</span>
+        <span class="s1">construct_arguments </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">get_field_arguments</span><span class="s2">(</span><span class="s1">fields</span><span class="s2">, </span><span class="s1">typed</span><span class="s2">=</span><span class="s0">True</span><span class="s2">, </span><span class="s1">force_all_optional</span><span class="s2">=</span><span class="s0">False</span><span class="s2">, </span><span class="s1">use_alias</span><span class="s2">=</span><span class="s0">False</span><span class="s2">)</span>
+        <span class="s1">construct_arguments </span><span class="s2">= [</span><span class="s1">fields_set_argument</span><span class="s2">] + </span><span class="s1">construct_arguments</span>
+
+        <span class="s1">obj_type </span><span class="s2">= </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">api</span><span class="s2">.</span><span class="s1">named_type</span><span class="s2">(</span><span class="s4">f'</span><span class="s0">{</span><span class="s1">BUILTINS_NAME</span><span class="s0">}</span><span class="s4">.object'</span><span class="s2">)</span>
+        <span class="s1">self_tvar_name </span><span class="s2">= </span><span class="s4">'_PydanticBaseModel'  </span><span class="s3"># Make sure it does not conflict with other names in the class</span>
+        <span class="s1">tvar_fullname </span><span class="s2">= </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">fullname </span><span class="s2">+ </span><span class="s4">'.' </span><span class="s2">+ </span><span class="s1">self_tvar_name</span>
+        <span class="s0">if </span><span class="s1">MYPY_VERSION_TUPLE </span><span class="s2">&gt;= (</span><span class="s5">1</span><span class="s2">, </span><span class="s5">4</span><span class="s2">):</span>
+            <span class="s1">tvd </span><span class="s2">= </span><span class="s1">TypeVarType</span><span class="s2">(</span>
+                <span class="s1">self_tvar_name</span><span class="s2">,</span>
+                <span class="s1">tvar_fullname</span><span class="s2">,</span>
+                <span class="s2">(</span>
+                    <span class="s1">TypeVarId</span><span class="s2">(-</span><span class="s5">1</span><span class="s2">, </span><span class="s1">namespace</span><span class="s2">=</span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">fullname </span><span class="s2">+ </span><span class="s4">'.construct'</span><span class="s2">)</span>
+                    <span class="s0">if </span><span class="s1">MYPY_VERSION_TUPLE </span><span class="s2">&gt;= (</span><span class="s5">1</span><span class="s2">, </span><span class="s5">11</span><span class="s2">)</span>
+                    <span class="s0">else </span><span class="s1">TypeVarId</span><span class="s2">(-</span><span class="s5">1</span><span class="s2">)</span>
+                <span class="s2">),</span>
+                <span class="s2">[],</span>
+                <span class="s1">obj_type</span><span class="s2">,</span>
+                <span class="s1">AnyType</span><span class="s2">(</span><span class="s1">TypeOfAny</span><span class="s2">.</span><span class="s1">from_omitted_generics</span><span class="s2">),  </span><span class="s3"># type: ignore[arg-type]</span>
+            <span class="s2">)</span>
+            <span class="s1">self_tvar_expr </span><span class="s2">= </span><span class="s1">TypeVarExpr</span><span class="s2">(</span>
+                <span class="s1">self_tvar_name</span><span class="s2">,</span>
+                <span class="s1">tvar_fullname</span><span class="s2">,</span>
+                <span class="s2">[],</span>
+                <span class="s1">obj_type</span><span class="s2">,</span>
+                <span class="s1">AnyType</span><span class="s2">(</span><span class="s1">TypeOfAny</span><span class="s2">.</span><span class="s1">from_omitted_generics</span><span class="s2">),  </span><span class="s3"># type: ignore[arg-type]</span>
+            <span class="s2">)</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">tvd </span><span class="s2">= </span><span class="s1">TypeVarDef</span><span class="s2">(</span><span class="s1">self_tvar_name</span><span class="s2">, </span><span class="s1">tvar_fullname</span><span class="s2">, -</span><span class="s5">1</span><span class="s2">, [], </span><span class="s1">obj_type</span><span class="s2">)</span>
+            <span class="s1">self_tvar_expr </span><span class="s2">= </span><span class="s1">TypeVarExpr</span><span class="s2">(</span><span class="s1">self_tvar_name</span><span class="s2">, </span><span class="s1">tvar_fullname</span><span class="s2">, [], </span><span class="s1">obj_type</span><span class="s2">)</span>
+        <span class="s1">ctx</span><span class="s2">.</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">info</span><span class="s2">.</span><span class="s1">names</span><span class="s2">[</span><span class="s1">self_tvar_name</span><span class="s2">] = </span><span class="s1">SymbolTableNode</span><span class="s2">(</span><span class="s1">MDEF</span><span class="s2">, </span><span class="s1">self_tvar_expr</span><span class="s2">)</span>
+
+        <span class="s3"># Backward-compatible with TypeVarDef from Mypy 0.910.</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">tvd</span><span class="s2">, </span><span class="s1">TypeVarType</span><span class="s2">):</span>
+            <span class="s1">self_type </span><span class="s2">= </span><span class="s1">tvd</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">self_type </span><span class="s2">= </span><span class="s1">TypeVarType</span><span class="s2">(</span><span class="s1">tvd</span><span class="s2">)</span>
+
+        <span class="s1">add_method</span><span class="s2">(</span>
+            <span class="s1">ctx</span><span class="s2">,</span>
+            <span class="s4">'construct'</span><span class="s2">,</span>
+            <span class="s1">construct_arguments</span><span class="s2">,</span>
+            <span class="s1">return_type</span><span class="s2">=</span><span class="s1">self_type</span><span class="s2">,</span>
+            <span class="s1">self_type</span><span class="s2">=</span><span class="s1">self_type</span><span class="s2">,</span>
+            <span class="s1">tvar_def</span><span class="s2">=</span><span class="s1">tvd</span><span class="s2">,</span>
+            <span class="s1">is_classmethod</span><span class="s2">=</span><span class="s0">True</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">set_frozen</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">fields</span><span class="s2">: </span><span class="s1">List</span><span class="s2">[</span><span class="s4">'PydanticModelField'</span><span class="s2">], </span><span class="s1">frozen</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Marks all fields as properties so that attempts to set them trigger mypy errors. 
+ 
+        This is the same approach used by the attrs and dataclasses plugins. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">ctx </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_ctx</span>
+        <span class="s1">info </span><span class="s2">= </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">info</span>
+        <span class="s0">for </span><span class="s1">field </span><span class="s0">in </span><span class="s1">fields</span><span class="s2">:</span>
+            <span class="s1">sym_node </span><span class="s2">= </span><span class="s1">info</span><span class="s2">.</span><span class="s1">names</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">field</span><span class="s2">.</span><span class="s1">name</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">sym_node </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s1">var </span><span class="s2">= </span><span class="s1">sym_node</span><span class="s2">.</span><span class="s1">node</span>
+                <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">var</span><span class="s2">, </span><span class="s1">Var</span><span class="s2">):</span>
+                    <span class="s1">var</span><span class="s2">.</span><span class="s1">is_property </span><span class="s2">= </span><span class="s1">frozen</span>
+                <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">var</span><span class="s2">, </span><span class="s1">PlaceholderNode</span><span class="s2">) </span><span class="s0">and not </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">api</span><span class="s2">.</span><span class="s1">final_iteration</span><span class="s2">:</span>
+                    <span class="s3"># See https://github.com/pydantic/pydantic/issues/5191 to hit this branch for test coverage</span>
+                    <span class="s1">ctx</span><span class="s2">.</span><span class="s1">api</span><span class="s2">.</span><span class="s1">defer</span><span class="s2">()</span>
+                <span class="s0">else</span><span class="s2">:  </span><span class="s3"># pragma: no cover</span>
+                    <span class="s3"># I don't know whether it's possible to hit this branch, but I've added it for safety</span>
+                    <span class="s0">try</span><span class="s2">:</span>
+                        <span class="s1">var_str </span><span class="s2">= </span><span class="s1">str</span><span class="s2">(</span><span class="s1">var</span><span class="s2">)</span>
+                    <span class="s0">except </span><span class="s1">TypeError</span><span class="s2">:</span>
+                        <span class="s3"># This happens for PlaceholderNode; perhaps it will happen for other types in the future..</span>
+                        <span class="s1">var_str </span><span class="s2">= </span><span class="s1">repr</span><span class="s2">(</span><span class="s1">var</span><span class="s2">)</span>
+                    <span class="s1">detail </span><span class="s2">= </span><span class="s4">f'sym_node.node: </span><span class="s0">{</span><span class="s1">var_str</span><span class="s0">} </span><span class="s4">(of type </span><span class="s0">{</span><span class="s1">var</span><span class="s2">.</span><span class="s1">__class__</span><span class="s0">}</span><span class="s4">)'</span>
+                    <span class="s1">error_unexpected_behavior</span><span class="s2">(</span><span class="s1">detail</span><span class="s2">, </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">api</span><span class="s2">, </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">cls</span><span class="s2">)</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">var </span><span class="s2">= </span><span class="s1">field</span><span class="s2">.</span><span class="s1">to_var</span><span class="s2">(</span><span class="s1">info</span><span class="s2">, </span><span class="s1">use_alias</span><span class="s2">=</span><span class="s0">False</span><span class="s2">)</span>
+                <span class="s1">var</span><span class="s2">.</span><span class="s1">info </span><span class="s2">= </span><span class="s1">info</span>
+                <span class="s1">var</span><span class="s2">.</span><span class="s1">is_property </span><span class="s2">= </span><span class="s1">frozen</span>
+                <span class="s1">var</span><span class="s2">.</span><span class="s1">_fullname </span><span class="s2">= </span><span class="s1">get_fullname</span><span class="s2">(</span><span class="s1">info</span><span class="s2">) + </span><span class="s4">'.' </span><span class="s2">+ </span><span class="s1">get_name</span><span class="s2">(</span><span class="s1">var</span><span class="s2">)</span>
+                <span class="s1">info</span><span class="s2">.</span><span class="s1">names</span><span class="s2">[</span><span class="s1">get_name</span><span class="s2">(</span><span class="s1">var</span><span class="s2">)] = </span><span class="s1">SymbolTableNode</span><span class="s2">(</span><span class="s1">MDEF</span><span class="s2">, </span><span class="s1">var</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">get_config_update</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">substmt</span><span class="s2">: </span><span class="s1">AssignmentStmt</span><span class="s2">) </span><span class="s1">-&gt; Optional</span><span class="s2">[</span><span class="s4">'ModelConfigData'</span><span class="s2">]:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Determines the config update due to a single statement in the Config class definition. 
+ 
+        Warns if a tracked config attribute is set to a value the plugin doesn't know how to interpret (e.g., an int) 
+        &quot;&quot;&quot;</span>
+        <span class="s1">lhs </span><span class="s2">= </span><span class="s1">substmt</span><span class="s2">.</span><span class="s1">lvalues</span><span class="s2">[</span><span class="s5">0</span><span class="s2">]</span>
+        <span class="s0">if not </span><span class="s2">(</span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">lhs</span><span class="s2">, </span><span class="s1">NameExpr</span><span class="s2">) </span><span class="s0">and </span><span class="s1">lhs</span><span class="s2">.</span><span class="s1">name </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">tracked_config_fields</span><span class="s2">):</span>
+            <span class="s0">return None</span>
+        <span class="s0">if </span><span class="s1">lhs</span><span class="s2">.</span><span class="s1">name </span><span class="s2">== </span><span class="s4">'extra'</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">substmt</span><span class="s2">.</span><span class="s1">rvalue</span><span class="s2">, </span><span class="s1">StrExpr</span><span class="s2">):</span>
+                <span class="s1">forbid_extra </span><span class="s2">= </span><span class="s1">substmt</span><span class="s2">.</span><span class="s1">rvalue</span><span class="s2">.</span><span class="s1">value </span><span class="s2">== </span><span class="s4">'forbid'</span>
+            <span class="s0">elif </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">substmt</span><span class="s2">.</span><span class="s1">rvalue</span><span class="s2">, </span><span class="s1">MemberExpr</span><span class="s2">):</span>
+                <span class="s1">forbid_extra </span><span class="s2">= </span><span class="s1">substmt</span><span class="s2">.</span><span class="s1">rvalue</span><span class="s2">.</span><span class="s1">name </span><span class="s2">== </span><span class="s4">'forbid'</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s1">error_invalid_config_value</span><span class="s2">(</span><span class="s1">lhs</span><span class="s2">.</span><span class="s1">name</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_ctx</span><span class="s2">.</span><span class="s1">api</span><span class="s2">, </span><span class="s1">substmt</span><span class="s2">)</span>
+                <span class="s0">return None</span>
+            <span class="s0">return </span><span class="s1">ModelConfigData</span><span class="s2">(</span><span class="s1">forbid_extra</span><span class="s2">=</span><span class="s1">forbid_extra</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">lhs</span><span class="s2">.</span><span class="s1">name </span><span class="s2">== </span><span class="s4">'alias_generator'</span><span class="s2">:</span>
+            <span class="s1">has_alias_generator </span><span class="s2">= </span><span class="s0">True</span>
+            <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">substmt</span><span class="s2">.</span><span class="s1">rvalue</span><span class="s2">, </span><span class="s1">NameExpr</span><span class="s2">) </span><span class="s0">and </span><span class="s1">substmt</span><span class="s2">.</span><span class="s1">rvalue</span><span class="s2">.</span><span class="s1">fullname </span><span class="s2">== </span><span class="s4">'builtins.None'</span><span class="s2">:</span>
+                <span class="s1">has_alias_generator </span><span class="s2">= </span><span class="s0">False</span>
+            <span class="s0">return </span><span class="s1">ModelConfigData</span><span class="s2">(</span><span class="s1">has_alias_generator</span><span class="s2">=</span><span class="s1">has_alias_generator</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">substmt</span><span class="s2">.</span><span class="s1">rvalue</span><span class="s2">, </span><span class="s1">NameExpr</span><span class="s2">) </span><span class="s0">and </span><span class="s1">substmt</span><span class="s2">.</span><span class="s1">rvalue</span><span class="s2">.</span><span class="s1">fullname </span><span class="s0">in </span><span class="s2">(</span><span class="s4">'builtins.True'</span><span class="s2">, </span><span class="s4">'builtins.False'</span><span class="s2">):</span>
+            <span class="s0">return </span><span class="s1">ModelConfigData</span><span class="s2">(**{</span><span class="s1">lhs</span><span class="s2">.</span><span class="s1">name</span><span class="s2">: </span><span class="s1">substmt</span><span class="s2">.</span><span class="s1">rvalue</span><span class="s2">.</span><span class="s1">fullname </span><span class="s2">== </span><span class="s4">'builtins.True'</span><span class="s2">})</span>
+        <span class="s1">error_invalid_config_value</span><span class="s2">(</span><span class="s1">lhs</span><span class="s2">.</span><span class="s1">name</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_ctx</span><span class="s2">.</span><span class="s1">api</span><span class="s2">, </span><span class="s1">substmt</span><span class="s2">)</span>
+        <span class="s0">return None</span>
+
+    <span class="s2">@</span><span class="s1">staticmethod</span>
+    <span class="s0">def </span><span class="s1">get_is_required</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">: </span><span class="s1">ClassDef</span><span class="s2">, </span><span class="s1">stmt</span><span class="s2">: </span><span class="s1">AssignmentStmt</span><span class="s2">, </span><span class="s1">lhs</span><span class="s2">: </span><span class="s1">NameExpr</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Returns a boolean indicating whether the field defined in `stmt` is a required field. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">expr </span><span class="s2">= </span><span class="s1">stmt</span><span class="s2">.</span><span class="s1">rvalue</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">expr</span><span class="s2">, </span><span class="s1">TempNode</span><span class="s2">):</span>
+            <span class="s3"># TempNode means annotation-only, so only non-required if Optional</span>
+            <span class="s1">value_type </span><span class="s2">= </span><span class="s1">get_proper_type</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">info</span><span class="s2">[</span><span class="s1">lhs</span><span class="s2">.</span><span class="s1">name</span><span class="s2">].</span><span class="s1">type</span><span class="s2">)</span>
+            <span class="s0">return not </span><span class="s1">PydanticModelTransformer</span><span class="s2">.</span><span class="s1">type_has_implicit_default</span><span class="s2">(</span><span class="s1">value_type</span><span class="s2">)</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">expr</span><span class="s2">, </span><span class="s1">CallExpr</span><span class="s2">) </span><span class="s0">and </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">expr</span><span class="s2">.</span><span class="s1">callee</span><span class="s2">, </span><span class="s1">RefExpr</span><span class="s2">) </span><span class="s0">and </span><span class="s1">expr</span><span class="s2">.</span><span class="s1">callee</span><span class="s2">.</span><span class="s1">fullname </span><span class="s2">== </span><span class="s1">FIELD_FULLNAME</span><span class="s2">:</span>
+            <span class="s3"># The &quot;default value&quot; is a call to `Field`; at this point, the field is</span>
+            <span class="s3"># only required if default is Ellipsis (i.e., `field_name: Annotation = Field(...)`) or if default_factory</span>
+            <span class="s3"># is specified.</span>
+            <span class="s0">for </span><span class="s1">arg</span><span class="s2">, </span><span class="s1">name </span><span class="s0">in </span><span class="s1">zip</span><span class="s2">(</span><span class="s1">expr</span><span class="s2">.</span><span class="s1">args</span><span class="s2">, </span><span class="s1">expr</span><span class="s2">.</span><span class="s1">arg_names</span><span class="s2">):</span>
+                <span class="s3"># If name is None, then this arg is the default because it is the only positional argument.</span>
+                <span class="s0">if </span><span class="s1">name </span><span class="s0">is None or </span><span class="s1">name </span><span class="s2">== </span><span class="s4">'default'</span><span class="s2">:</span>
+                    <span class="s0">return </span><span class="s1">arg</span><span class="s2">.</span><span class="s1">__class__ </span><span class="s0">is </span><span class="s1">EllipsisExpr</span>
+                <span class="s0">if </span><span class="s1">name </span><span class="s2">== </span><span class="s4">'default_factory'</span><span class="s2">:</span>
+                    <span class="s0">return False</span>
+            <span class="s3"># In this case, default and default_factory are not specified, so we need to look at the annotation</span>
+            <span class="s1">value_type </span><span class="s2">= </span><span class="s1">get_proper_type</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">info</span><span class="s2">[</span><span class="s1">lhs</span><span class="s2">.</span><span class="s1">name</span><span class="s2">].</span><span class="s1">type</span><span class="s2">)</span>
+            <span class="s0">return not </span><span class="s1">PydanticModelTransformer</span><span class="s2">.</span><span class="s1">type_has_implicit_default</span><span class="s2">(</span><span class="s1">value_type</span><span class="s2">)</span>
+        <span class="s3"># Only required if the &quot;default value&quot; is Ellipsis (i.e., `field_name: Annotation = ...`)</span>
+        <span class="s0">return </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">expr</span><span class="s2">, </span><span class="s1">EllipsisExpr</span><span class="s2">)</span>
+
+    <span class="s2">@</span><span class="s1">staticmethod</span>
+    <span class="s0">def </span><span class="s1">type_has_implicit_default</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">ProperType</span><span class="s2">]) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Returns True if the passed type will be given an implicit default value. 
+ 
+        In pydantic v1, this is the case for Optional types and Any (with default value None). 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">, </span><span class="s1">AnyType</span><span class="s2">):</span>
+            <span class="s3"># Annotated as Any</span>
+            <span class="s0">return True</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">type_</span><span class="s2">, </span><span class="s1">UnionType</span><span class="s2">) </span><span class="s0">and </span><span class="s1">any</span><span class="s2">(</span>
+            <span class="s1">isinstance</span><span class="s2">(</span><span class="s1">item</span><span class="s2">, </span><span class="s1">NoneType</span><span class="s2">) </span><span class="s0">or </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">item</span><span class="s2">, </span><span class="s1">AnyType</span><span class="s2">) </span><span class="s0">for </span><span class="s1">item </span><span class="s0">in </span><span class="s1">type_</span><span class="s2">.</span><span class="s1">items</span>
+        <span class="s2">):</span>
+            <span class="s3"># Annotated as Optional, or otherwise having NoneType or AnyType in the union</span>
+            <span class="s0">return True</span>
+        <span class="s0">return False</span>
+
+    <span class="s2">@</span><span class="s1">staticmethod</span>
+    <span class="s0">def </span><span class="s1">get_alias_info</span><span class="s2">(</span><span class="s1">stmt</span><span class="s2">: </span><span class="s1">AssignmentStmt</span><span class="s2">) </span><span class="s1">-&gt; Tuple</span><span class="s2">[</span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">], </span><span class="s1">bool</span><span class="s2">]:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Returns a pair (alias, has_dynamic_alias), extracted from the declaration of the field defined in `stmt`. 
+ 
+        `has_dynamic_alias` is True if and only if an alias is provided, but not as a string literal. 
+        If `has_dynamic_alias` is True, `alias` will be None. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">expr </span><span class="s2">= </span><span class="s1">stmt</span><span class="s2">.</span><span class="s1">rvalue</span>
+        <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">expr</span><span class="s2">, </span><span class="s1">TempNode</span><span class="s2">):</span>
+            <span class="s3"># TempNode means annotation-only</span>
+            <span class="s0">return None</span><span class="s2">, </span><span class="s0">False</span>
+
+        <span class="s0">if not </span><span class="s2">(</span>
+            <span class="s1">isinstance</span><span class="s2">(</span><span class="s1">expr</span><span class="s2">, </span><span class="s1">CallExpr</span><span class="s2">) </span><span class="s0">and </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">expr</span><span class="s2">.</span><span class="s1">callee</span><span class="s2">, </span><span class="s1">RefExpr</span><span class="s2">) </span><span class="s0">and </span><span class="s1">expr</span><span class="s2">.</span><span class="s1">callee</span><span class="s2">.</span><span class="s1">fullname </span><span class="s2">== </span><span class="s1">FIELD_FULLNAME</span>
+        <span class="s2">):</span>
+            <span class="s3"># Assigned value is not a call to pydantic.fields.Field</span>
+            <span class="s0">return None</span><span class="s2">, </span><span class="s0">False</span>
+
+        <span class="s0">for </span><span class="s1">i</span><span class="s2">, </span><span class="s1">arg_name </span><span class="s0">in </span><span class="s1">enumerate</span><span class="s2">(</span><span class="s1">expr</span><span class="s2">.</span><span class="s1">arg_names</span><span class="s2">):</span>
+            <span class="s0">if </span><span class="s1">arg_name </span><span class="s2">!= </span><span class="s4">'alias'</span><span class="s2">:</span>
+                <span class="s0">continue</span>
+            <span class="s1">arg </span><span class="s2">= </span><span class="s1">expr</span><span class="s2">.</span><span class="s1">args</span><span class="s2">[</span><span class="s1">i</span><span class="s2">]</span>
+            <span class="s0">if </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">arg</span><span class="s2">, </span><span class="s1">StrExpr</span><span class="s2">):</span>
+                <span class="s0">return </span><span class="s1">arg</span><span class="s2">.</span><span class="s1">value</span><span class="s2">, </span><span class="s0">False</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s0">return None</span><span class="s2">, </span><span class="s0">True</span>
+        <span class="s0">return None</span><span class="s2">, </span><span class="s0">False</span>
+
+    <span class="s0">def </span><span class="s1">get_field_arguments</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">fields</span><span class="s2">: </span><span class="s1">List</span><span class="s2">[</span><span class="s4">'PydanticModelField'</span><span class="s2">], </span><span class="s1">typed</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">, </span><span class="s1">force_all_optional</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">, </span><span class="s1">use_alias</span><span class="s2">: </span><span class="s1">bool</span>
+    <span class="s2">) </span><span class="s1">-&gt; List</span><span class="s2">[</span><span class="s1">Argument</span><span class="s2">]:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Helper function used during the construction of the `__init__` and `construct` method signatures. 
+ 
+        Returns a list of mypy Argument instances for use in the generated signatures. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">info </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_ctx</span><span class="s2">.</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">info</span>
+        <span class="s1">arguments </span><span class="s2">= [</span>
+            <span class="s1">field</span><span class="s2">.</span><span class="s1">to_argument</span><span class="s2">(</span><span class="s1">info</span><span class="s2">, </span><span class="s1">typed</span><span class="s2">=</span><span class="s1">typed</span><span class="s2">, </span><span class="s1">force_optional</span><span class="s2">=</span><span class="s1">force_all_optional</span><span class="s2">, </span><span class="s1">use_alias</span><span class="s2">=</span><span class="s1">use_alias</span><span class="s2">)</span>
+            <span class="s0">for </span><span class="s1">field </span><span class="s0">in </span><span class="s1">fields</span>
+            <span class="s0">if not </span><span class="s2">(</span><span class="s1">use_alias </span><span class="s0">and </span><span class="s1">field</span><span class="s2">.</span><span class="s1">has_dynamic_alias</span><span class="s2">)</span>
+        <span class="s2">]</span>
+        <span class="s0">return </span><span class="s1">arguments</span>
+
+    <span class="s0">def </span><span class="s1">should_init_forbid_extra</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">fields</span><span class="s2">: </span><span class="s1">List</span><span class="s2">[</span><span class="s4">'PydanticModelField'</span><span class="s2">], </span><span class="s1">config</span><span class="s2">: </span><span class="s4">'ModelConfigData'</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Indicates whether the generated `__init__` should get a `**kwargs` at the end of its signature 
+ 
+        We disallow arbitrary kwargs if the extra config setting is &quot;forbid&quot;, or if the plugin config says to, 
+        *unless* a required dynamic alias is present (since then we can't determine a valid signature). 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if not </span><span class="s1">config</span><span class="s2">.</span><span class="s1">allow_population_by_field_name</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">is_dynamic_alias_present</span><span class="s2">(</span><span class="s1">fields</span><span class="s2">, </span><span class="s1">bool</span><span class="s2">(</span><span class="s1">config</span><span class="s2">.</span><span class="s1">has_alias_generator</span><span class="s2">)):</span>
+                <span class="s0">return False</span>
+        <span class="s0">if </span><span class="s1">config</span><span class="s2">.</span><span class="s1">forbid_extra</span><span class="s2">:</span>
+            <span class="s0">return True</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">plugin_config</span><span class="s2">.</span><span class="s1">init_forbid_extra</span>
+
+    <span class="s2">@</span><span class="s1">staticmethod</span>
+    <span class="s0">def </span><span class="s1">is_dynamic_alias_present</span><span class="s2">(</span><span class="s1">fields</span><span class="s2">: </span><span class="s1">List</span><span class="s2">[</span><span class="s4">'PydanticModelField'</span><span class="s2">], </span><span class="s1">has_alias_generator</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">) </span><span class="s1">-&gt; bool</span><span class="s2">:</span>
+        <span class="s6">&quot;&quot;&quot; 
+        Returns whether any fields on the model have a &quot;dynamic alias&quot;, i.e., an alias that cannot be 
+        determined during static analysis. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">for </span><span class="s1">field </span><span class="s0">in </span><span class="s1">fields</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">field</span><span class="s2">.</span><span class="s1">has_dynamic_alias</span><span class="s2">:</span>
+                <span class="s0">return True</span>
+        <span class="s0">if </span><span class="s1">has_alias_generator</span><span class="s2">:</span>
+            <span class="s0">for </span><span class="s1">field </span><span class="s0">in </span><span class="s1">fields</span><span class="s2">:</span>
+                <span class="s0">if </span><span class="s1">field</span><span class="s2">.</span><span class="s1">alias </span><span class="s0">is None</span><span class="s2">:</span>
+                    <span class="s0">return True</span>
+        <span class="s0">return False</span>
+
+
+<span class="s0">class </span><span class="s1">PydanticModelField</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">, </span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">is_required</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">, </span><span class="s1">alias</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">str</span><span class="s2">], </span><span class="s1">has_dynamic_alias</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">, </span><span class="s1">line</span><span class="s2">: </span><span class="s1">int</span><span class="s2">, </span><span class="s1">column</span><span class="s2">: </span><span class="s1">int</span>
+    <span class="s2">):</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">name </span><span class="s2">= </span><span class="s1">name</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">is_required </span><span class="s2">= </span><span class="s1">is_required</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">alias </span><span class="s2">= </span><span class="s1">alias</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">has_dynamic_alias </span><span class="s2">= </span><span class="s1">has_dynamic_alias</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">line </span><span class="s2">= </span><span class="s1">line</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">column </span><span class="s2">= </span><span class="s1">column</span>
+
+    <span class="s0">def </span><span class="s1">to_var</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">info</span><span class="s2">: </span><span class="s1">TypeInfo</span><span class="s2">, </span><span class="s1">use_alias</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">) </span><span class="s1">-&gt; Var</span><span class="s2">:</span>
+        <span class="s1">name </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">name</span>
+        <span class="s0">if </span><span class="s1">use_alias </span><span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">alias </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">name </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">alias</span>
+        <span class="s0">return </span><span class="s1">Var</span><span class="s2">(</span><span class="s1">name</span><span class="s2">, </span><span class="s1">info</span><span class="s2">[</span><span class="s1">self</span><span class="s2">.</span><span class="s1">name</span><span class="s2">].</span><span class="s1">type</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">to_argument</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">info</span><span class="s2">: </span><span class="s1">TypeInfo</span><span class="s2">, </span><span class="s1">typed</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">, </span><span class="s1">force_optional</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">, </span><span class="s1">use_alias</span><span class="s2">: </span><span class="s1">bool</span><span class="s2">) </span><span class="s1">-&gt; Argument</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">typed </span><span class="s0">and </span><span class="s1">info</span><span class="s2">[</span><span class="s1">self</span><span class="s2">.</span><span class="s1">name</span><span class="s2">].</span><span class="s1">type </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s1">type_annotation </span><span class="s2">= </span><span class="s1">info</span><span class="s2">[</span><span class="s1">self</span><span class="s2">.</span><span class="s1">name</span><span class="s2">].</span><span class="s1">type</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">type_annotation </span><span class="s2">= </span><span class="s1">AnyType</span><span class="s2">(</span><span class="s1">TypeOfAny</span><span class="s2">.</span><span class="s1">explicit</span><span class="s2">)</span>
+        <span class="s0">return </span><span class="s1">Argument</span><span class="s2">(</span>
+            <span class="s1">variable</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">to_var</span><span class="s2">(</span><span class="s1">info</span><span class="s2">, </span><span class="s1">use_alias</span><span class="s2">),</span>
+            <span class="s1">type_annotation</span><span class="s2">=</span><span class="s1">type_annotation</span><span class="s2">,</span>
+            <span class="s1">initializer</span><span class="s2">=</span><span class="s0">None</span><span class="s2">,</span>
+            <span class="s1">kind</span><span class="s2">=</span><span class="s1">ARG_NAMED_OPT </span><span class="s0">if </span><span class="s1">force_optional </span><span class="s0">or not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">is_required </span><span class="s0">else </span><span class="s1">ARG_NAMED</span><span class="s2">,</span>
+        <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">serialize</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; JsonDict</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__dict__</span>
+
+    <span class="s2">@</span><span class="s1">classmethod</span>
+    <span class="s0">def </span><span class="s1">deserialize</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, </span><span class="s1">info</span><span class="s2">: </span><span class="s1">TypeInfo</span><span class="s2">, </span><span class="s1">data</span><span class="s2">: </span><span class="s1">JsonDict</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s4">'PydanticModelField'</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">cls</span><span class="s2">(**</span><span class="s1">data</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">ModelConfigData</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">forbid_extra</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">allow_mutation</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">frozen</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">orm_mode</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">allow_population_by_field_name</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">has_alias_generator</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">bool</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">):</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">forbid_extra </span><span class="s2">= </span><span class="s1">forbid_extra</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">allow_mutation </span><span class="s2">= </span><span class="s1">allow_mutation</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">frozen </span><span class="s2">= </span><span class="s1">frozen</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">orm_mode </span><span class="s2">= </span><span class="s1">orm_mode</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">allow_population_by_field_name </span><span class="s2">= </span><span class="s1">allow_population_by_field_name</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">has_alias_generator </span><span class="s2">= </span><span class="s1">has_alias_generator</span>
+
+    <span class="s0">def </span><span class="s1">set_values_dict</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]:</span>
+        <span class="s0">return </span><span class="s2">{</span><span class="s1">k</span><span class="s2">: </span><span class="s1">v </span><span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">__dict__</span><span class="s2">.</span><span class="s1">items</span><span class="s2">() </span><span class="s0">if </span><span class="s1">v </span><span class="s0">is not None</span><span class="s2">}</span>
+
+    <span class="s0">def </span><span class="s1">update</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">config</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s4">'ModelConfigData'</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">config </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">return</span>
+        <span class="s0">for </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">config</span><span class="s2">.</span><span class="s1">set_values_dict</span><span class="s2">().</span><span class="s1">items</span><span class="s2">():</span>
+            <span class="s1">setattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">k</span><span class="s2">, </span><span class="s1">v</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">setdefault</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">) </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s1">setattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">, </span><span class="s1">value</span><span class="s2">)</span>
+
+
+<span class="s1">ERROR_ORM </span><span class="s2">= </span><span class="s1">ErrorCode</span><span class="s2">(</span><span class="s4">'pydantic-orm'</span><span class="s2">, </span><span class="s4">'Invalid from_orm call'</span><span class="s2">, </span><span class="s4">'Pydantic'</span><span class="s2">)</span>
+<span class="s1">ERROR_CONFIG </span><span class="s2">= </span><span class="s1">ErrorCode</span><span class="s2">(</span><span class="s4">'pydantic-config'</span><span class="s2">, </span><span class="s4">'Invalid config value'</span><span class="s2">, </span><span class="s4">'Pydantic'</span><span class="s2">)</span>
+<span class="s1">ERROR_ALIAS </span><span class="s2">= </span><span class="s1">ErrorCode</span><span class="s2">(</span><span class="s4">'pydantic-alias'</span><span class="s2">, </span><span class="s4">'Dynamic alias disallowed'</span><span class="s2">, </span><span class="s4">'Pydantic'</span><span class="s2">)</span>
+<span class="s1">ERROR_UNEXPECTED </span><span class="s2">= </span><span class="s1">ErrorCode</span><span class="s2">(</span><span class="s4">'pydantic-unexpected'</span><span class="s2">, </span><span class="s4">'Unexpected behavior'</span><span class="s2">, </span><span class="s4">'Pydantic'</span><span class="s2">)</span>
+<span class="s1">ERROR_UNTYPED </span><span class="s2">= </span><span class="s1">ErrorCode</span><span class="s2">(</span><span class="s4">'pydantic-field'</span><span class="s2">, </span><span class="s4">'Untyped field disallowed'</span><span class="s2">, </span><span class="s4">'Pydantic'</span><span class="s2">)</span>
+<span class="s1">ERROR_FIELD_DEFAULTS </span><span class="s2">= </span><span class="s1">ErrorCode</span><span class="s2">(</span><span class="s4">'pydantic-field'</span><span class="s2">, </span><span class="s4">'Invalid Field defaults'</span><span class="s2">, </span><span class="s4">'Pydantic'</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">error_from_orm</span><span class="s2">(</span><span class="s1">model_name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">api</span><span class="s2">: </span><span class="s1">CheckerPluginInterface</span><span class="s2">, </span><span class="s1">context</span><span class="s2">: </span><span class="s1">Context</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s1">api</span><span class="s2">.</span><span class="s1">fail</span><span class="s2">(</span><span class="s4">f'&quot;</span><span class="s0">{</span><span class="s1">model_name</span><span class="s0">}</span><span class="s4">&quot; does not have orm_mode=True'</span><span class="s2">, </span><span class="s1">context</span><span class="s2">, </span><span class="s1">code</span><span class="s2">=</span><span class="s1">ERROR_ORM</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">error_invalid_config_value</span><span class="s2">(</span><span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">api</span><span class="s2">: </span><span class="s1">SemanticAnalyzerPluginInterface</span><span class="s2">, </span><span class="s1">context</span><span class="s2">: </span><span class="s1">Context</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s1">api</span><span class="s2">.</span><span class="s1">fail</span><span class="s2">(</span><span class="s4">f'Invalid value for &quot;Config.</span><span class="s0">{</span><span class="s1">name</span><span class="s0">}</span><span class="s4">&quot;'</span><span class="s2">, </span><span class="s1">context</span><span class="s2">, </span><span class="s1">code</span><span class="s2">=</span><span class="s1">ERROR_CONFIG</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">error_required_dynamic_aliases</span><span class="s2">(</span><span class="s1">api</span><span class="s2">: </span><span class="s1">SemanticAnalyzerPluginInterface</span><span class="s2">, </span><span class="s1">context</span><span class="s2">: </span><span class="s1">Context</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s1">api</span><span class="s2">.</span><span class="s1">fail</span><span class="s2">(</span><span class="s4">'Required dynamic aliases disallowed'</span><span class="s2">, </span><span class="s1">context</span><span class="s2">, </span><span class="s1">code</span><span class="s2">=</span><span class="s1">ERROR_ALIAS</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">error_unexpected_behavior</span><span class="s2">(</span>
+    <span class="s1">detail</span><span class="s2">: </span><span class="s1">str</span><span class="s2">, </span><span class="s1">api</span><span class="s2">: </span><span class="s1">Union</span><span class="s2">[</span><span class="s1">CheckerPluginInterface</span><span class="s2">, </span><span class="s1">SemanticAnalyzerPluginInterface</span><span class="s2">], </span><span class="s1">context</span><span class="s2">: </span><span class="s1">Context</span>
+<span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:  </span><span class="s3"># pragma: no cover</span>
+    <span class="s3"># Can't think of a good way to test this, but I confirmed it renders as desired by adding to a non-error path</span>
+    <span class="s1">link </span><span class="s2">= </span><span class="s4">'https://github.com/pydantic/pydantic/issues/new/choose'</span>
+    <span class="s1">full_message </span><span class="s2">= </span><span class="s4">f'The pydantic mypy plugin ran into unexpected behavior: </span><span class="s0">{</span><span class="s1">detail</span><span class="s0">}\n</span><span class="s4">'</span>
+    <span class="s1">full_message </span><span class="s2">+= </span><span class="s4">f'Please consider reporting this bug at </span><span class="s0">{</span><span class="s1">link</span><span class="s0">} </span><span class="s4">so we can try to fix it!'</span>
+    <span class="s1">api</span><span class="s2">.</span><span class="s1">fail</span><span class="s2">(</span><span class="s1">full_message</span><span class="s2">, </span><span class="s1">context</span><span class="s2">, </span><span class="s1">code</span><span class="s2">=</span><span class="s1">ERROR_UNEXPECTED</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">error_untyped_fields</span><span class="s2">(</span><span class="s1">api</span><span class="s2">: </span><span class="s1">SemanticAnalyzerPluginInterface</span><span class="s2">, </span><span class="s1">context</span><span class="s2">: </span><span class="s1">Context</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s1">api</span><span class="s2">.</span><span class="s1">fail</span><span class="s2">(</span><span class="s4">'Untyped fields disallowed'</span><span class="s2">, </span><span class="s1">context</span><span class="s2">, </span><span class="s1">code</span><span class="s2">=</span><span class="s1">ERROR_UNTYPED</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">error_default_and_default_factory_specified</span><span class="s2">(</span><span class="s1">api</span><span class="s2">: </span><span class="s1">CheckerPluginInterface</span><span class="s2">, </span><span class="s1">context</span><span class="s2">: </span><span class="s1">Context</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s1">api</span><span class="s2">.</span><span class="s1">fail</span><span class="s2">(</span><span class="s4">'Field default and default_factory cannot be specified together'</span><span class="s2">, </span><span class="s1">context</span><span class="s2">, </span><span class="s1">code</span><span class="s2">=</span><span class="s1">ERROR_FIELD_DEFAULTS</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">add_method</span><span class="s2">(</span>
+    <span class="s1">ctx</span><span class="s2">: </span><span class="s1">ClassDefContext</span><span class="s2">,</span>
+    <span class="s1">name</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+    <span class="s1">args</span><span class="s2">: </span><span class="s1">List</span><span class="s2">[</span><span class="s1">Argument</span><span class="s2">],</span>
+    <span class="s1">return_type</span><span class="s2">: </span><span class="s1">Type</span><span class="s2">,</span>
+    <span class="s1">self_type</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">Type</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">tvar_def</span><span class="s2">: </span><span class="s1">Optional</span><span class="s2">[</span><span class="s1">TypeVarDef</span><span class="s2">] = </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">is_classmethod</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s1">is_new</span><span class="s2">: </span><span class="s1">bool </span><span class="s2">= </span><span class="s0">False</span><span class="s2">,</span>
+    <span class="s3"># is_staticmethod: bool = False,</span>
+<span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Adds a new method to a class. 
+ 
+    This can be dropped if/when https://github.com/python/mypy/issues/7301 is merged 
+    &quot;&quot;&quot;</span>
+    <span class="s1">info </span><span class="s2">= </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">info</span>
+
+    <span class="s3"># First remove any previously generated methods with the same name</span>
+    <span class="s3"># to avoid clashes and problems in the semantic analyzer.</span>
+    <span class="s0">if </span><span class="s1">name </span><span class="s0">in </span><span class="s1">info</span><span class="s2">.</span><span class="s1">names</span><span class="s2">:</span>
+        <span class="s1">sym </span><span class="s2">= </span><span class="s1">info</span><span class="s2">.</span><span class="s1">names</span><span class="s2">[</span><span class="s1">name</span><span class="s2">]</span>
+        <span class="s0">if </span><span class="s1">sym</span><span class="s2">.</span><span class="s1">plugin_generated </span><span class="s0">and </span><span class="s1">isinstance</span><span class="s2">(</span><span class="s1">sym</span><span class="s2">.</span><span class="s1">node</span><span class="s2">, </span><span class="s1">FuncDef</span><span class="s2">):</span>
+            <span class="s1">ctx</span><span class="s2">.</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">defs</span><span class="s2">.</span><span class="s1">body</span><span class="s2">.</span><span class="s1">remove</span><span class="s2">(</span><span class="s1">sym</span><span class="s2">.</span><span class="s1">node</span><span class="s2">)  </span><span class="s3"># pragma: no cover</span>
+
+    <span class="s1">self_type </span><span class="s2">= </span><span class="s1">self_type </span><span class="s0">or </span><span class="s1">fill_typevars</span><span class="s2">(</span><span class="s1">info</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">is_classmethod </span><span class="s0">or </span><span class="s1">is_new</span><span class="s2">:</span>
+        <span class="s1">first </span><span class="s2">= [</span><span class="s1">Argument</span><span class="s2">(</span><span class="s1">Var</span><span class="s2">(</span><span class="s4">'_cls'</span><span class="s2">), </span><span class="s1">TypeType</span><span class="s2">.</span><span class="s1">make_normalized</span><span class="s2">(</span><span class="s1">self_type</span><span class="s2">), </span><span class="s0">None</span><span class="s2">, </span><span class="s1">ARG_POS</span><span class="s2">)]</span>
+    <span class="s3"># elif is_staticmethod:</span>
+    <span class="s3">#     first = []</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s1">self_type </span><span class="s2">= </span><span class="s1">self_type </span><span class="s0">or </span><span class="s1">fill_typevars</span><span class="s2">(</span><span class="s1">info</span><span class="s2">)</span>
+        <span class="s1">first </span><span class="s2">= [</span><span class="s1">Argument</span><span class="s2">(</span><span class="s1">Var</span><span class="s2">(</span><span class="s4">'__pydantic_self__'</span><span class="s2">), </span><span class="s1">self_type</span><span class="s2">, </span><span class="s0">None</span><span class="s2">, </span><span class="s1">ARG_POS</span><span class="s2">)]</span>
+    <span class="s1">args </span><span class="s2">= </span><span class="s1">first </span><span class="s2">+ </span><span class="s1">args</span>
+    <span class="s1">arg_types</span><span class="s2">, </span><span class="s1">arg_names</span><span class="s2">, </span><span class="s1">arg_kinds </span><span class="s2">= [], [], []</span>
+    <span class="s0">for </span><span class="s1">arg </span><span class="s0">in </span><span class="s1">args</span><span class="s2">:</span>
+        <span class="s0">assert </span><span class="s1">arg</span><span class="s2">.</span><span class="s1">type_annotation</span><span class="s2">, </span><span class="s4">'All arguments must be fully typed.'</span>
+        <span class="s1">arg_types</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">arg</span><span class="s2">.</span><span class="s1">type_annotation</span><span class="s2">)</span>
+        <span class="s1">arg_names</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">get_name</span><span class="s2">(</span><span class="s1">arg</span><span class="s2">.</span><span class="s1">variable</span><span class="s2">))</span>
+        <span class="s1">arg_kinds</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">arg</span><span class="s2">.</span><span class="s1">kind</span><span class="s2">)</span>
+
+    <span class="s1">function_type </span><span class="s2">= </span><span class="s1">ctx</span><span class="s2">.</span><span class="s1">api</span><span class="s2">.</span><span class="s1">named_type</span><span class="s2">(</span><span class="s4">f'</span><span class="s0">{</span><span class="s1">BUILTINS_NAME</span><span class="s0">}</span><span class="s4">.function'</span><span class="s2">)</span>
+    <span class="s1">signature </span><span class="s2">= </span><span class="s1">CallableType</span><span class="s2">(</span><span class="s1">arg_types</span><span class="s2">, </span><span class="s1">arg_kinds</span><span class="s2">, </span><span class="s1">arg_names</span><span class="s2">, </span><span class="s1">return_type</span><span class="s2">, </span><span class="s1">function_type</span><span class="s2">)</span>
+    <span class="s0">if </span><span class="s1">tvar_def</span><span class="s2">:</span>
+        <span class="s1">signature</span><span class="s2">.</span><span class="s1">variables </span><span class="s2">= [</span><span class="s1">tvar_def</span><span class="s2">]</span>
+
+    <span class="s1">func </span><span class="s2">= </span><span class="s1">FuncDef</span><span class="s2">(</span><span class="s1">name</span><span class="s2">, </span><span class="s1">args</span><span class="s2">, </span><span class="s1">Block</span><span class="s2">([</span><span class="s1">PassStmt</span><span class="s2">()]))</span>
+    <span class="s1">func</span><span class="s2">.</span><span class="s1">info </span><span class="s2">= </span><span class="s1">info</span>
+    <span class="s1">func</span><span class="s2">.</span><span class="s1">type </span><span class="s2">= </span><span class="s1">set_callable_name</span><span class="s2">(</span><span class="s1">signature</span><span class="s2">, </span><span class="s1">func</span><span class="s2">)</span>
+    <span class="s1">func</span><span class="s2">.</span><span class="s1">is_class </span><span class="s2">= </span><span class="s1">is_classmethod</span>
+    <span class="s3"># func.is_static = is_staticmethod</span>
+    <span class="s1">func</span><span class="s2">.</span><span class="s1">_fullname </span><span class="s2">= </span><span class="s1">get_fullname</span><span class="s2">(</span><span class="s1">info</span><span class="s2">) + </span><span class="s4">'.' </span><span class="s2">+ </span><span class="s1">name</span>
+    <span class="s1">func</span><span class="s2">.</span><span class="s1">line </span><span class="s2">= </span><span class="s1">info</span><span class="s2">.</span><span class="s1">line</span>
+
+    <span class="s3"># NOTE: we would like the plugin generated node to dominate, but we still</span>
+    <span class="s3"># need to keep any existing definitions so they get semantically analyzed.</span>
+    <span class="s0">if </span><span class="s1">name </span><span class="s0">in </span><span class="s1">info</span><span class="s2">.</span><span class="s1">names</span><span class="s2">:</span>
+        <span class="s3"># Get a nice unique name instead.</span>
+        <span class="s1">r_name </span><span class="s2">= </span><span class="s1">get_unique_redefinition_name</span><span class="s2">(</span><span class="s1">name</span><span class="s2">, </span><span class="s1">info</span><span class="s2">.</span><span class="s1">names</span><span class="s2">)</span>
+        <span class="s1">info</span><span class="s2">.</span><span class="s1">names</span><span class="s2">[</span><span class="s1">r_name</span><span class="s2">] = </span><span class="s1">info</span><span class="s2">.</span><span class="s1">names</span><span class="s2">[</span><span class="s1">name</span><span class="s2">]</span>
+
+    <span class="s0">if </span><span class="s1">is_classmethod</span><span class="s2">:  </span><span class="s3"># or is_staticmethod:</span>
+        <span class="s1">func</span><span class="s2">.</span><span class="s1">is_decorated </span><span class="s2">= </span><span class="s0">True</span>
+        <span class="s1">v </span><span class="s2">= </span><span class="s1">Var</span><span class="s2">(</span><span class="s1">name</span><span class="s2">, </span><span class="s1">func</span><span class="s2">.</span><span class="s1">type</span><span class="s2">)</span>
+        <span class="s1">v</span><span class="s2">.</span><span class="s1">info </span><span class="s2">= </span><span class="s1">info</span>
+        <span class="s1">v</span><span class="s2">.</span><span class="s1">_fullname </span><span class="s2">= </span><span class="s1">func</span><span class="s2">.</span><span class="s1">_fullname</span>
+        <span class="s3"># if is_classmethod:</span>
+        <span class="s1">v</span><span class="s2">.</span><span class="s1">is_classmethod </span><span class="s2">= </span><span class="s0">True</span>
+        <span class="s1">dec </span><span class="s2">= </span><span class="s1">Decorator</span><span class="s2">(</span><span class="s1">func</span><span class="s2">, [</span><span class="s1">NameExpr</span><span class="s2">(</span><span class="s4">'classmethod'</span><span class="s2">)], </span><span class="s1">v</span><span class="s2">)</span>
+        <span class="s3"># else:</span>
+        <span class="s3">#     v.is_staticmethod = True</span>
+        <span class="s3">#     dec = Decorator(func, [NameExpr('staticmethod')], v)</span>
+
+        <span class="s1">dec</span><span class="s2">.</span><span class="s1">line </span><span class="s2">= </span><span class="s1">info</span><span class="s2">.</span><span class="s1">line</span>
+        <span class="s1">sym </span><span class="s2">= </span><span class="s1">SymbolTableNode</span><span class="s2">(</span><span class="s1">MDEF</span><span class="s2">, </span><span class="s1">dec</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s1">sym </span><span class="s2">= </span><span class="s1">SymbolTableNode</span><span class="s2">(</span><span class="s1">MDEF</span><span class="s2">, </span><span class="s1">func</span><span class="s2">)</span>
+    <span class="s1">sym</span><span class="s2">.</span><span class="s1">plugin_generated </span><span class="s2">= </span><span class="s0">True</span>
+
+    <span class="s1">info</span><span class="s2">.</span><span class="s1">names</span><span class="s2">[</span><span class="s1">name</span><span class="s2">] = </span><span class="s1">sym</span>
+    <span class="s1">info</span><span class="s2">.</span><span class="s1">defn</span><span class="s2">.</span><span class="s1">defs</span><span class="s2">.</span><span class="s1">body</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">func</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">get_fullname</span><span class="s2">(</span><span class="s1">x</span><span class="s2">: </span><span class="s1">Union</span><span class="s2">[</span><span class="s1">FuncBase</span><span class="s2">, </span><span class="s1">SymbolNode</span><span class="s2">]) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Used for compatibility with mypy 0.740; can be dropped once support for 0.740 is dropped. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">fn </span><span class="s2">= </span><span class="s1">x</span><span class="s2">.</span><span class="s1">fullname</span>
+    <span class="s0">if </span><span class="s1">callable</span><span class="s2">(</span><span class="s1">fn</span><span class="s2">):  </span><span class="s3"># pragma: no cover</span>
+        <span class="s0">return </span><span class="s1">fn</span><span class="s2">()</span>
+    <span class="s0">return </span><span class="s1">fn</span>
+
+
+<span class="s0">def </span><span class="s1">get_name</span><span class="s2">(</span><span class="s1">x</span><span class="s2">: </span><span class="s1">Union</span><span class="s2">[</span><span class="s1">FuncBase</span><span class="s2">, </span><span class="s1">SymbolNode</span><span class="s2">]) </span><span class="s1">-&gt; str</span><span class="s2">:</span>
+    <span class="s6">&quot;&quot;&quot; 
+    Used for compatibility with mypy 0.740; can be dropped once support for 0.740 is dropped. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">fn </span><span class="s2">= </span><span class="s1">x</span><span class="s2">.</span><span class="s1">name</span>
+    <span class="s0">if </span><span class="s1">callable</span><span class="s2">(</span><span class="s1">fn</span><span class="s2">):  </span><span class="s3"># pragma: no cover</span>
+        <span class="s0">return </span><span class="s1">fn</span><span class="s2">()</span>
+    <span class="s0">return </span><span class="s1">fn</span>
+
+
+<span class="s0">def </span><span class="s1">parse_toml</span><span class="s2">(</span><span class="s1">config_file</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; Optional</span><span class="s2">[</span><span class="s1">Dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]]:</span>
+    <span class="s0">if not </span><span class="s1">config_file</span><span class="s2">.</span><span class="s1">endswith</span><span class="s2">(</span><span class="s4">'.toml'</span><span class="s2">):</span>
+        <span class="s0">return None</span>
+
+    <span class="s1">read_mode </span><span class="s2">= </span><span class="s4">'rb'</span>
+    <span class="s0">if </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">version_info </span><span class="s2">&gt;= (</span><span class="s5">3</span><span class="s2">, </span><span class="s5">11</span><span class="s2">):</span>
+        <span class="s0">import </span><span class="s1">tomllib </span><span class="s0">as </span><span class="s1">toml_</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">import </span><span class="s1">tomli </span><span class="s0">as </span><span class="s1">toml_</span>
+        <span class="s0">except </span><span class="s1">ImportError</span><span class="s2">:</span>
+            <span class="s3"># older versions of mypy have toml as a dependency, not tomli</span>
+            <span class="s1">read_mode </span><span class="s2">= </span><span class="s4">'r'</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s0">import </span><span class="s1">toml </span><span class="s0">as </span><span class="s1">toml_  </span><span class="s3"># type: ignore[no-redef]</span>
+            <span class="s0">except </span><span class="s1">ImportError</span><span class="s2">:  </span><span class="s3"># pragma: no cover</span>
+                <span class="s0">import </span><span class="s1">warnings</span>
+
+                <span class="s1">warnings</span><span class="s2">.</span><span class="s1">warn</span><span class="s2">(</span><span class="s4">'No TOML parser installed, cannot read configuration from `pyproject.toml`.'</span><span class="s2">)</span>
+                <span class="s0">return None</span>
+
+    <span class="s0">with </span><span class="s1">open</span><span class="s2">(</span><span class="s1">config_file</span><span class="s2">, </span><span class="s1">read_mode</span><span class="s2">) </span><span class="s0">as </span><span class="s1">rf</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">toml_</span><span class="s2">.</span><span class="s1">load</span><span class="s2">(</span><span class="s1">rf</span><span class="s2">)  </span><span class="s3"># type: ignore[arg-type]</span>
+</pre>
+</body>
+</html>

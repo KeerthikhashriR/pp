@@ -1,0 +1,77 @@
+<html>
+<head>
+<title>flow_control.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #a5c261;}
+.s4 { color: #2aacb8;}
+.s5 { color: #7a7e85;}
+.s6 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+flow_control.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">asyncio</span>
+
+<span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">_types </span><span class="s0">import </span><span class="s1">ASGIReceiveCallable</span><span class="s2">, </span><span class="s1">ASGISendCallable</span><span class="s2">, </span><span class="s1">Scope</span>
+
+<span class="s1">CLOSE_HEADER </span><span class="s2">= (</span><span class="s3">b&quot;connection&quot;</span><span class="s2">, </span><span class="s3">b&quot;close&quot;</span><span class="s2">)</span>
+
+<span class="s1">HIGH_WATER_LIMIT </span><span class="s2">= </span><span class="s4">65536</span>
+
+
+<span class="s0">class </span><span class="s1">FlowControl</span><span class="s2">:</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">transport</span><span class="s2">: </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">Transport</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_transport </span><span class="s2">= </span><span class="s1">transport</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">read_paused </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">write_paused </span><span class="s2">= </span><span class="s0">False</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_is_writable_event </span><span class="s2">= </span><span class="s1">asyncio</span><span class="s2">.</span><span class="s1">Event</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_is_writable_event</span><span class="s2">.</span><span class="s1">set</span><span class="s2">()</span>
+
+    <span class="s0">async def </span><span class="s1">drain</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">await </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_is_writable_event</span><span class="s2">.</span><span class="s1">wait</span><span class="s2">()  </span><span class="s5"># pragma: full coverage</span>
+
+    <span class="s0">def </span><span class="s1">pause_reading</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">read_paused</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">read_paused </span><span class="s2">= </span><span class="s0">True</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_transport</span><span class="s2">.</span><span class="s1">pause_reading</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">resume_reading</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">read_paused</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">read_paused </span><span class="s2">= </span><span class="s0">False</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_transport</span><span class="s2">.</span><span class="s1">resume_reading</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">pause_writing</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">write_paused</span><span class="s2">:  </span><span class="s5"># pragma: full coverage</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">write_paused </span><span class="s2">= </span><span class="s0">True</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_is_writable_event</span><span class="s2">.</span><span class="s1">clear</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">resume_writing</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">write_paused</span><span class="s2">:  </span><span class="s5"># pragma: full coverage</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">write_paused </span><span class="s2">= </span><span class="s0">False</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">_is_writable_event</span><span class="s2">.</span><span class="s1">set</span><span class="s2">()</span>
+
+
+<span class="s0">async def </span><span class="s1">service_unavailable</span><span class="s2">(</span><span class="s1">scope</span><span class="s2">: </span><span class="s1">Scope</span><span class="s2">, </span><span class="s1">receive</span><span class="s2">: </span><span class="s1">ASGIReceiveCallable</span><span class="s2">, </span><span class="s1">send</span><span class="s2">: </span><span class="s1">ASGISendCallable</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s0">await </span><span class="s1">send</span><span class="s2">(</span>
+        <span class="s2">{</span>
+            <span class="s6">&quot;type&quot;</span><span class="s2">: </span><span class="s6">&quot;http.response.start&quot;</span><span class="s2">,</span>
+            <span class="s6">&quot;status&quot;</span><span class="s2">: </span><span class="s4">503</span><span class="s2">,</span>
+            <span class="s6">&quot;headers&quot;</span><span class="s2">: [</span>
+                <span class="s2">(</span><span class="s3">b&quot;content-type&quot;</span><span class="s2">, </span><span class="s3">b&quot;text/plain; charset=utf-8&quot;</span><span class="s2">),</span>
+                <span class="s2">(</span><span class="s3">b&quot;content-length&quot;</span><span class="s2">, </span><span class="s3">b&quot;19&quot;</span><span class="s2">),</span>
+                <span class="s2">(</span><span class="s3">b&quot;connection&quot;</span><span class="s2">, </span><span class="s3">b&quot;close&quot;</span><span class="s2">),</span>
+            <span class="s2">],</span>
+        <span class="s2">}</span>
+    <span class="s2">)</span>
+    <span class="s0">await </span><span class="s1">send</span><span class="s2">({</span><span class="s6">&quot;type&quot;</span><span class="s2">: </span><span class="s6">&quot;http.response.body&quot;</span><span class="s2">, </span><span class="s6">&quot;body&quot;</span><span class="s2">: </span><span class="s3">b&quot;Service Unavailable&quot;</span><span class="s2">, </span><span class="s6">&quot;more_body&quot;</span><span class="s2">: </span><span class="s0">False</span><span class="s2">})</span>
+</pre>
+</body>
+</html>

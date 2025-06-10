@@ -1,0 +1,494 @@
+<html>
+<head>
+<title>_reloader.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #7a7e85;}
+.s4 { color: #6aab73;}
+.s5 { color: #5f826b; font-style: italic;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_reloader.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">fnmatch</span>
+<span class="s0">import </span><span class="s1">os</span>
+<span class="s0">import </span><span class="s1">subprocess</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">import </span><span class="s1">threading</span>
+<span class="s0">import </span><span class="s1">time</span>
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+<span class="s0">from </span><span class="s1">itertools </span><span class="s0">import </span><span class="s1">chain</span>
+<span class="s0">from </span><span class="s1">pathlib </span><span class="s0">import </span><span class="s1">PurePath</span>
+
+<span class="s0">from </span><span class="s2">.</span><span class="s1">_internal </span><span class="s0">import </span><span class="s1">_log</span>
+
+<span class="s3"># The various system prefixes where imports are found. Base values are</span>
+<span class="s3"># different when running in a virtualenv. All reloaders will ignore the</span>
+<span class="s3"># base paths (usually the system installation). The stat reloader won't</span>
+<span class="s3"># scan the virtualenv paths, it will only include modules that are</span>
+<span class="s3"># already imported.</span>
+<span class="s1">_ignore_always </span><span class="s2">= </span><span class="s1">tuple</span><span class="s2">({</span><span class="s1">sys</span><span class="s2">.</span><span class="s1">base_prefix</span><span class="s2">, </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">base_exec_prefix</span><span class="s2">})</span>
+<span class="s1">prefix </span><span class="s2">= {*</span><span class="s1">_ignore_always</span><span class="s2">, </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">prefix</span><span class="s2">, </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">exec_prefix</span><span class="s2">}</span>
+
+<span class="s0">if </span><span class="s1">hasattr</span><span class="s2">(</span><span class="s1">sys</span><span class="s2">, </span><span class="s4">&quot;real_prefix&quot;</span><span class="s2">):</span>
+    <span class="s3"># virtualenv &lt; 20</span>
+    <span class="s1">prefix</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">sys</span><span class="s2">.</span><span class="s1">real_prefix</span><span class="s2">)</span>
+
+<span class="s1">_stat_ignore_scan </span><span class="s2">= </span><span class="s1">tuple</span><span class="s2">(</span><span class="s1">prefix</span><span class="s2">)</span>
+<span class="s0">del </span><span class="s1">prefix</span>
+<span class="s1">_ignore_common_dirs </span><span class="s2">= {</span>
+    <span class="s4">&quot;__pycache__&quot;</span><span class="s2">,</span>
+    <span class="s4">&quot;.git&quot;</span><span class="s2">,</span>
+    <span class="s4">&quot;.hg&quot;</span><span class="s2">,</span>
+    <span class="s4">&quot;.tox&quot;</span><span class="s2">,</span>
+    <span class="s4">&quot;.nox&quot;</span><span class="s2">,</span>
+    <span class="s4">&quot;.pytest_cache&quot;</span><span class="s2">,</span>
+    <span class="s4">&quot;.mypy_cache&quot;</span><span class="s2">,</span>
+<span class="s2">}</span>
+
+
+<span class="s0">def </span><span class="s1">_iter_module_paths</span><span class="s2">() </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Iterator</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s5">&quot;&quot;&quot;Find the filesystem paths associated with imported modules.&quot;&quot;&quot;</span>
+    <span class="s3"># List is in case the value is modified by the app while updating.</span>
+    <span class="s0">for </span><span class="s1">module </span><span class="s0">in </span><span class="s1">list</span><span class="s2">(</span><span class="s1">sys</span><span class="s2">.</span><span class="s1">modules</span><span class="s2">.</span><span class="s1">values</span><span class="s2">()):</span>
+        <span class="s1">name </span><span class="s2">= </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">module</span><span class="s2">, </span><span class="s4">&quot;__file__&quot;</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">name </span><span class="s0">is None or </span><span class="s1">name</span><span class="s2">.</span><span class="s1">startswith</span><span class="s2">(</span><span class="s1">_ignore_always</span><span class="s2">):</span>
+            <span class="s0">continue</span>
+
+        <span class="s0">while not </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">isfile</span><span class="s2">(</span><span class="s1">name</span><span class="s2">):</span>
+            <span class="s3"># Zip file, find the base file without the module path.</span>
+            <span class="s1">old </span><span class="s2">= </span><span class="s1">name</span>
+            <span class="s1">name </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">dirname</span><span class="s2">(</span><span class="s1">name</span><span class="s2">)</span>
+
+            <span class="s0">if </span><span class="s1">name </span><span class="s2">== </span><span class="s1">old</span><span class="s2">:  </span><span class="s3"># skip if it was all directories somehow</span>
+                <span class="s0">break</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s0">yield </span><span class="s1">name</span>
+
+
+<span class="s0">def </span><span class="s1">_remove_by_pattern</span><span class="s2">(</span><span class="s1">paths</span><span class="s2">: </span><span class="s1">set</span><span class="s2">[</span><span class="s1">str</span><span class="s2">], </span><span class="s1">exclude_patterns</span><span class="s2">: </span><span class="s1">set</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s0">for </span><span class="s1">pattern </span><span class="s0">in </span><span class="s1">exclude_patterns</span><span class="s2">:</span>
+        <span class="s1">paths</span><span class="s2">.</span><span class="s1">difference_update</span><span class="s2">(</span><span class="s1">fnmatch</span><span class="s2">.</span><span class="s1">filter</span><span class="s2">(</span><span class="s1">paths</span><span class="s2">, </span><span class="s1">pattern</span><span class="s2">))</span>
+
+
+<span class="s0">def </span><span class="s1">_find_stat_paths</span><span class="s2">(</span>
+    <span class="s1">extra_files</span><span class="s2">: </span><span class="s1">set</span><span class="s2">[</span><span class="s1">str</span><span class="s2">], </span><span class="s1">exclude_patterns</span><span class="s2">: </span><span class="s1">set</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]</span>
+<span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s5">&quot;&quot;&quot;Find paths for the stat reloader to watch. Returns imported 
+    module files, Python files under non-system paths. Extra files and 
+    Python files under extra directories can also be scanned. 
+ 
+    System paths have to be excluded for efficiency. Non-system paths, 
+    such as a project root or ``sys.path.insert``, should be the paths 
+    of interest to the user anyway. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">paths </span><span class="s2">= </span><span class="s1">set</span><span class="s2">()</span>
+
+    <span class="s0">for </span><span class="s1">path </span><span class="s0">in </span><span class="s1">chain</span><span class="s2">(</span><span class="s1">list</span><span class="s2">(</span><span class="s1">sys</span><span class="s2">.</span><span class="s1">path</span><span class="s2">), </span><span class="s1">extra_files</span><span class="s2">):</span>
+        <span class="s1">path </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">path</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">isfile</span><span class="s2">(</span><span class="s1">path</span><span class="s2">):</span>
+            <span class="s3"># zip file on sys.path, or extra file</span>
+            <span class="s1">paths</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">path</span><span class="s2">)</span>
+            <span class="s0">continue</span>
+
+        <span class="s1">parent_has_py </span><span class="s2">= {</span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">dirname</span><span class="s2">(</span><span class="s1">path</span><span class="s2">): </span><span class="s0">True</span><span class="s2">}</span>
+
+        <span class="s0">for </span><span class="s1">root</span><span class="s2">, </span><span class="s1">dirs</span><span class="s2">, </span><span class="s1">files </span><span class="s0">in </span><span class="s1">os</span><span class="s2">.</span><span class="s1">walk</span><span class="s2">(</span><span class="s1">path</span><span class="s2">):</span>
+            <span class="s3"># Optimizations: ignore system prefixes, __pycache__ will</span>
+            <span class="s3"># have a py or pyc module at the import path, ignore some</span>
+            <span class="s3"># common known dirs such as version control and tool caches.</span>
+            <span class="s0">if </span><span class="s2">(</span>
+                <span class="s1">root</span><span class="s2">.</span><span class="s1">startswith</span><span class="s2">(</span><span class="s1">_stat_ignore_scan</span><span class="s2">)</span>
+                <span class="s0">or </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">basename</span><span class="s2">(</span><span class="s1">root</span><span class="s2">) </span><span class="s0">in </span><span class="s1">_ignore_common_dirs</span>
+            <span class="s2">):</span>
+                <span class="s1">dirs</span><span class="s2">.</span><span class="s1">clear</span><span class="s2">()</span>
+                <span class="s0">continue</span>
+
+            <span class="s1">has_py </span><span class="s2">= </span><span class="s0">False</span>
+
+            <span class="s0">for </span><span class="s1">name </span><span class="s0">in </span><span class="s1">files</span><span class="s2">:</span>
+                <span class="s0">if </span><span class="s1">name</span><span class="s2">.</span><span class="s1">endswith</span><span class="s2">((</span><span class="s4">&quot;.py&quot;</span><span class="s2">, </span><span class="s4">&quot;.pyc&quot;</span><span class="s2">)):</span>
+                    <span class="s1">has_py </span><span class="s2">= </span><span class="s0">True</span>
+                    <span class="s1">paths</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(</span><span class="s1">root</span><span class="s2">, </span><span class="s1">name</span><span class="s2">))</span>
+
+            <span class="s3"># Optimization: stop scanning a directory if neither it nor</span>
+            <span class="s3"># its parent contained Python files.</span>
+            <span class="s0">if not </span><span class="s2">(</span><span class="s1">has_py </span><span class="s0">or </span><span class="s1">parent_has_py</span><span class="s2">[</span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">dirname</span><span class="s2">(</span><span class="s1">root</span><span class="s2">)]):</span>
+                <span class="s1">dirs</span><span class="s2">.</span><span class="s1">clear</span><span class="s2">()</span>
+                <span class="s0">continue</span>
+
+            <span class="s1">parent_has_py</span><span class="s2">[</span><span class="s1">root</span><span class="s2">] = </span><span class="s1">has_py</span>
+
+    <span class="s1">paths</span><span class="s2">.</span><span class="s1">update</span><span class="s2">(</span><span class="s1">_iter_module_paths</span><span class="s2">())</span>
+    <span class="s1">_remove_by_pattern</span><span class="s2">(</span><span class="s1">paths</span><span class="s2">, </span><span class="s1">exclude_patterns</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">paths</span>
+
+
+<span class="s0">def </span><span class="s1">_find_watchdog_paths</span><span class="s2">(</span>
+    <span class="s1">extra_files</span><span class="s2">: </span><span class="s1">set</span><span class="s2">[</span><span class="s1">str</span><span class="s2">], </span><span class="s1">exclude_patterns</span><span class="s2">: </span><span class="s1">set</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]</span>
+<span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s5">&quot;&quot;&quot;Find paths for the stat reloader to watch. Looks at the same 
+    sources as the stat reloader, but watches everything under 
+    directories instead of individual files. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">dirs </span><span class="s2">= </span><span class="s1">set</span><span class="s2">()</span>
+
+    <span class="s0">for </span><span class="s1">name </span><span class="s0">in </span><span class="s1">chain</span><span class="s2">(</span><span class="s1">list</span><span class="s2">(</span><span class="s1">sys</span><span class="s2">.</span><span class="s1">path</span><span class="s2">), </span><span class="s1">extra_files</span><span class="s2">):</span>
+        <span class="s1">name </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">name</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">isfile</span><span class="s2">(</span><span class="s1">name</span><span class="s2">):</span>
+            <span class="s1">name </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">dirname</span><span class="s2">(</span><span class="s1">name</span><span class="s2">)</span>
+
+        <span class="s1">dirs</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">name</span><span class="s2">)</span>
+
+    <span class="s0">for </span><span class="s1">name </span><span class="s0">in </span><span class="s1">_iter_module_paths</span><span class="s2">():</span>
+        <span class="s1">dirs</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">dirname</span><span class="s2">(</span><span class="s1">name</span><span class="s2">))</span>
+
+    <span class="s1">_remove_by_pattern</span><span class="s2">(</span><span class="s1">dirs</span><span class="s2">, </span><span class="s1">exclude_patterns</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">_find_common_roots</span><span class="s2">(</span><span class="s1">dirs</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">_find_common_roots</span><span class="s2">(</span><span class="s1">paths</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s1">root</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]] = {}</span>
+
+    <span class="s0">for </span><span class="s1">chunks </span><span class="s0">in </span><span class="s1">sorted</span><span class="s2">((</span><span class="s1">PurePath</span><span class="s2">(</span><span class="s1">x</span><span class="s2">).</span><span class="s1">parts </span><span class="s0">for </span><span class="s1">x </span><span class="s0">in </span><span class="s1">paths</span><span class="s2">), </span><span class="s1">key</span><span class="s2">=</span><span class="s1">len</span><span class="s2">, </span><span class="s1">reverse</span><span class="s2">=</span><span class="s0">True</span><span class="s2">):</span>
+        <span class="s1">node </span><span class="s2">= </span><span class="s1">root</span>
+
+        <span class="s0">for </span><span class="s1">chunk </span><span class="s0">in </span><span class="s1">chunks</span><span class="s2">:</span>
+            <span class="s1">node </span><span class="s2">= </span><span class="s1">node</span><span class="s2">.</span><span class="s1">setdefault</span><span class="s2">(</span><span class="s1">chunk</span><span class="s2">, {})</span>
+
+        <span class="s1">node</span><span class="s2">.</span><span class="s1">clear</span><span class="s2">()</span>
+
+    <span class="s1">rv </span><span class="s2">= </span><span class="s1">set</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">_walk</span><span class="s2">(</span><span class="s1">node</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">]], </span><span class="s1">path</span><span class="s2">: </span><span class="s1">tuple</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, ...]) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">for </span><span class="s1">prefix</span><span class="s2">, </span><span class="s1">child </span><span class="s0">in </span><span class="s1">node</span><span class="s2">.</span><span class="s1">items</span><span class="s2">():</span>
+            <span class="s1">_walk</span><span class="s2">(</span><span class="s1">child</span><span class="s2">, </span><span class="s1">path </span><span class="s2">+ (</span><span class="s1">prefix</span><span class="s2">,))</span>
+
+        <span class="s3"># If there are no more nodes, and a path has been accumulated, add it.</span>
+        <span class="s3"># Path may be empty if the &quot;&quot; entry is in sys.path.</span>
+        <span class="s0">if not </span><span class="s1">node </span><span class="s0">and </span><span class="s1">path</span><span class="s2">:</span>
+            <span class="s1">rv</span><span class="s2">.</span><span class="s1">add</span><span class="s2">(</span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">join</span><span class="s2">(*</span><span class="s1">path</span><span class="s2">))</span>
+
+    <span class="s1">_walk</span><span class="s2">(</span><span class="s1">root</span><span class="s2">, ())</span>
+    <span class="s0">return </span><span class="s1">rv</span>
+
+
+<span class="s0">def </span><span class="s1">_get_args_for_reloading</span><span class="s2">() </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+    <span class="s5">&quot;&quot;&quot;Determine how the script was executed, and return the args needed 
+    to execute it again in a new process. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">version_info </span><span class="s2">&gt;= (</span><span class="s6">3</span><span class="s2">, </span><span class="s6">10</span><span class="s2">):</span>
+        <span class="s3"># sys.orig_argv, added in Python 3.10, contains the exact args used to invoke</span>
+        <span class="s3"># Python. Still replace argv[0] with sys.executable for accuracy.</span>
+        <span class="s0">return </span><span class="s2">[</span><span class="s1">sys</span><span class="s2">.</span><span class="s1">executable</span><span class="s2">, *</span><span class="s1">sys</span><span class="s2">.</span><span class="s1">orig_argv</span><span class="s2">[</span><span class="s6">1</span><span class="s2">:]]</span>
+
+    <span class="s1">rv </span><span class="s2">= [</span><span class="s1">sys</span><span class="s2">.</span><span class="s1">executable</span><span class="s2">]</span>
+    <span class="s1">py_script </span><span class="s2">= </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">argv</span><span class="s2">[</span><span class="s6">0</span><span class="s2">]</span>
+    <span class="s1">args </span><span class="s2">= </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">argv</span><span class="s2">[</span><span class="s6">1</span><span class="s2">:]</span>
+    <span class="s3"># Need to look at main module to determine how it was executed.</span>
+    <span class="s1">__main__ </span><span class="s2">= </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">modules</span><span class="s2">[</span><span class="s4">&quot;__main__&quot;</span><span class="s2">]</span>
+
+    <span class="s3"># The value of __package__ indicates how Python was called. It may</span>
+    <span class="s3"># not exist if a setuptools script is installed as an egg. It may be</span>
+    <span class="s3"># set incorrectly for entry points created with pip on Windows.</span>
+    <span class="s0">if </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">__main__</span><span class="s2">, </span><span class="s4">&quot;__package__&quot;</span><span class="s2">, </span><span class="s0">None</span><span class="s2">) </span><span class="s0">is None or </span><span class="s2">(</span>
+        <span class="s1">os</span><span class="s2">.</span><span class="s1">name </span><span class="s2">== </span><span class="s4">&quot;nt&quot;</span>
+        <span class="s0">and </span><span class="s1">__main__</span><span class="s2">.</span><span class="s1">__package__ </span><span class="s2">== </span><span class="s4">&quot;&quot;</span>
+        <span class="s0">and not </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">exists</span><span class="s2">(</span><span class="s1">py_script</span><span class="s2">)</span>
+        <span class="s0">and </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">exists</span><span class="s2">(</span><span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">py_script</span><span class="s0">}</span><span class="s4">.exe&quot;</span><span class="s2">)</span>
+    <span class="s2">):</span>
+        <span class="s3"># Executed a file, like &quot;python app.py&quot;.</span>
+        <span class="s1">py_script </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">py_script</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s1">os</span><span class="s2">.</span><span class="s1">name </span><span class="s2">== </span><span class="s4">&quot;nt&quot;</span><span class="s2">:</span>
+            <span class="s3"># Windows entry points have &quot;.exe&quot; extension and should be</span>
+            <span class="s3"># called directly.</span>
+            <span class="s0">if not </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">exists</span><span class="s2">(</span><span class="s1">py_script</span><span class="s2">) </span><span class="s0">and </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">exists</span><span class="s2">(</span><span class="s4">f&quot;</span><span class="s0">{</span><span class="s1">py_script</span><span class="s0">}</span><span class="s4">.exe&quot;</span><span class="s2">):</span>
+                <span class="s1">py_script </span><span class="s2">+= </span><span class="s4">&quot;.exe&quot;</span>
+
+            <span class="s0">if </span><span class="s2">(</span>
+                <span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">splitext</span><span class="s2">(</span><span class="s1">sys</span><span class="s2">.</span><span class="s1">executable</span><span class="s2">)[</span><span class="s6">1</span><span class="s2">] == </span><span class="s4">&quot;.exe&quot;</span>
+                <span class="s0">and </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">splitext</span><span class="s2">(</span><span class="s1">py_script</span><span class="s2">)[</span><span class="s6">1</span><span class="s2">] == </span><span class="s4">&quot;.exe&quot;</span>
+            <span class="s2">):</span>
+                <span class="s1">rv</span><span class="s2">.</span><span class="s1">pop</span><span class="s2">(</span><span class="s6">0</span><span class="s2">)</span>
+
+        <span class="s1">rv</span><span class="s2">.</span><span class="s1">append</span><span class="s2">(</span><span class="s1">py_script</span><span class="s2">)</span>
+    <span class="s0">else</span><span class="s2">:</span>
+        <span class="s3"># Executed a module, like &quot;python -m werkzeug.serving&quot;.</span>
+        <span class="s0">if </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">isfile</span><span class="s2">(</span><span class="s1">py_script</span><span class="s2">):</span>
+            <span class="s3"># Rewritten by Python from &quot;-m script&quot; to &quot;/path/to/script.py&quot;.</span>
+            <span class="s1">py_module </span><span class="s2">= </span><span class="s1">t</span><span class="s2">.</span><span class="s1">cast</span><span class="s2">(</span><span class="s1">str</span><span class="s2">, </span><span class="s1">__main__</span><span class="s2">.</span><span class="s1">__package__</span><span class="s2">)</span>
+            <span class="s1">name </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">splitext</span><span class="s2">(</span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">basename</span><span class="s2">(</span><span class="s1">py_script</span><span class="s2">))[</span><span class="s6">0</span><span class="s2">]</span>
+
+            <span class="s0">if </span><span class="s1">name </span><span class="s2">!= </span><span class="s4">&quot;__main__&quot;</span><span class="s2">:</span>
+                <span class="s1">py_module </span><span class="s2">+= </span><span class="s4">f&quot;.</span><span class="s0">{</span><span class="s1">name</span><span class="s0">}</span><span class="s4">&quot;</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s3"># Incorrectly rewritten by pydevd debugger from &quot;-m script&quot; to &quot;script&quot;.</span>
+            <span class="s1">py_module </span><span class="s2">= </span><span class="s1">py_script</span>
+
+        <span class="s1">rv</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">((</span><span class="s4">&quot;-m&quot;</span><span class="s2">, </span><span class="s1">py_module</span><span class="s2">.</span><span class="s1">lstrip</span><span class="s2">(</span><span class="s4">&quot;.&quot;</span><span class="s2">)))</span>
+
+    <span class="s1">rv</span><span class="s2">.</span><span class="s1">extend</span><span class="s2">(</span><span class="s1">args</span><span class="s2">)</span>
+    <span class="s0">return </span><span class="s1">rv</span>
+
+
+<span class="s0">class </span><span class="s1">ReloaderLoop</span><span class="s2">:</span>
+    <span class="s1">name </span><span class="s2">= </span><span class="s4">&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">extra_files</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">exclude_patterns</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+        <span class="s1">interval</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s1">float </span><span class="s2">= </span><span class="s6">1</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">extra_files</span><span class="s2">: </span><span class="s1">set</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = {</span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">x</span><span class="s2">) </span><span class="s0">for </span><span class="s1">x </span><span class="s0">in </span><span class="s1">extra_files </span><span class="s0">or </span><span class="s2">()}</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">exclude_patterns</span><span class="s2">: </span><span class="s1">set</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] = </span><span class="s1">set</span><span class="s2">(</span><span class="s1">exclude_patterns </span><span class="s0">or </span><span class="s2">())</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">interval </span><span class="s2">= </span><span class="s1">interval</span>
+
+    <span class="s0">def </span><span class="s1">__enter__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; ReloaderLoop</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Do any setup, then run one step of the watch to populate the 
+        initial filesystem state. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">run_step</span><span class="s2">()</span>
+        <span class="s0">return </span><span class="s1">self</span>
+
+    <span class="s0">def </span><span class="s1">__exit__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">exc_type</span><span class="s2">, </span><span class="s1">exc_val</span><span class="s2">, </span><span class="s1">exc_tb</span><span class="s2">):  </span><span class="s3"># type: ignore</span>
+        <span class="s5">&quot;&quot;&quot;Clean up any resources associated with the reloader.&quot;&quot;&quot;</span>
+        <span class="s0">pass</span>
+
+    <span class="s0">def </span><span class="s1">run</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Continually run the watch step, sleeping for the configured 
+        interval after each step. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">while True</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">run_step</span><span class="s2">()</span>
+            <span class="s1">time</span><span class="s2">.</span><span class="s1">sleep</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">interval</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">run_step</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Run one step for watching the filesystem. Called once to set 
+        up initial state, then repeatedly to update it. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">pass</span>
+
+    <span class="s0">def </span><span class="s1">restart_with_reloader</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; int</span><span class="s2">:</span>
+        <span class="s5">&quot;&quot;&quot;Spawn a new Python interpreter with the same arguments as the 
+        current one, but running the reloader thread. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">while True</span><span class="s2">:</span>
+            <span class="s1">_log</span><span class="s2">(</span><span class="s4">&quot;info&quot;</span><span class="s2">, </span><span class="s4">f&quot; * Restarting with </span><span class="s0">{</span><span class="s1">self</span><span class="s2">.</span><span class="s1">name</span><span class="s0">}</span><span class="s4">&quot;</span><span class="s2">)</span>
+            <span class="s1">args </span><span class="s2">= </span><span class="s1">_get_args_for_reloading</span><span class="s2">()</span>
+            <span class="s1">new_environ </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">environ</span><span class="s2">.</span><span class="s1">copy</span><span class="s2">()</span>
+            <span class="s1">new_environ</span><span class="s2">[</span><span class="s4">&quot;WERKZEUG_RUN_MAIN&quot;</span><span class="s2">] = </span><span class="s4">&quot;true&quot;</span>
+            <span class="s1">exit_code </span><span class="s2">= </span><span class="s1">subprocess</span><span class="s2">.</span><span class="s1">call</span><span class="s2">(</span><span class="s1">args</span><span class="s2">, </span><span class="s1">env</span><span class="s2">=</span><span class="s1">new_environ</span><span class="s2">, </span><span class="s1">close_fds</span><span class="s2">=</span><span class="s0">False</span><span class="s2">)</span>
+
+            <span class="s0">if </span><span class="s1">exit_code </span><span class="s2">!= </span><span class="s6">3</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">exit_code</span>
+
+    <span class="s0">def </span><span class="s1">trigger_reload</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">filename</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">log_reload</span><span class="s2">(</span><span class="s1">filename</span><span class="s2">)</span>
+        <span class="s1">sys</span><span class="s2">.</span><span class="s1">exit</span><span class="s2">(</span><span class="s6">3</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">log_reload</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">filename</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s1">bytes</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">filename </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">abspath</span><span class="s2">(</span><span class="s1">filename</span><span class="s2">)</span>
+        <span class="s1">_log</span><span class="s2">(</span><span class="s4">&quot;info&quot;</span><span class="s2">, </span><span class="s4">f&quot; * Detected change in </span><span class="s0">{</span><span class="s1">filename</span><span class="s0">!r}</span><span class="s4">, reloading&quot;</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">StatReloaderLoop</span><span class="s2">(</span><span class="s1">ReloaderLoop</span><span class="s2">):</span>
+    <span class="s1">name </span><span class="s2">= </span><span class="s4">&quot;stat&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__enter__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; ReloaderLoop</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">mtimes</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">float</span><span class="s2">] = {}</span>
+        <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">__enter__</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">run_step</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">for </span><span class="s1">name </span><span class="s0">in </span><span class="s1">_find_stat_paths</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">extra_files</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">exclude_patterns</span><span class="s2">):</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">mtime </span><span class="s2">= </span><span class="s1">os</span><span class="s2">.</span><span class="s1">stat</span><span class="s2">(</span><span class="s1">name</span><span class="s2">).</span><span class="s1">st_mtime</span>
+            <span class="s0">except </span><span class="s1">OSError</span><span class="s2">:</span>
+                <span class="s0">continue</span>
+
+            <span class="s1">old_time </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">mtimes</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">name</span><span class="s2">)</span>
+
+            <span class="s0">if </span><span class="s1">old_time </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">mtimes</span><span class="s2">[</span><span class="s1">name</span><span class="s2">] = </span><span class="s1">mtime</span>
+                <span class="s0">continue</span>
+
+            <span class="s0">if </span><span class="s1">mtime </span><span class="s2">&gt; </span><span class="s1">old_time</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">trigger_reload</span><span class="s2">(</span><span class="s1">name</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">WatchdogReloaderLoop</span><span class="s2">(</span><span class="s1">ReloaderLoop</span><span class="s2">):</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, *</span><span class="s1">args</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">from </span><span class="s1">watchdog</span><span class="s2">.</span><span class="s1">events </span><span class="s0">import </span><span class="s1">EVENT_TYPE_CLOSED</span>
+        <span class="s0">from </span><span class="s1">watchdog</span><span class="s2">.</span><span class="s1">events </span><span class="s0">import </span><span class="s1">EVENT_TYPE_CREATED</span>
+        <span class="s0">from </span><span class="s1">watchdog</span><span class="s2">.</span><span class="s1">events </span><span class="s0">import </span><span class="s1">EVENT_TYPE_DELETED</span>
+        <span class="s0">from </span><span class="s1">watchdog</span><span class="s2">.</span><span class="s1">events </span><span class="s0">import </span><span class="s1">EVENT_TYPE_MODIFIED</span>
+        <span class="s0">from </span><span class="s1">watchdog</span><span class="s2">.</span><span class="s1">events </span><span class="s0">import </span><span class="s1">EVENT_TYPE_MOVED</span>
+        <span class="s0">from </span><span class="s1">watchdog</span><span class="s2">.</span><span class="s1">events </span><span class="s0">import </span><span class="s1">FileModifiedEvent</span>
+        <span class="s0">from </span><span class="s1">watchdog</span><span class="s2">.</span><span class="s1">events </span><span class="s0">import </span><span class="s1">PatternMatchingEventHandler</span>
+        <span class="s0">from </span><span class="s1">watchdog</span><span class="s2">.</span><span class="s1">observers </span><span class="s0">import </span><span class="s1">Observer</span>
+
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(*</span><span class="s1">args</span><span class="s2">, **</span><span class="s1">kwargs</span><span class="s2">)</span>
+        <span class="s1">trigger_reload </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">trigger_reload</span>
+
+        <span class="s0">class </span><span class="s1">EventHandler</span><span class="s2">(</span><span class="s1">PatternMatchingEventHandler</span><span class="s2">):</span>
+            <span class="s0">def </span><span class="s1">on_any_event</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">event</span><span class="s2">: </span><span class="s1">FileModifiedEvent</span><span class="s2">):  </span><span class="s3"># type: ignore</span>
+                <span class="s0">if </span><span class="s1">event</span><span class="s2">.</span><span class="s1">event_type </span><span class="s0">not in </span><span class="s2">{</span>
+                    <span class="s1">EVENT_TYPE_CLOSED</span><span class="s2">,</span>
+                    <span class="s1">EVENT_TYPE_CREATED</span><span class="s2">,</span>
+                    <span class="s1">EVENT_TYPE_DELETED</span><span class="s2">,</span>
+                    <span class="s1">EVENT_TYPE_MODIFIED</span><span class="s2">,</span>
+                    <span class="s1">EVENT_TYPE_MOVED</span><span class="s2">,</span>
+                <span class="s2">}:</span>
+                    <span class="s3"># skip events that don't involve changes to the file</span>
+                    <span class="s0">return</span>
+
+                <span class="s1">trigger_reload</span><span class="s2">(</span><span class="s1">event</span><span class="s2">.</span><span class="s1">src_path</span><span class="s2">)</span>
+
+        <span class="s1">reloader_name </span><span class="s2">= </span><span class="s1">Observer</span><span class="s2">.</span><span class="s1">__name__</span><span class="s2">.</span><span class="s1">lower</span><span class="s2">()  </span><span class="s3"># type: ignore[attr-defined]</span>
+
+        <span class="s0">if </span><span class="s1">reloader_name</span><span class="s2">.</span><span class="s1">endswith</span><span class="s2">(</span><span class="s4">&quot;observer&quot;</span><span class="s2">):</span>
+            <span class="s1">reloader_name </span><span class="s2">= </span><span class="s1">reloader_name</span><span class="s2">[:-</span><span class="s6">8</span><span class="s2">]</span>
+
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">name </span><span class="s2">= </span><span class="s4">f&quot;watchdog (</span><span class="s0">{</span><span class="s1">reloader_name</span><span class="s0">}</span><span class="s4">)&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">observer </span><span class="s2">= </span><span class="s1">Observer</span><span class="s2">()</span>
+        <span class="s3"># Extra patterns can be non-Python files, match them in addition</span>
+        <span class="s3"># to all Python files in default and extra directories. Ignore</span>
+        <span class="s3"># __pycache__ since a change there will always have a change to</span>
+        <span class="s3"># the source file (or initial pyc file) as well. Ignore Git and</span>
+        <span class="s3"># Mercurial internal changes.</span>
+        <span class="s1">extra_patterns </span><span class="s2">= [</span><span class="s1">p </span><span class="s0">for </span><span class="s1">p </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">extra_files </span><span class="s0">if not </span><span class="s1">os</span><span class="s2">.</span><span class="s1">path</span><span class="s2">.</span><span class="s1">isdir</span><span class="s2">(</span><span class="s1">p</span><span class="s2">)]</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">event_handler </span><span class="s2">= </span><span class="s1">EventHandler</span><span class="s2">(</span>
+            <span class="s1">patterns</span><span class="s2">=[</span><span class="s4">&quot;*.py&quot;</span><span class="s2">, </span><span class="s4">&quot;*.pyc&quot;</span><span class="s2">, </span><span class="s4">&quot;*.zip&quot;</span><span class="s2">, *</span><span class="s1">extra_patterns</span><span class="s2">],</span>
+            <span class="s1">ignore_patterns</span><span class="s2">=[</span>
+                <span class="s2">*[</span><span class="s4">f&quot;*/</span><span class="s0">{</span><span class="s1">d</span><span class="s0">}</span><span class="s4">/*&quot; </span><span class="s0">for </span><span class="s1">d </span><span class="s0">in </span><span class="s1">_ignore_common_dirs</span><span class="s2">],</span>
+                <span class="s2">*</span><span class="s1">self</span><span class="s2">.</span><span class="s1">exclude_patterns</span><span class="s2">,</span>
+            <span class="s2">],</span>
+        <span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">should_reload </span><span class="s2">= </span><span class="s0">False</span>
+
+    <span class="s0">def </span><span class="s1">trigger_reload</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">filename</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s1">bytes</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s3"># This is called inside an event handler, which means throwing</span>
+        <span class="s3"># SystemExit has no effect.</span>
+        <span class="s3"># https://github.com/gorakhargosh/watchdog/issues/294</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">should_reload </span><span class="s2">= </span><span class="s0">True</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">log_reload</span><span class="s2">(</span><span class="s1">filename</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">__enter__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; ReloaderLoop</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">watches</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] = {}</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">observer</span><span class="s2">.</span><span class="s1">start</span><span class="s2">()</span>
+        <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">__enter__</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">__exit__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">exc_type</span><span class="s2">, </span><span class="s1">exc_val</span><span class="s2">, </span><span class="s1">exc_tb</span><span class="s2">):  </span><span class="s3"># type: ignore</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">observer</span><span class="s2">.</span><span class="s1">stop</span><span class="s2">()</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">observer</span><span class="s2">.</span><span class="s1">join</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">run</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">while not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">should_reload</span><span class="s2">:</span>
+            <span class="s1">self</span><span class="s2">.</span><span class="s1">run_step</span><span class="s2">()</span>
+            <span class="s1">time</span><span class="s2">.</span><span class="s1">sleep</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">interval</span><span class="s2">)</span>
+
+        <span class="s1">sys</span><span class="s2">.</span><span class="s1">exit</span><span class="s2">(</span><span class="s6">3</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">run_step</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">to_delete </span><span class="s2">= </span><span class="s1">set</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">watches</span><span class="s2">)</span>
+
+        <span class="s0">for </span><span class="s1">path </span><span class="s0">in </span><span class="s1">_find_watchdog_paths</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">extra_files</span><span class="s2">, </span><span class="s1">self</span><span class="s2">.</span><span class="s1">exclude_patterns</span><span class="s2">):</span>
+            <span class="s0">if </span><span class="s1">path </span><span class="s0">not in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">watches</span><span class="s2">:</span>
+                <span class="s0">try</span><span class="s2">:</span>
+                    <span class="s1">self</span><span class="s2">.</span><span class="s1">watches</span><span class="s2">[</span><span class="s1">path</span><span class="s2">] = </span><span class="s1">self</span><span class="s2">.</span><span class="s1">observer</span><span class="s2">.</span><span class="s1">schedule</span><span class="s2">(</span>
+                        <span class="s1">self</span><span class="s2">.</span><span class="s1">event_handler</span><span class="s2">, </span><span class="s1">path</span><span class="s2">, </span><span class="s1">recursive</span><span class="s2">=</span><span class="s0">True</span>
+                    <span class="s2">)</span>
+                <span class="s0">except </span><span class="s1">OSError</span><span class="s2">:</span>
+                    <span class="s3"># Clear this path from list of watches We don't want</span>
+                    <span class="s3"># the same error message showing again in the next</span>
+                    <span class="s3"># iteration.</span>
+                    <span class="s1">self</span><span class="s2">.</span><span class="s1">watches</span><span class="s2">[</span><span class="s1">path</span><span class="s2">] = </span><span class="s0">None</span>
+
+            <span class="s1">to_delete</span><span class="s2">.</span><span class="s1">discard</span><span class="s2">(</span><span class="s1">path</span><span class="s2">)</span>
+
+        <span class="s0">for </span><span class="s1">path </span><span class="s0">in </span><span class="s1">to_delete</span><span class="s2">:</span>
+            <span class="s1">watch </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">watches</span><span class="s2">.</span><span class="s1">pop</span><span class="s2">(</span><span class="s1">path</span><span class="s2">, </span><span class="s0">None</span><span class="s2">)</span>
+
+            <span class="s0">if </span><span class="s1">watch </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">observer</span><span class="s2">.</span><span class="s1">unschedule</span><span class="s2">(</span><span class="s1">watch</span><span class="s2">)</span>
+
+
+<span class="s1">reloader_loops</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">type</span><span class="s2">[</span><span class="s1">ReloaderLoop</span><span class="s2">]] = {</span>
+    <span class="s4">&quot;stat&quot;</span><span class="s2">: </span><span class="s1">StatReloaderLoop</span><span class="s2">,</span>
+    <span class="s4">&quot;watchdog&quot;</span><span class="s2">: </span><span class="s1">WatchdogReloaderLoop</span><span class="s2">,</span>
+<span class="s2">}</span>
+
+<span class="s0">try</span><span class="s2">:</span>
+    <span class="s1">__import__</span><span class="s2">(</span><span class="s4">&quot;watchdog.observers&quot;</span><span class="s2">)</span>
+<span class="s0">except </span><span class="s1">ImportError</span><span class="s2">:</span>
+    <span class="s1">reloader_loops</span><span class="s2">[</span><span class="s4">&quot;auto&quot;</span><span class="s2">] = </span><span class="s1">reloader_loops</span><span class="s2">[</span><span class="s4">&quot;stat&quot;</span><span class="s2">]</span>
+<span class="s0">else</span><span class="s2">:</span>
+    <span class="s1">reloader_loops</span><span class="s2">[</span><span class="s4">&quot;auto&quot;</span><span class="s2">] = </span><span class="s1">reloader_loops</span><span class="s2">[</span><span class="s4">&quot;watchdog&quot;</span><span class="s2">]</span>
+
+
+<span class="s0">def </span><span class="s1">ensure_echo_on</span><span class="s2">() </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot;Ensure that echo mode is enabled. Some tools such as PDB disable 
+    it which causes usability issues after a reload.&quot;&quot;&quot;</span>
+    <span class="s3"># tcgetattr will fail if stdin isn't a tty</span>
+    <span class="s0">if </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">stdin </span><span class="s0">is None or not </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">stdin</span><span class="s2">.</span><span class="s1">isatty</span><span class="s2">():</span>
+        <span class="s0">return</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">import </span><span class="s1">termios</span>
+    <span class="s0">except </span><span class="s1">ImportError</span><span class="s2">:</span>
+        <span class="s0">return</span>
+
+    <span class="s1">attributes </span><span class="s2">= </span><span class="s1">termios</span><span class="s2">.</span><span class="s1">tcgetattr</span><span class="s2">(</span><span class="s1">sys</span><span class="s2">.</span><span class="s1">stdin</span><span class="s2">)</span>
+
+    <span class="s0">if not </span><span class="s1">attributes</span><span class="s2">[</span><span class="s6">3</span><span class="s2">] &amp; </span><span class="s1">termios</span><span class="s2">.</span><span class="s1">ECHO</span><span class="s2">:</span>
+        <span class="s1">attributes</span><span class="s2">[</span><span class="s6">3</span><span class="s2">] |= </span><span class="s1">termios</span><span class="s2">.</span><span class="s1">ECHO</span>
+        <span class="s1">termios</span><span class="s2">.</span><span class="s1">tcsetattr</span><span class="s2">(</span><span class="s1">sys</span><span class="s2">.</span><span class="s1">stdin</span><span class="s2">, </span><span class="s1">termios</span><span class="s2">.</span><span class="s1">TCSANOW</span><span class="s2">, </span><span class="s1">attributes</span><span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">run_with_reloader</span><span class="s2">(</span>
+    <span class="s1">main_func</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Callable</span><span class="s2">[[], </span><span class="s0">None</span><span class="s2">],</span>
+    <span class="s1">extra_files</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">exclude_patterns</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Iterable</span><span class="s2">[</span><span class="s1">str</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s1">interval</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s1">float </span><span class="s2">= </span><span class="s6">1</span><span class="s2">,</span>
+    <span class="s1">reloader_type</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s4">&quot;auto&quot;</span><span class="s2">,</span>
+<span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s5">&quot;&quot;&quot;Run the given function in an independent Python interpreter.&quot;&quot;&quot;</span>
+    <span class="s0">import </span><span class="s1">signal</span>
+
+    <span class="s1">signal</span><span class="s2">.</span><span class="s1">signal</span><span class="s2">(</span><span class="s1">signal</span><span class="s2">.</span><span class="s1">SIGTERM</span><span class="s2">, </span><span class="s0">lambda </span><span class="s2">*</span><span class="s1">args</span><span class="s2">: </span><span class="s1">sys</span><span class="s2">.</span><span class="s1">exit</span><span class="s2">(</span><span class="s6">0</span><span class="s2">))</span>
+    <span class="s1">reloader </span><span class="s2">= </span><span class="s1">reloader_loops</span><span class="s2">[</span><span class="s1">reloader_type</span><span class="s2">](</span>
+        <span class="s1">extra_files</span><span class="s2">=</span><span class="s1">extra_files</span><span class="s2">, </span><span class="s1">exclude_patterns</span><span class="s2">=</span><span class="s1">exclude_patterns</span><span class="s2">, </span><span class="s1">interval</span><span class="s2">=</span><span class="s1">interval</span>
+    <span class="s2">)</span>
+
+    <span class="s0">try</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">os</span><span class="s2">.</span><span class="s1">environ</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s4">&quot;WERKZEUG_RUN_MAIN&quot;</span><span class="s2">) == </span><span class="s4">&quot;true&quot;</span><span class="s2">:</span>
+            <span class="s1">ensure_echo_on</span><span class="s2">()</span>
+            <span class="s1">t </span><span class="s2">= </span><span class="s1">threading</span><span class="s2">.</span><span class="s1">Thread</span><span class="s2">(</span><span class="s1">target</span><span class="s2">=</span><span class="s1">main_func</span><span class="s2">, </span><span class="s1">args</span><span class="s2">=())</span>
+            <span class="s1">t</span><span class="s2">.</span><span class="s1">daemon </span><span class="s2">= </span><span class="s0">True</span>
+
+            <span class="s3"># Enter the reloader to set up initial state, then start</span>
+            <span class="s3"># the app thread and reloader update loop.</span>
+            <span class="s0">with </span><span class="s1">reloader</span><span class="s2">:</span>
+                <span class="s1">t</span><span class="s2">.</span><span class="s1">start</span><span class="s2">()</span>
+                <span class="s1">reloader</span><span class="s2">.</span><span class="s1">run</span><span class="s2">()</span>
+        <span class="s0">else</span><span class="s2">:</span>
+            <span class="s1">sys</span><span class="s2">.</span><span class="s1">exit</span><span class="s2">(</span><span class="s1">reloader</span><span class="s2">.</span><span class="s1">restart_with_reloader</span><span class="s2">())</span>
+    <span class="s0">except </span><span class="s1">KeyboardInterrupt</span><span class="s2">:</span>
+        <span class="s0">pass</span>
+</pre>
+</body>
+</html>

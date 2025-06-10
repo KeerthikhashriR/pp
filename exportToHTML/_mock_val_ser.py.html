@@ -1,0 +1,251 @@
+<html>
+<head>
+<title>_mock_val_ser.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #7a7e85;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_mock_val_ser.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">from </span><span class="s1">collections</span><span class="s2">.</span><span class="s1">abc </span><span class="s0">import </span><span class="s1">Iterator</span><span class="s2">, </span><span class="s1">Mapping</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">TYPE_CHECKING</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">, </span><span class="s1">Callable</span><span class="s2">, </span><span class="s1">Generic</span><span class="s2">, </span><span class="s1">Literal</span><span class="s2">, </span><span class="s1">TypeVar</span><span class="s2">, </span><span class="s1">Union</span>
+
+<span class="s0">from </span><span class="s1">pydantic_core </span><span class="s0">import </span><span class="s1">CoreSchema</span><span class="s2">, </span><span class="s1">SchemaSerializer</span><span class="s2">, </span><span class="s1">SchemaValidator</span>
+
+<span class="s0">from </span><span class="s2">..</span><span class="s1">errors </span><span class="s0">import </span><span class="s1">PydanticErrorCodes</span><span class="s2">, </span><span class="s1">PydanticUserError</span>
+<span class="s0">from </span><span class="s2">..</span><span class="s1">plugin</span><span class="s2">.</span><span class="s1">_schema_validator </span><span class="s0">import </span><span class="s1">PluggableSchemaValidator</span>
+
+<span class="s0">if </span><span class="s1">TYPE_CHECKING</span><span class="s2">:</span>
+    <span class="s0">from </span><span class="s2">..</span><span class="s1">dataclasses </span><span class="s0">import </span><span class="s1">PydanticDataclass</span>
+    <span class="s0">from </span><span class="s2">..</span><span class="s1">main </span><span class="s0">import </span><span class="s1">BaseModel</span>
+    <span class="s0">from </span><span class="s2">..</span><span class="s1">type_adapter </span><span class="s0">import </span><span class="s1">TypeAdapter</span>
+
+
+<span class="s1">ValSer </span><span class="s2">= </span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s3">'ValSer'</span><span class="s2">, </span><span class="s1">bound</span><span class="s2">=</span><span class="s1">Union</span><span class="s2">[</span><span class="s1">SchemaValidator</span><span class="s2">, </span><span class="s1">PluggableSchemaValidator</span><span class="s2">, </span><span class="s1">SchemaSerializer</span><span class="s2">])</span>
+<span class="s1">T </span><span class="s2">= </span><span class="s1">TypeVar</span><span class="s2">(</span><span class="s3">'T'</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">MockCoreSchema</span><span class="s2">(</span><span class="s1">Mapping</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">Any</span><span class="s2">]):</span>
+    <span class="s4">&quot;&quot;&quot;Mocker for `pydantic_core.CoreSchema` which optionally attempts to 
+    rebuild the thing it's mocking when one of its methods is accessed and raises an error if that fails. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ </span><span class="s2">= </span><span class="s3">'_error_message'</span><span class="s2">, </span><span class="s3">'_code'</span><span class="s2">, </span><span class="s3">'_attempt_rebuild'</span><span class="s2">, </span><span class="s3">'_built_memo'</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">error_message</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s2">*,</span>
+        <span class="s1">code</span><span class="s2">: </span><span class="s1">PydanticErrorCodes</span><span class="s2">,</span>
+        <span class="s1">attempt_rebuild</span><span class="s2">: </span><span class="s1">Callable</span><span class="s2">[[], </span><span class="s1">CoreSchema </span><span class="s2">| </span><span class="s0">None</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_error_message </span><span class="s2">= </span><span class="s1">error_message</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_code</span><span class="s2">: </span><span class="s1">PydanticErrorCodes </span><span class="s2">= </span><span class="s1">code</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_attempt_rebuild </span><span class="s2">= </span><span class="s1">attempt_rebuild</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_built_memo</span><span class="s2">: </span><span class="s1">CoreSchema </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+
+    <span class="s0">def </span><span class="s1">__getitem__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">key</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; Any</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_get_built</span><span class="s2">().</span><span class="s1">__getitem__</span><span class="s2">(</span><span class="s1">key</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">__len__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; int</span><span class="s2">:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_get_built</span><span class="s2">().</span><span class="s1">__len__</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">__iter__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; Iterator</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+        <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_get_built</span><span class="s2">().</span><span class="s1">__iter__</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">_get_built</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; CoreSchema</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_built_memo </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_built_memo</span>
+
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_attempt_rebuild</span><span class="s2">:</span>
+            <span class="s1">schema </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_attempt_rebuild</span><span class="s2">()</span>
+            <span class="s0">if </span><span class="s1">schema </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">_built_memo </span><span class="s2">= </span><span class="s1">schema</span>
+                <span class="s0">return </span><span class="s1">schema</span>
+        <span class="s0">raise </span><span class="s1">PydanticUserError</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_error_message</span><span class="s2">, </span><span class="s1">code</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_code</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">rebuild</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; CoreSchema </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_built_memo </span><span class="s2">= </span><span class="s0">None</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_attempt_rebuild</span><span class="s2">:</span>
+            <span class="s1">schema </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_attempt_rebuild</span><span class="s2">()</span>
+            <span class="s0">if </span><span class="s1">schema </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">schema</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">PydanticUserError</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_error_message</span><span class="s2">, </span><span class="s1">code</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_code</span><span class="s2">)</span>
+        <span class="s0">return None</span>
+
+
+<span class="s0">class </span><span class="s1">MockValSer</span><span class="s2">(</span><span class="s1">Generic</span><span class="s2">[</span><span class="s1">ValSer</span><span class="s2">]):</span>
+    <span class="s4">&quot;&quot;&quot;Mocker for `pydantic_core.SchemaValidator` or `pydantic_core.SchemaSerializer` which optionally attempts to 
+    rebuild the thing it's mocking when one of its methods is accessed and raises an error if that fails. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">__slots__ </span><span class="s2">= </span><span class="s3">'_error_message'</span><span class="s2">, </span><span class="s3">'_code'</span><span class="s2">, </span><span class="s3">'_val_or_ser'</span><span class="s2">, </span><span class="s3">'_attempt_rebuild'</span>
+
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">error_message</span><span class="s2">: </span><span class="s1">str</span><span class="s2">,</span>
+        <span class="s2">*,</span>
+        <span class="s1">code</span><span class="s2">: </span><span class="s1">PydanticErrorCodes</span><span class="s2">,</span>
+        <span class="s1">val_or_ser</span><span class="s2">: </span><span class="s1">Literal</span><span class="s2">[</span><span class="s3">'validator'</span><span class="s2">, </span><span class="s3">'serializer'</span><span class="s2">],</span>
+        <span class="s1">attempt_rebuild</span><span class="s2">: </span><span class="s1">Callable</span><span class="s2">[[], </span><span class="s1">ValSer </span><span class="s2">| </span><span class="s0">None</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span><span class="s2">,</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_error_message </span><span class="s2">= </span><span class="s1">error_message</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_val_or_ser </span><span class="s2">= </span><span class="s1">SchemaValidator </span><span class="s0">if </span><span class="s1">val_or_ser </span><span class="s2">== </span><span class="s3">'validator' </span><span class="s0">else </span><span class="s1">SchemaSerializer</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_code</span><span class="s2">: </span><span class="s1">PydanticErrorCodes </span><span class="s2">= </span><span class="s1">code</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_attempt_rebuild </span><span class="s2">= </span><span class="s1">attempt_rebuild</span>
+
+    <span class="s0">def </span><span class="s1">__getattr__</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">item</span><span class="s2">: </span><span class="s1">str</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">__tracebackhide__ </span><span class="s2">= </span><span class="s0">True</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_attempt_rebuild</span><span class="s2">:</span>
+            <span class="s1">val_ser </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_attempt_rebuild</span><span class="s2">()</span>
+            <span class="s0">if </span><span class="s1">val_ser </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">getattr</span><span class="s2">(</span><span class="s1">val_ser</span><span class="s2">, </span><span class="s1">item</span><span class="s2">)</span>
+
+        <span class="s5"># raise an AttributeError if `item` doesn't exist</span>
+        <span class="s1">getattr</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_val_or_ser</span><span class="s2">, </span><span class="s1">item</span><span class="s2">)</span>
+        <span class="s0">raise </span><span class="s1">PydanticUserError</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_error_message</span><span class="s2">, </span><span class="s1">code</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_code</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">rebuild</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; ValSer </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_attempt_rebuild</span><span class="s2">:</span>
+            <span class="s1">val_ser </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_attempt_rebuild</span><span class="s2">()</span>
+            <span class="s0">if </span><span class="s1">val_ser </span><span class="s0">is not None</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">val_ser</span>
+            <span class="s0">else</span><span class="s2">:</span>
+                <span class="s0">raise </span><span class="s1">PydanticUserError</span><span class="s2">(</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_error_message</span><span class="s2">, </span><span class="s1">code</span><span class="s2">=</span><span class="s1">self</span><span class="s2">.</span><span class="s1">_code</span><span class="s2">)</span>
+        <span class="s0">return None</span>
+
+
+<span class="s0">def </span><span class="s1">set_type_adapter_mocks</span><span class="s2">(</span><span class="s1">adapter</span><span class="s2">: </span><span class="s1">TypeAdapter</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Set `core_schema`, `validator` and `serializer` to mock core types on a type adapter instance. 
+ 
+    Args: 
+        adapter: The type adapter instance to set the mocks on 
+    &quot;&quot;&quot;</span>
+    <span class="s1">type_repr </span><span class="s2">= </span><span class="s1">str</span><span class="s2">(</span><span class="s1">adapter</span><span class="s2">.</span><span class="s1">_type</span><span class="s2">)</span>
+    <span class="s1">undefined_type_error_message </span><span class="s2">= (</span>
+        <span class="s3">f'`TypeAdapter[</span><span class="s0">{</span><span class="s1">type_repr</span><span class="s0">}</span><span class="s3">]` is not fully defined; you should define `</span><span class="s0">{</span><span class="s1">type_repr</span><span class="s0">}</span><span class="s3">` and all referenced types,'</span>
+        <span class="s3">f' then call `.rebuild()` on the instance.'</span>
+    <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">attempt_rebuild_fn</span><span class="s2">(</span><span class="s1">attr_fn</span><span class="s2">: </span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">TypeAdapter</span><span class="s2">], </span><span class="s1">T</span><span class="s2">]) </span><span class="s1">-&gt; Callable</span><span class="s2">[[], </span><span class="s1">T </span><span class="s2">| </span><span class="s0">None</span><span class="s2">]:</span>
+        <span class="s0">def </span><span class="s1">handler</span><span class="s2">() </span><span class="s1">-&gt; T </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">adapter</span><span class="s2">.</span><span class="s1">rebuild</span><span class="s2">(</span><span class="s1">raise_errors</span><span class="s2">=</span><span class="s0">False</span><span class="s2">, </span><span class="s1">_parent_namespace_depth</span><span class="s2">=</span><span class="s6">5</span><span class="s2">) </span><span class="s0">is not False</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">attr_fn</span><span class="s2">(</span><span class="s1">adapter</span><span class="s2">)</span>
+            <span class="s0">return None</span>
+
+        <span class="s0">return </span><span class="s1">handler</span>
+
+    <span class="s1">adapter</span><span class="s2">.</span><span class="s1">core_schema </span><span class="s2">= </span><span class="s1">MockCoreSchema</span><span class="s2">(  </span><span class="s5"># pyright: ignore[reportAttributeAccessIssue]</span>
+        <span class="s1">undefined_type_error_message</span><span class="s2">,</span>
+        <span class="s1">code</span><span class="s2">=</span><span class="s3">'class-not-fully-defined'</span><span class="s2">,</span>
+        <span class="s1">attempt_rebuild</span><span class="s2">=</span><span class="s1">attempt_rebuild_fn</span><span class="s2">(</span><span class="s0">lambda </span><span class="s1">ta</span><span class="s2">: </span><span class="s1">ta</span><span class="s2">.</span><span class="s1">core_schema</span><span class="s2">),</span>
+    <span class="s2">)</span>
+    <span class="s1">adapter</span><span class="s2">.</span><span class="s1">validator </span><span class="s2">= </span><span class="s1">MockValSer</span><span class="s2">(  </span><span class="s5"># pyright: ignore[reportAttributeAccessIssue]</span>
+        <span class="s1">undefined_type_error_message</span><span class="s2">,</span>
+        <span class="s1">code</span><span class="s2">=</span><span class="s3">'class-not-fully-defined'</span><span class="s2">,</span>
+        <span class="s1">val_or_ser</span><span class="s2">=</span><span class="s3">'validator'</span><span class="s2">,</span>
+        <span class="s1">attempt_rebuild</span><span class="s2">=</span><span class="s1">attempt_rebuild_fn</span><span class="s2">(</span><span class="s0">lambda </span><span class="s1">ta</span><span class="s2">: </span><span class="s1">ta</span><span class="s2">.</span><span class="s1">validator</span><span class="s2">),</span>
+    <span class="s2">)</span>
+    <span class="s1">adapter</span><span class="s2">.</span><span class="s1">serializer </span><span class="s2">= </span><span class="s1">MockValSer</span><span class="s2">(  </span><span class="s5"># pyright: ignore[reportAttributeAccessIssue]</span>
+        <span class="s1">undefined_type_error_message</span><span class="s2">,</span>
+        <span class="s1">code</span><span class="s2">=</span><span class="s3">'class-not-fully-defined'</span><span class="s2">,</span>
+        <span class="s1">val_or_ser</span><span class="s2">=</span><span class="s3">'serializer'</span><span class="s2">,</span>
+        <span class="s1">attempt_rebuild</span><span class="s2">=</span><span class="s1">attempt_rebuild_fn</span><span class="s2">(</span><span class="s0">lambda </span><span class="s1">ta</span><span class="s2">: </span><span class="s1">ta</span><span class="s2">.</span><span class="s1">serializer</span><span class="s2">),</span>
+    <span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">set_model_mocks</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">], </span><span class="s1">undefined_name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s3">'all referenced types'</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Set `__pydantic_core_schema__`, `__pydantic_validator__` and `__pydantic_serializer__` to mock core types on a model. 
+ 
+    Args: 
+        cls: The model class to set the mocks on 
+        undefined_name: Name of the undefined thing, used in error messages 
+    &quot;&quot;&quot;</span>
+    <span class="s1">undefined_type_error_message </span><span class="s2">= (</span>
+        <span class="s3">f'`</span><span class="s0">{</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">}</span><span class="s3">` is not fully defined; you should define </span><span class="s0">{</span><span class="s1">undefined_name</span><span class="s0">}</span><span class="s3">,'</span>
+        <span class="s3">f' then call `</span><span class="s0">{</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">}</span><span class="s3">.model_rebuild()`.'</span>
+    <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">attempt_rebuild_fn</span><span class="s2">(</span><span class="s1">attr_fn</span><span class="s2">: </span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">type</span><span class="s2">[</span><span class="s1">BaseModel</span><span class="s2">]], </span><span class="s1">T</span><span class="s2">]) </span><span class="s1">-&gt; Callable</span><span class="s2">[[], </span><span class="s1">T </span><span class="s2">| </span><span class="s0">None</span><span class="s2">]:</span>
+        <span class="s0">def </span><span class="s1">handler</span><span class="s2">() </span><span class="s1">-&gt; T </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">cls</span><span class="s2">.</span><span class="s1">model_rebuild</span><span class="s2">(</span><span class="s1">raise_errors</span><span class="s2">=</span><span class="s0">False</span><span class="s2">, </span><span class="s1">_parent_namespace_depth</span><span class="s2">=</span><span class="s6">5</span><span class="s2">) </span><span class="s0">is not False</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">attr_fn</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">)</span>
+            <span class="s0">return None</span>
+
+        <span class="s0">return </span><span class="s1">handler</span>
+
+    <span class="s1">cls</span><span class="s2">.</span><span class="s1">__pydantic_core_schema__ </span><span class="s2">= </span><span class="s1">MockCoreSchema</span><span class="s2">(  </span><span class="s5"># pyright: ignore[reportAttributeAccessIssue]</span>
+        <span class="s1">undefined_type_error_message</span><span class="s2">,</span>
+        <span class="s1">code</span><span class="s2">=</span><span class="s3">'class-not-fully-defined'</span><span class="s2">,</span>
+        <span class="s1">attempt_rebuild</span><span class="s2">=</span><span class="s1">attempt_rebuild_fn</span><span class="s2">(</span><span class="s0">lambda </span><span class="s1">c</span><span class="s2">: </span><span class="s1">c</span><span class="s2">.</span><span class="s1">__pydantic_core_schema__</span><span class="s2">),</span>
+    <span class="s2">)</span>
+    <span class="s1">cls</span><span class="s2">.</span><span class="s1">__pydantic_validator__ </span><span class="s2">= </span><span class="s1">MockValSer</span><span class="s2">(  </span><span class="s5"># pyright: ignore[reportAttributeAccessIssue]</span>
+        <span class="s1">undefined_type_error_message</span><span class="s2">,</span>
+        <span class="s1">code</span><span class="s2">=</span><span class="s3">'class-not-fully-defined'</span><span class="s2">,</span>
+        <span class="s1">val_or_ser</span><span class="s2">=</span><span class="s3">'validator'</span><span class="s2">,</span>
+        <span class="s1">attempt_rebuild</span><span class="s2">=</span><span class="s1">attempt_rebuild_fn</span><span class="s2">(</span><span class="s0">lambda </span><span class="s1">c</span><span class="s2">: </span><span class="s1">c</span><span class="s2">.</span><span class="s1">__pydantic_validator__</span><span class="s2">),</span>
+    <span class="s2">)</span>
+    <span class="s1">cls</span><span class="s2">.</span><span class="s1">__pydantic_serializer__ </span><span class="s2">= </span><span class="s1">MockValSer</span><span class="s2">(  </span><span class="s5"># pyright: ignore[reportAttributeAccessIssue]</span>
+        <span class="s1">undefined_type_error_message</span><span class="s2">,</span>
+        <span class="s1">code</span><span class="s2">=</span><span class="s3">'class-not-fully-defined'</span><span class="s2">,</span>
+        <span class="s1">val_or_ser</span><span class="s2">=</span><span class="s3">'serializer'</span><span class="s2">,</span>
+        <span class="s1">attempt_rebuild</span><span class="s2">=</span><span class="s1">attempt_rebuild_fn</span><span class="s2">(</span><span class="s0">lambda </span><span class="s1">c</span><span class="s2">: </span><span class="s1">c</span><span class="s2">.</span><span class="s1">__pydantic_serializer__</span><span class="s2">),</span>
+    <span class="s2">)</span>
+
+
+<span class="s0">def </span><span class="s1">set_dataclass_mocks</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">: </span><span class="s1">type</span><span class="s2">[</span><span class="s1">PydanticDataclass</span><span class="s2">], </span><span class="s1">undefined_name</span><span class="s2">: </span><span class="s1">str </span><span class="s2">= </span><span class="s3">'all referenced types'</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+    <span class="s4">&quot;&quot;&quot;Set `__pydantic_validator__` and `__pydantic_serializer__` to `MockValSer`s on a dataclass. 
+ 
+    Args: 
+        cls: The model class to set the mocks on 
+        undefined_name: Name of the undefined thing, used in error messages 
+    &quot;&quot;&quot;</span>
+    <span class="s0">from </span><span class="s2">..</span><span class="s1">dataclasses </span><span class="s0">import </span><span class="s1">rebuild_dataclass</span>
+
+    <span class="s1">undefined_type_error_message </span><span class="s2">= (</span>
+        <span class="s3">f'`</span><span class="s0">{</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">}</span><span class="s3">` is not fully defined; you should define </span><span class="s0">{</span><span class="s1">undefined_name</span><span class="s0">}</span><span class="s3">,'</span>
+        <span class="s3">f' then call `pydantic.dataclasses.rebuild_dataclass(</span><span class="s0">{</span><span class="s1">cls</span><span class="s2">.</span><span class="s1">__name__</span><span class="s0">}</span><span class="s3">)`.'</span>
+    <span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">attempt_rebuild_fn</span><span class="s2">(</span><span class="s1">attr_fn</span><span class="s2">: </span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">type</span><span class="s2">[</span><span class="s1">PydanticDataclass</span><span class="s2">]], </span><span class="s1">T</span><span class="s2">]) </span><span class="s1">-&gt; Callable</span><span class="s2">[[], </span><span class="s1">T </span><span class="s2">| </span><span class="s0">None</span><span class="s2">]:</span>
+        <span class="s0">def </span><span class="s1">handler</span><span class="s2">() </span><span class="s1">-&gt; T </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">rebuild_dataclass</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">, </span><span class="s1">raise_errors</span><span class="s2">=</span><span class="s0">False</span><span class="s2">, </span><span class="s1">_parent_namespace_depth</span><span class="s2">=</span><span class="s6">5</span><span class="s2">) </span><span class="s0">is not False</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s1">attr_fn</span><span class="s2">(</span><span class="s1">cls</span><span class="s2">)</span>
+            <span class="s0">return None</span>
+
+        <span class="s0">return </span><span class="s1">handler</span>
+
+    <span class="s1">cls</span><span class="s2">.</span><span class="s1">__pydantic_core_schema__ </span><span class="s2">= </span><span class="s1">MockCoreSchema</span><span class="s2">(  </span><span class="s5"># pyright: ignore[reportAttributeAccessIssue]</span>
+        <span class="s1">undefined_type_error_message</span><span class="s2">,</span>
+        <span class="s1">code</span><span class="s2">=</span><span class="s3">'class-not-fully-defined'</span><span class="s2">,</span>
+        <span class="s1">attempt_rebuild</span><span class="s2">=</span><span class="s1">attempt_rebuild_fn</span><span class="s2">(</span><span class="s0">lambda </span><span class="s1">c</span><span class="s2">: </span><span class="s1">c</span><span class="s2">.</span><span class="s1">__pydantic_core_schema__</span><span class="s2">),</span>
+    <span class="s2">)</span>
+    <span class="s1">cls</span><span class="s2">.</span><span class="s1">__pydantic_validator__ </span><span class="s2">= </span><span class="s1">MockValSer</span><span class="s2">(  </span><span class="s5"># pyright: ignore[reportAttributeAccessIssue]</span>
+        <span class="s1">undefined_type_error_message</span><span class="s2">,</span>
+        <span class="s1">code</span><span class="s2">=</span><span class="s3">'class-not-fully-defined'</span><span class="s2">,</span>
+        <span class="s1">val_or_ser</span><span class="s2">=</span><span class="s3">'validator'</span><span class="s2">,</span>
+        <span class="s1">attempt_rebuild</span><span class="s2">=</span><span class="s1">attempt_rebuild_fn</span><span class="s2">(</span><span class="s0">lambda </span><span class="s1">c</span><span class="s2">: </span><span class="s1">c</span><span class="s2">.</span><span class="s1">__pydantic_validator__</span><span class="s2">),</span>
+    <span class="s2">)</span>
+    <span class="s1">cls</span><span class="s2">.</span><span class="s1">__pydantic_serializer__ </span><span class="s2">= </span><span class="s1">MockValSer</span><span class="s2">(  </span><span class="s5"># pyright: ignore[reportAttributeAccessIssue]</span>
+        <span class="s1">undefined_type_error_message</span><span class="s2">,</span>
+        <span class="s1">code</span><span class="s2">=</span><span class="s3">'class-not-fully-defined'</span><span class="s2">,</span>
+        <span class="s1">val_or_ser</span><span class="s2">=</span><span class="s3">'serializer'</span><span class="s2">,</span>
+        <span class="s1">attempt_rebuild</span><span class="s2">=</span><span class="s1">attempt_rebuild_fn</span><span class="s2">(</span><span class="s0">lambda </span><span class="s1">c</span><span class="s2">: </span><span class="s1">c</span><span class="s2">.</span><span class="s1">__pydantic_serializer__</span><span class="s2">),</span>
+    <span class="s2">)</span>
+</pre>
+</body>
+</html>

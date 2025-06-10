@@ -1,0 +1,74 @@
+<html>
+<head>
+<title>statreload.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+statreload.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">logging</span>
+<span class="s0">from </span><span class="s1">collections</span><span class="s2">.</span><span class="s1">abc </span><span class="s0">import </span><span class="s1">Iterator</span>
+<span class="s0">from </span><span class="s1">pathlib </span><span class="s0">import </span><span class="s1">Path</span>
+<span class="s0">from </span><span class="s1">socket </span><span class="s0">import </span><span class="s1">socket</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Callable</span>
+
+<span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">config </span><span class="s0">import </span><span class="s1">Config</span>
+<span class="s0">from </span><span class="s1">uvicorn</span><span class="s2">.</span><span class="s1">supervisors</span><span class="s2">.</span><span class="s1">basereload </span><span class="s0">import </span><span class="s1">BaseReload</span>
+
+<span class="s1">logger </span><span class="s2">= </span><span class="s1">logging</span><span class="s2">.</span><span class="s1">getLogger</span><span class="s2">(</span><span class="s3">&quot;uvicorn.error&quot;</span><span class="s2">)</span>
+
+
+<span class="s0">class </span><span class="s1">StatReload</span><span class="s2">(</span><span class="s1">BaseReload</span><span class="s2">):</span>
+    <span class="s0">def </span><span class="s1">__init__</span><span class="s2">(</span>
+        <span class="s1">self</span><span class="s2">,</span>
+        <span class="s1">config</span><span class="s2">: </span><span class="s1">Config</span><span class="s2">,</span>
+        <span class="s1">target</span><span class="s2">: </span><span class="s1">Callable</span><span class="s2">[[</span><span class="s1">list</span><span class="s2">[</span><span class="s1">socket</span><span class="s2">] | </span><span class="s0">None</span><span class="s2">], </span><span class="s0">None</span><span class="s2">],</span>
+        <span class="s1">sockets</span><span class="s2">: </span><span class="s1">list</span><span class="s2">[</span><span class="s1">socket</span><span class="s2">],</span>
+    <span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">__init__</span><span class="s2">(</span><span class="s1">config</span><span class="s2">, </span><span class="s1">target</span><span class="s2">, </span><span class="s1">sockets</span><span class="s2">)</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">reloader_name </span><span class="s2">= </span><span class="s3">&quot;StatReload&quot;</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">mtimes</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">Path</span><span class="s2">, </span><span class="s1">float</span><span class="s2">] = {}</span>
+
+        <span class="s0">if </span><span class="s1">config</span><span class="s2">.</span><span class="s1">reload_excludes </span><span class="s0">or </span><span class="s1">config</span><span class="s2">.</span><span class="s1">reload_includes</span><span class="s2">:</span>
+            <span class="s1">logger</span><span class="s2">.</span><span class="s1">warning</span><span class="s2">(</span><span class="s3">&quot;--reload-include and --reload-exclude have no effect unless &quot; &quot;watchfiles is installed.&quot;</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">should_restart</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">Path</span><span class="s2">] | </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">pause</span><span class="s2">()</span>
+
+        <span class="s0">for </span><span class="s1">file </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">iter_py_files</span><span class="s2">():</span>
+            <span class="s0">try</span><span class="s2">:</span>
+                <span class="s1">mtime </span><span class="s2">= </span><span class="s1">file</span><span class="s2">.</span><span class="s1">stat</span><span class="s2">().</span><span class="s1">st_mtime</span>
+            <span class="s0">except </span><span class="s1">OSError</span><span class="s2">:  </span><span class="s4"># pragma: nocover</span>
+                <span class="s0">continue</span>
+
+            <span class="s1">old_time </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">mtimes</span><span class="s2">.</span><span class="s1">get</span><span class="s2">(</span><span class="s1">file</span><span class="s2">)</span>
+            <span class="s0">if </span><span class="s1">old_time </span><span class="s0">is None</span><span class="s2">:</span>
+                <span class="s1">self</span><span class="s2">.</span><span class="s1">mtimes</span><span class="s2">[</span><span class="s1">file</span><span class="s2">] = </span><span class="s1">mtime</span>
+                <span class="s0">continue</span>
+            <span class="s0">elif </span><span class="s1">mtime </span><span class="s2">&gt; </span><span class="s1">old_time</span><span class="s2">:</span>
+                <span class="s0">return </span><span class="s2">[</span><span class="s1">file</span><span class="s2">]</span>
+        <span class="s0">return None</span>
+
+    <span class="s0">def </span><span class="s1">restart</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">mtimes </span><span class="s2">= {}</span>
+        <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">restart</span><span class="s2">()</span>
+
+    <span class="s0">def </span><span class="s1">iter_py_files</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; Iterator</span><span class="s2">[</span><span class="s1">Path</span><span class="s2">]:</span>
+        <span class="s0">for </span><span class="s1">reload_dir </span><span class="s0">in </span><span class="s1">self</span><span class="s2">.</span><span class="s1">config</span><span class="s2">.</span><span class="s1">reload_dirs</span><span class="s2">:</span>
+            <span class="s0">for </span><span class="s1">path </span><span class="s0">in </span><span class="s1">list</span><span class="s2">(</span><span class="s1">reload_dir</span><span class="s2">.</span><span class="s1">rglob</span><span class="s2">(</span><span class="s3">&quot;*.py&quot;</span><span class="s2">)):</span>
+                <span class="s0">yield </span><span class="s1">path</span><span class="s2">.</span><span class="s1">resolve</span><span class="s2">()</span>
+</pre>
+</body>
+</html>

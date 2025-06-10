@@ -1,0 +1,280 @@
+<html>
+<head>
+<title>wrappers.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #7a7e85;}
+.s4 { color: #5f826b; font-style: italic;}
+.s5 { color: #6aab73;}
+.s6 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+wrappers.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">import </span><span class="s1">typing </span><span class="s0">as </span><span class="s1">t</span>
+
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">BadRequest</span>
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">exceptions </span><span class="s0">import </span><span class="s1">HTTPException</span>
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">wrappers </span><span class="s0">import </span><span class="s1">Request </span><span class="s0">as </span><span class="s1">RequestBase</span>
+<span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">wrappers </span><span class="s0">import </span><span class="s1">Response </span><span class="s0">as </span><span class="s1">ResponseBase</span>
+
+<span class="s0">from </span><span class="s2">. </span><span class="s0">import </span><span class="s1">json</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">globals </span><span class="s0">import </span><span class="s1">current_app</span>
+<span class="s0">from </span><span class="s2">.</span><span class="s1">helpers </span><span class="s0">import </span><span class="s1">_split_blueprint_path</span>
+
+<span class="s0">if </span><span class="s1">t</span><span class="s2">.</span><span class="s1">TYPE_CHECKING</span><span class="s2">:  </span><span class="s3"># pragma: no cover</span>
+    <span class="s0">from </span><span class="s1">werkzeug</span><span class="s2">.</span><span class="s1">routing </span><span class="s0">import </span><span class="s1">Rule</span>
+
+
+<span class="s0">class </span><span class="s1">Request</span><span class="s2">(</span><span class="s1">RequestBase</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;The request object used by default in Flask.  Remembers the 
+    matched endpoint and view arguments. 
+ 
+    It is what ends up as :class:`~flask.request`.  If you want to replace 
+    the request object used you can subclass this and set 
+    :attr:`~flask.Flask.request_class` to your subclass. 
+ 
+    The request object is a :class:`~werkzeug.wrappers.Request` subclass and 
+    provides all of the attributes Werkzeug defines plus a few Flask 
+    specific ones. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">json_module</span><span class="s2">: </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any </span><span class="s2">= </span><span class="s1">json</span>
+
+    <span class="s3">#: The internal URL rule that matched the request.  This can be</span>
+    <span class="s3">#: useful to inspect which methods are allowed for the URL from</span>
+    <span class="s3">#: a before/after handler (``request.url_rule.methods``) etc.</span>
+    <span class="s3">#: Though if the request's method was invalid for the URL rule,</span>
+    <span class="s3">#: the valid list is available in ``routing_exception.valid_methods``</span>
+    <span class="s3">#: instead (an attribute of the Werkzeug exception</span>
+    <span class="s3">#: :exc:`~werkzeug.exceptions.MethodNotAllowed`)</span>
+    <span class="s3">#: because the request was never internally bound.</span>
+    <span class="s3">#:</span>
+    <span class="s3">#: .. versionadded:: 0.6</span>
+    <span class="s1">url_rule</span><span class="s2">: </span><span class="s1">Rule </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+
+    <span class="s3">#: A dict of view arguments that matched the request.  If an exception</span>
+    <span class="s3">#: happened when matching, this will be ``None``.</span>
+    <span class="s1">view_args</span><span class="s2">: </span><span class="s1">dict</span><span class="s2">[</span><span class="s1">str</span><span class="s2">, </span><span class="s1">t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">] | </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+
+    <span class="s3">#: If matching the URL failed, this is the exception that will be</span>
+    <span class="s3">#: raised / was raised as part of the request handling.  This is</span>
+    <span class="s3">#: usually a :exc:`~werkzeug.exceptions.NotFound` exception or</span>
+    <span class="s3">#: something similar.</span>
+    <span class="s1">routing_exception</span><span class="s2">: </span><span class="s1">HTTPException </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+
+    <span class="s1">_max_content_length</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s1">_max_form_memory_size</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+    <span class="s1">_max_form_parts</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s0">None</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">max_content_length</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; int </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;The maximum number of bytes that will be read during this request. If 
+        this limit is exceeded, a 413 :exc:`~werkzeug.exceptions.RequestEntityTooLarge` 
+        error is raised. If it is set to ``None``, no limit is enforced at the 
+        Flask application level. However, if it is ``None`` and the request has 
+        no ``Content-Length`` header and the WSGI server does not indicate that 
+        it terminates the stream, then no data is read to avoid an infinite 
+        stream. 
+ 
+        Each request defaults to the :data:`MAX_CONTENT_LENGTH` config, which 
+        defaults to ``None``. It can be set on a specific ``request`` to apply 
+        the limit to that specific view. This should be set appropriately based 
+        on an application's or view's specific needs. 
+ 
+        .. versionchanged:: 3.1 
+            This can be set per-request. 
+ 
+        .. versionchanged:: 0.6 
+            This is configurable through Flask config. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_max_content_length </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_max_content_length</span>
+
+        <span class="s0">if not </span><span class="s1">current_app</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">max_content_length</span>
+
+        <span class="s0">return </span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">config</span><span class="s2">[</span><span class="s5">&quot;MAX_CONTENT_LENGTH&quot;</span><span class="s2">]  </span><span class="s3"># type: ignore[no-any-return]</span>
+
+    <span class="s2">@</span><span class="s1">max_content_length</span><span class="s2">.</span><span class="s1">setter</span>
+    <span class="s0">def </span><span class="s1">max_content_length</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_max_content_length </span><span class="s2">= </span><span class="s1">value</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">max_form_memory_size</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; int </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;The maximum size in bytes any non-file form field may be in a 
+        ``multipart/form-data`` body. If this limit is exceeded, a 413 
+        :exc:`~werkzeug.exceptions.RequestEntityTooLarge` error is raised. If it 
+        is set to ``None``, no limit is enforced at the Flask application level. 
+ 
+        Each request defaults to the :data:`MAX_FORM_MEMORY_SIZE` config, which 
+        defaults to ``500_000``. It can be set on a specific ``request`` to 
+        apply the limit to that specific view. This should be set appropriately 
+        based on an application's or view's specific needs. 
+ 
+        .. versionchanged:: 3.1 
+            This is configurable through Flask config. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_max_form_memory_size </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_max_form_memory_size</span>
+
+        <span class="s0">if not </span><span class="s1">current_app</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">max_form_memory_size</span>
+
+        <span class="s0">return </span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">config</span><span class="s2">[</span><span class="s5">&quot;MAX_FORM_MEMORY_SIZE&quot;</span><span class="s2">]  </span><span class="s3"># type: ignore[no-any-return]</span>
+
+    <span class="s2">@</span><span class="s1">max_form_memory_size</span><span class="s2">.</span><span class="s1">setter</span>
+    <span class="s0">def </span><span class="s1">max_form_memory_size</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_max_form_memory_size </span><span class="s2">= </span><span class="s1">value</span>
+
+    <span class="s2">@</span><span class="s1">property  </span><span class="s3"># type: ignore[override]</span>
+    <span class="s0">def </span><span class="s1">max_form_parts</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; int </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;The maximum number of fields that may be present in a 
+        ``multipart/form-data`` body. If this limit is exceeded, a 413 
+        :exc:`~werkzeug.exceptions.RequestEntityTooLarge` error is raised. If it 
+        is set to ``None``, no limit is enforced at the Flask application level. 
+ 
+        Each request defaults to the :data:`MAX_FORM_PARTS` config, which 
+        defaults to ``1_000``. It can be set on a specific ``request`` to apply 
+        the limit to that specific view. This should be set appropriately based 
+        on an application's or view's specific needs. 
+ 
+        .. versionchanged:: 3.1 
+            This is configurable through Flask config. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_max_form_parts </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">_max_form_parts</span>
+
+        <span class="s0">if not </span><span class="s1">current_app</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">max_form_parts</span>
+
+        <span class="s0">return </span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">config</span><span class="s2">[</span><span class="s5">&quot;MAX_FORM_PARTS&quot;</span><span class="s2">]  </span><span class="s3"># type: ignore[no-any-return]</span>
+
+    <span class="s2">@</span><span class="s1">max_form_parts</span><span class="s2">.</span><span class="s1">setter</span>
+    <span class="s0">def </span><span class="s1">max_form_parts</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s1">int </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">self</span><span class="s2">.</span><span class="s1">_max_form_parts </span><span class="s2">= </span><span class="s1">value</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">endpoint</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;The endpoint that matched the request URL. 
+ 
+        This will be ``None`` if matching failed or has not been 
+        performed yet. 
+ 
+        This in combination with :attr:`view_args` can be used to 
+        reconstruct the same URL or a modified URL. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self</span><span class="s2">.</span><span class="s1">url_rule </span><span class="s0">is not None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">self</span><span class="s2">.</span><span class="s1">url_rule</span><span class="s2">.</span><span class="s1">endpoint  </span><span class="s3"># type: ignore[no-any-return]</span>
+
+        <span class="s0">return None</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">blueprint</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; str </span><span class="s2">| </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s4">&quot;&quot;&quot;The registered name of the current blueprint. 
+ 
+        This will be ``None`` if the endpoint is not part of a 
+        blueprint, or if URL matching failed or has not been performed 
+        yet. 
+ 
+        This does not necessarily match the name the blueprint was 
+        created with. It may have been nested, or registered with a 
+        different name. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">endpoint </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">endpoint</span>
+
+        <span class="s0">if </span><span class="s1">endpoint </span><span class="s0">is not None and </span><span class="s5">&quot;.&quot; </span><span class="s0">in </span><span class="s1">endpoint</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">endpoint</span><span class="s2">.</span><span class="s1">rpartition</span><span class="s2">(</span><span class="s5">&quot;.&quot;</span><span class="s2">)[</span><span class="s6">0</span><span class="s2">]</span>
+
+        <span class="s0">return None</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">blueprints</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; list</span><span class="s2">[</span><span class="s1">str</span><span class="s2">]:</span>
+        <span class="s4">&quot;&quot;&quot;The registered names of the current blueprint upwards through 
+        parent blueprints. 
+ 
+        This will be an empty list if there is no current blueprint, or 
+        if URL matching failed. 
+ 
+        .. versionadded:: 2.0.1 
+        &quot;&quot;&quot;</span>
+        <span class="s1">name </span><span class="s2">= </span><span class="s1">self</span><span class="s2">.</span><span class="s1">blueprint</span>
+
+        <span class="s0">if </span><span class="s1">name </span><span class="s0">is None</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s2">[]</span>
+
+        <span class="s0">return </span><span class="s1">_split_blueprint_path</span><span class="s2">(</span><span class="s1">name</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">_load_form_data</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; </span><span class="s0">None</span><span class="s2">:</span>
+        <span class="s1">super</span><span class="s2">().</span><span class="s1">_load_form_data</span><span class="s2">()</span>
+
+        <span class="s3"># In debug mode we're replacing the files multidict with an ad-hoc</span>
+        <span class="s3"># subclass that raises a different error for key errors.</span>
+        <span class="s0">if </span><span class="s2">(</span>
+            <span class="s1">current_app</span>
+            <span class="s0">and </span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">debug</span>
+            <span class="s0">and </span><span class="s1">self</span><span class="s2">.</span><span class="s1">mimetype </span><span class="s2">!= </span><span class="s5">&quot;multipart/form-data&quot;</span>
+            <span class="s0">and not </span><span class="s1">self</span><span class="s2">.</span><span class="s1">files</span>
+        <span class="s2">):</span>
+            <span class="s0">from </span><span class="s2">.</span><span class="s1">debughelpers </span><span class="s0">import </span><span class="s1">attach_enctype_error_multidict</span>
+
+            <span class="s1">attach_enctype_error_multidict</span><span class="s2">(</span><span class="s1">self</span><span class="s2">)</span>
+
+    <span class="s0">def </span><span class="s1">on_json_loading_failed</span><span class="s2">(</span><span class="s1">self</span><span class="s2">, </span><span class="s1">e</span><span class="s2">: </span><span class="s1">ValueError </span><span class="s2">| </span><span class="s0">None</span><span class="s2">) </span><span class="s1">-&gt; t</span><span class="s2">.</span><span class="s1">Any</span><span class="s2">:</span>
+        <span class="s0">try</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">on_json_loading_failed</span><span class="s2">(</span><span class="s1">e</span><span class="s2">)</span>
+        <span class="s0">except </span><span class="s1">BadRequest </span><span class="s0">as </span><span class="s1">ebr</span><span class="s2">:</span>
+            <span class="s0">if </span><span class="s1">current_app </span><span class="s0">and </span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">debug</span><span class="s2">:</span>
+                <span class="s0">raise</span>
+
+            <span class="s0">raise </span><span class="s1">BadRequest</span><span class="s2">() </span><span class="s0">from </span><span class="s1">ebr</span>
+
+
+<span class="s0">class </span><span class="s1">Response</span><span class="s2">(</span><span class="s1">ResponseBase</span><span class="s2">):</span>
+    <span class="s4">&quot;&quot;&quot;The response object that is used by default in Flask.  Works like the 
+    response object from Werkzeug but is set to have an HTML mimetype by 
+    default.  Quite often you don't have to create this object yourself because 
+    :meth:`~flask.Flask.make_response` will take care of that for you. 
+ 
+    If you want to replace the response object used you can subclass this and 
+    set :attr:`~flask.Flask.response_class` to your subclass. 
+ 
+    .. versionchanged:: 1.0 
+        JSON support is added to the response, like the request. This is useful 
+        when testing to get the test client response data as JSON. 
+ 
+    .. versionchanged:: 1.0 
+ 
+        Added :attr:`max_cookie_size`. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">default_mimetype</span><span class="s2">: </span><span class="s1">str </span><span class="s2">| </span><span class="s0">None </span><span class="s2">= </span><span class="s5">&quot;text/html&quot;</span>
+
+    <span class="s1">json_module </span><span class="s2">= </span><span class="s1">json</span>
+
+    <span class="s1">autocorrect_location_header </span><span class="s2">= </span><span class="s0">False</span>
+
+    <span class="s2">@</span><span class="s1">property</span>
+    <span class="s0">def </span><span class="s1">max_cookie_size</span><span class="s2">(</span><span class="s1">self</span><span class="s2">) </span><span class="s1">-&gt; int</span><span class="s2">:  </span><span class="s3"># type: ignore</span>
+        <span class="s4">&quot;&quot;&quot;Read-only view of the :data:`MAX_COOKIE_SIZE` config key. 
+ 
+        See :attr:`~werkzeug.wrappers.Response.max_cookie_size` in 
+        Werkzeug's docs. 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">current_app</span><span class="s2">:</span>
+            <span class="s0">return </span><span class="s1">current_app</span><span class="s2">.</span><span class="s1">config</span><span class="s2">[</span><span class="s5">&quot;MAX_COOKIE_SIZE&quot;</span><span class="s2">]  </span><span class="s3"># type: ignore[no-any-return]</span>
+
+        <span class="s3"># return Werkzeug's default when not in an app context</span>
+        <span class="s0">return </span><span class="s1">super</span><span class="s2">().</span><span class="s1">max_cookie_size</span>
+</pre>
+</body>
+</html>

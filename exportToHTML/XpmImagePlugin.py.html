@@ -1,0 +1,148 @@
+<html>
+<head>
+<title>XpmImagePlugin.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #a5c261;}
+.s5 { color: #2aacb8;}
+.s6 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+XpmImagePlugin.py</font>
+</center></td></tr></table>
+<pre><span class="s0">#</span>
+<span class="s0"># The Python Imaging Library.</span>
+<span class="s0"># $Id$</span>
+<span class="s0">#</span>
+<span class="s0"># XPM File handling</span>
+<span class="s0">#</span>
+<span class="s0"># History:</span>
+<span class="s0"># 1996-12-29 fl   Created</span>
+<span class="s0"># 2001-02-17 fl   Use 're' instead of 'regex' (Python 2.1) (0.7)</span>
+<span class="s0">#</span>
+<span class="s0"># Copyright (c) Secret Labs AB 1997-2001.</span>
+<span class="s0"># Copyright (c) Fredrik Lundh 1996-2001.</span>
+<span class="s0">#</span>
+<span class="s0"># See the README file for information on usage and redistribution.</span>
+<span class="s0">#</span>
+<span class="s2">from </span><span class="s1">__future__ </span><span class="s2">import </span><span class="s1">annotations</span>
+
+<span class="s2">import </span><span class="s1">re</span>
+
+<span class="s2">from </span><span class="s3">. </span><span class="s2">import </span><span class="s1">Image</span><span class="s3">, </span><span class="s1">ImageFile</span><span class="s3">, </span><span class="s1">ImagePalette</span>
+<span class="s2">from </span><span class="s3">.</span><span class="s1">_binary </span><span class="s2">import </span><span class="s1">o8</span>
+
+<span class="s0"># XPM header</span>
+<span class="s1">xpm_head </span><span class="s3">= </span><span class="s1">re</span><span class="s3">.</span><span class="s1">compile</span><span class="s3">(</span><span class="s4">b'&quot;([0-9]*) ([0-9]*) ([0-9]*) ([0-9]*)'</span><span class="s3">)</span>
+
+
+<span class="s2">def </span><span class="s1">_accept</span><span class="s3">(</span><span class="s1">prefix</span><span class="s3">: </span><span class="s1">bytes</span><span class="s3">) </span><span class="s1">-&gt; bool</span><span class="s3">:</span>
+    <span class="s2">return </span><span class="s1">prefix</span><span class="s3">[:</span><span class="s5">9</span><span class="s3">] == </span><span class="s4">b&quot;/* XPM */&quot;</span>
+
+
+<span class="s0">##</span>
+<span class="s0"># Image plugin for X11 pixel maps.</span>
+
+
+<span class="s2">class </span><span class="s1">XpmImageFile</span><span class="s3">(</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">ImageFile</span><span class="s3">):</span>
+    <span class="s1">format </span><span class="s3">= </span><span class="s6">&quot;XPM&quot;</span>
+    <span class="s1">format_description </span><span class="s3">= </span><span class="s6">&quot;X11 Pixel Map&quot;</span>
+
+    <span class="s2">def </span><span class="s1">_open</span><span class="s3">(</span><span class="s1">self</span><span class="s3">) </span><span class="s1">-&gt; </span><span class="s2">None</span><span class="s3">:</span>
+        <span class="s2">if not </span><span class="s1">_accept</span><span class="s3">(</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">read</span><span class="s3">(</span><span class="s5">9</span><span class="s3">)):</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;not an XPM file&quot;</span>
+            <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s0"># skip forward to next string</span>
+        <span class="s2">while True</span><span class="s3">:</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">readline</span><span class="s3">()</span>
+            <span class="s2">if not </span><span class="s1">s</span><span class="s3">:</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;broken XPM file&quot;</span>
+                <span class="s2">raise </span><span class="s1">SyntaxError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+            <span class="s1">m </span><span class="s3">= </span><span class="s1">xpm_head</span><span class="s3">.</span><span class="s1">match</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+            <span class="s2">if </span><span class="s1">m</span><span class="s3">:</span>
+                <span class="s2">break</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_size </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">1</span><span class="s3">)), </span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">2</span><span class="s3">))</span>
+
+        <span class="s1">pal </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">3</span><span class="s3">))</span>
+        <span class="s1">bpp </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">m</span><span class="s3">.</span><span class="s1">group</span><span class="s3">(</span><span class="s5">4</span><span class="s3">))</span>
+
+        <span class="s2">if </span><span class="s1">pal </span><span class="s3">&gt; </span><span class="s5">256 </span><span class="s2">or </span><span class="s1">bpp </span><span class="s3">!= </span><span class="s5">1</span><span class="s3">:</span>
+            <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;cannot read this XPM file&quot;</span>
+            <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s0">#</span>
+        <span class="s0"># load palette description</span>
+
+        <span class="s1">palette </span><span class="s3">= [</span><span class="s4">b&quot;</span><span class="s2">\0\0\0</span><span class="s4">&quot;</span><span class="s3">] * </span><span class="s5">256</span>
+
+        <span class="s2">for </span><span class="s1">_ </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">pal</span><span class="s3">):</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">readline</span><span class="s3">()</span>
+            <span class="s2">if </span><span class="s1">s</span><span class="s3">[-</span><span class="s5">2</span><span class="s3">:] == </span><span class="s4">b&quot;</span><span class="s2">\r\n</span><span class="s4">&quot;</span><span class="s3">:</span>
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[:-</span><span class="s5">2</span><span class="s3">]</span>
+            <span class="s2">elif </span><span class="s1">s</span><span class="s3">[-</span><span class="s5">1</span><span class="s3">:] </span><span class="s2">in </span><span class="s4">b&quot;</span><span class="s2">\r\n</span><span class="s4">&quot;</span><span class="s3">:</span>
+                <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[:-</span><span class="s5">1</span><span class="s3">]</span>
+
+            <span class="s1">c </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s5">1</span><span class="s3">]</span>
+            <span class="s1">s </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s5">2</span><span class="s3">:-</span><span class="s5">2</span><span class="s3">].</span><span class="s1">split</span><span class="s3">()</span>
+
+            <span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s5">0</span><span class="s3">, </span><span class="s1">len</span><span class="s3">(</span><span class="s1">s</span><span class="s3">), </span><span class="s5">2</span><span class="s3">):</span>
+                <span class="s2">if </span><span class="s1">s</span><span class="s3">[</span><span class="s1">i</span><span class="s3">] == </span><span class="s4">b&quot;c&quot;</span><span class="s3">:</span>
+                    <span class="s0"># process colour key</span>
+                    <span class="s1">rgb </span><span class="s3">= </span><span class="s1">s</span><span class="s3">[</span><span class="s1">i </span><span class="s3">+ </span><span class="s5">1</span><span class="s3">]</span>
+                    <span class="s2">if </span><span class="s1">rgb </span><span class="s3">== </span><span class="s4">b&quot;None&quot;</span><span class="s3">:</span>
+                        <span class="s1">self</span><span class="s3">.</span><span class="s1">info</span><span class="s3">[</span><span class="s6">&quot;transparency&quot;</span><span class="s3">] = </span><span class="s1">c</span>
+                    <span class="s2">elif </span><span class="s1">rgb</span><span class="s3">[:</span><span class="s5">1</span><span class="s3">] == </span><span class="s4">b&quot;#&quot;</span><span class="s3">:</span>
+                        <span class="s0"># FIXME: handle colour names (see ImagePalette.py)</span>
+                        <span class="s1">rgb </span><span class="s3">= </span><span class="s1">int</span><span class="s3">(</span><span class="s1">rgb</span><span class="s3">[</span><span class="s5">1</span><span class="s3">:], </span><span class="s5">16</span><span class="s3">)</span>
+                        <span class="s1">palette</span><span class="s3">[</span><span class="s1">c</span><span class="s3">] = (</span>
+                            <span class="s1">o8</span><span class="s3">((</span><span class="s1">rgb </span><span class="s3">&gt;&gt; </span><span class="s5">16</span><span class="s3">) &amp; </span><span class="s5">255</span><span class="s3">) + </span><span class="s1">o8</span><span class="s3">((</span><span class="s1">rgb </span><span class="s3">&gt;&gt; </span><span class="s5">8</span><span class="s3">) &amp; </span><span class="s5">255</span><span class="s3">) + </span><span class="s1">o8</span><span class="s3">(</span><span class="s1">rgb </span><span class="s3">&amp; </span><span class="s5">255</span><span class="s3">)</span>
+                        <span class="s3">)</span>
+                    <span class="s2">else</span><span class="s3">:</span>
+                        <span class="s0"># unknown colour</span>
+                        <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;cannot read this XPM file&quot;</span>
+                        <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+                    <span class="s2">break</span>
+
+            <span class="s2">else</span><span class="s3">:</span>
+                <span class="s0"># missing colour key</span>
+                <span class="s1">msg </span><span class="s3">= </span><span class="s6">&quot;cannot read this XPM file&quot;</span>
+                <span class="s2">raise </span><span class="s1">ValueError</span><span class="s3">(</span><span class="s1">msg</span><span class="s3">)</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">_mode </span><span class="s3">= </span><span class="s6">&quot;P&quot;</span>
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">palette </span><span class="s3">= </span><span class="s1">ImagePalette</span><span class="s3">.</span><span class="s1">raw</span><span class="s3">(</span><span class="s6">&quot;RGB&quot;</span><span class="s3">, </span><span class="s4">b&quot;&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">palette</span><span class="s3">))</span>
+
+        <span class="s1">self</span><span class="s3">.</span><span class="s1">tile </span><span class="s3">= [</span><span class="s1">ImageFile</span><span class="s3">.</span><span class="s1">_Tile</span><span class="s3">(</span><span class="s6">&quot;raw&quot;</span><span class="s3">, (</span><span class="s5">0</span><span class="s3">, </span><span class="s5">0</span><span class="s3">) + </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span><span class="s3">, </span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">tell</span><span class="s3">(), </span><span class="s6">&quot;P&quot;</span><span class="s3">)]</span>
+
+    <span class="s2">def </span><span class="s1">load_read</span><span class="s3">(</span><span class="s1">self</span><span class="s3">, </span><span class="s1">read_bytes</span><span class="s3">: </span><span class="s1">int</span><span class="s3">) </span><span class="s1">-&gt; bytes</span><span class="s3">:</span>
+        <span class="s0">#</span>
+        <span class="s0"># load all image data in one chunk</span>
+
+        <span class="s1">xsize</span><span class="s3">, </span><span class="s1">ysize </span><span class="s3">= </span><span class="s1">self</span><span class="s3">.</span><span class="s1">size</span>
+
+        <span class="s1">s </span><span class="s3">= [</span><span class="s1">self</span><span class="s3">.</span><span class="s1">fp</span><span class="s3">.</span><span class="s1">readline</span><span class="s3">()[</span><span class="s5">1 </span><span class="s3">: </span><span class="s1">xsize </span><span class="s3">+ </span><span class="s5">1</span><span class="s3">].</span><span class="s1">ljust</span><span class="s3">(</span><span class="s1">xsize</span><span class="s3">) </span><span class="s2">for </span><span class="s1">i </span><span class="s2">in </span><span class="s1">range</span><span class="s3">(</span><span class="s1">ysize</span><span class="s3">)]</span>
+
+        <span class="s2">return </span><span class="s4">b&quot;&quot;</span><span class="s3">.</span><span class="s1">join</span><span class="s3">(</span><span class="s1">s</span><span class="s3">)</span>
+
+
+<span class="s0">#</span>
+<span class="s0"># Registry</span>
+
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_open</span><span class="s3">(</span><span class="s1">XpmImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s1">XpmImageFile</span><span class="s3">, </span><span class="s1">_accept</span><span class="s3">)</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_extension</span><span class="s3">(</span><span class="s1">XpmImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s6">&quot;.xpm&quot;</span><span class="s3">)</span>
+
+<span class="s1">Image</span><span class="s3">.</span><span class="s1">register_mime</span><span class="s3">(</span><span class="s1">XpmImageFile</span><span class="s3">.</span><span class="s1">format</span><span class="s3">, </span><span class="s6">&quot;image/xpm&quot;</span><span class="s3">)</span>
+</pre>
+</body>
+</html>
